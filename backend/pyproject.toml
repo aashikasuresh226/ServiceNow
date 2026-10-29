@@ -19,6 +19,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "stripe>=11",
     "anthropic>=0.40",
+    # Windows has no system time zone database; zoneinfo needs this package there.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
