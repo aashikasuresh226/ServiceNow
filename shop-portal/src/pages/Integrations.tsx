@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
 import { Button, ErrorAlert, Switch } from '../components/ui';
@@ -74,9 +75,22 @@ export function IntegrationsPage() {
   const spec = PROVIDERS[provider];
   return (
     <>
-      <h1>Scheduling software</h1>
-      <p className="muted">Connect your field-service software so we know which technicians are free, in real time.
-        Without it, we use each technician's working hours.</p>
+      <div className="row">
+        <h1>Scheduling software</h1>
+        <span className="badge neutral">Optional</span>
+      </div>
+      <section className="card soft">
+        <h2>You don't need to connect anything to receive jobs</h2>
+        <p>
+          Without an integration, we decide who's free from each technician's <Link to="/technicians">working
+          hours</Link>, the jobs they're on in this app, and anything you mark on
+          the <Link to="/availability">Availability</Link> board ("Busy 45m" / "Free now").
+        </p>
+        <p className="small muted">
+          Already use ServiceTitan or Housecall Pro? Connecting it keeps availability in sync
+          automatically, so you don't have to update two calendars.
+        </p>
+      </section>
       <div className="grid-2">
         {(Object.keys(PROVIDERS) as Provider[]).map((key) => (
           <button key={key} type="button" className="card" onClick={() => { setProvider(key); setCreds({}); }}
@@ -88,7 +102,7 @@ export function IntegrationsPage() {
         ))}
       </div>
       <form className="card" onSubmit={(e) => { e.preventDefault(); void connect.run(); }}>
-        <h2>Connect {spec.name}</h2>
+        <h2>Connect {spec.name} (optional)</h2>
         <div className="grid-2">
           {spec.fields.map(([key, name]) => (
             <div key={key} className="field">

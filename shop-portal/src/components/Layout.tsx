@@ -12,7 +12,7 @@ const NAV = [
   { to: '/jobs', icon: 'jobs', label: 'Jobs' },
   { to: '/technicians', icon: 'users', label: 'Technicians' },
   { to: '/availability', icon: 'calendar', label: 'Availability' },
-  { to: '/integrations', icon: 'plug', label: 'Scheduling software' },
+  { to: '/integrations', icon: 'plug', label: 'Scheduling software', optional: true },
   { to: '/settings', icon: 'settings', label: 'Shop & payouts' },
 ];
 
@@ -44,6 +44,7 @@ export function Layout() {
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
               <Icon name={item.icon} />
               {item.label}
+              {'optional' in item ? <span className="small muted" style={{ marginLeft: 'auto' }}>Optional</span> : null}
               {item.to === '/jobs' && offers?.length ? (
                 <span className="nav-count" aria-label={`${offers.length} new offers`}>{offers.length}</span>
               ) : null}

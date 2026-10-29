@@ -17,10 +17,9 @@ export function DashboardPage() {
     { done: shop.payouts_enabled, label: 'Set up payouts with Stripe', to: '/settings' },
     { done: !!shop.address, label: 'Add your shop address', to: '/settings' },
     { done: (techs.data ?? []).some((t) => t.is_active), label: 'Add technicians with qualifications & soft skills', to: '/technicians' },
-    { done: shop.scheduling_provider !== 'none', label: 'Connect ServiceTitan or Housecall Pro (optional)', to: '/integrations' },
-    { done: shop.is_live, label: 'Go live to accept on-demand requests', to: '/' },
+    { done: shop.is_live, label: 'Go live with the switch at the top right', to: '/' },
   ];
-  const setupDone = steps.slice(0, 3).every((s) => s.done) && shop.is_live;
+  const setupDone = steps.every((s) => s.done);
 
   return (
     <>
@@ -46,6 +45,12 @@ export function DashboardPage() {
               </li>
             ))}
           </ol>
+          {shop.scheduling_provider === 'none' ? (
+            <p className="small muted">
+              Optional: <Link to="/integrations">connect ServiceTitan or Housecall Pro</Link> to sync
+              availability automatically. Without it, we use each technician's working hours.
+            </p>
+          ) : null}
         </section>
       ) : null}
 
