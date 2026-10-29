@@ -1,0 +1,39 @@
+# Production-like stack: Postgres + API + background worker.
+# The demo doesn't need this (it uses SQLite); this is how you'd run it on a server.
+#   docker compose up --build
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: hvac
+      POSTGRES_PASSWORD: hvac
+      POSTGRES_DB: hvac
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hvac"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      HVAC_DATABASE_URL: postgresql+asyncpg://hvac:hvac@db:5432/hvac
+      HVAC_RUN_WORKER_IN_PROCESS: "false"
+    ports: ["8000:8000"]
+    volumes: [uploads:/app/var/uploads]
+    depends_on:
+      db: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      HVAC_DATABASE_URL: postgresql+asyncpg://hvac:hvac@db:5432/hvac
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      api: { condition: service_started }
+
+volumes:
+  pgdata:
+  uploads:

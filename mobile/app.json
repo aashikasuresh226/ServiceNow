@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "HVAC Connect",
+    "slug": "hvac-connect",
+    "scheme": "hvacconnect",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.example.hvacconnect",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Take a photo of your HVAC unit so we can identify it.",
+        "NSPhotoLibraryUsageDescription": "Choose a photo of your HVAC unit so we can identify it."
+      }
+    },
+    "android": {
+      "package": "com.example.hvacconnect",
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Take a photo of your HVAC unit so we can identify it.",
+          "photosPermission": "Choose a photo of your HVAC unit so we can identify it."
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.example.hvacconnect",
+          "enableGooglePay": true
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false,
+      "tsconfigPaths": true
+    }
+  }
+}
