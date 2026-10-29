@@ -11,7 +11,14 @@ function Check($what) { if ($LASTEXITCODE -ne 0) { throw "$what failed (exit cod
 Step "Checking Python and Node"
 $PyExe = $null
 $PyArgs = @()
-if (Get-Command py -ErrorAction SilentlyContinue) { $PyExe = "py"; $PyArgs = @("-3") }
+if (Get-Command py -ErrorAction SilentlyContinue) {
+  $PyExe = "py"; $PyArgs = @("-3")
+  # Prefer versions every package ships ready-made Windows downloads for.
+  foreach ($v in @("3.13", "3.12")) {
+    & py "-$v" -c "pass" 2>$null
+    if ($LASTEXITCODE -eq 0) { $PyArgs = @("-$v"); break }
+  }
+}
 elseif (Get-Command python -ErrorAction SilentlyContinue) { $PyExe = "python" }
 if (-not $PyExe) { throw "Python 3.12+ not found. Install it from https://www.python.org/downloads/ (tick 'Add python.exe to PATH')." }
 $pyVersion = & $PyExe @PyArgs -c "import sys; print('%d.%d' % sys.version_info[:2])"
@@ -28,8 +35,9 @@ Step "Setting up the backend (Python virtual environment + packages)"
 Set-Location (Join-Path $Root "backend")
 if (-not (Test-Path ".venv")) { & $PyExe @PyArgs -m venv .venv; Check "Creating the virtual environment" }
 $VenvPy = Join-Path (Get-Location) ".venv\Scripts\python.exe"
-& $VenvPy -m pip install --upgrade pip --quiet; Check "Upgrading pip"
-& $VenvPy -m pip install -e ".[dev]" --quiet; Check "Installing backend packages"
+& $VenvPy -m pip install --upgrade pip --quiet --disable-pip-version-check; Check "Upgrading pip"
+Write-Host "Downloading packages (usually 1-3 minutes)..."
+& $VenvPy -m pip install -e . --prefer-binary --disable-pip-version-check; Check "Installing backend packages"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env" }
 
 Step "Creating the demo database"

@@ -29,8 +29,10 @@ export function Screen({
   footer?: ReactNode;
   scroll?: boolean;
 }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const framed = Platform.OS === 'web' && width >= 520;
+  // Short browser windows (laptops at 125-150% zoom): use the full height, no margins.
+  const tall = height >= 820;
   const body = scroll ? (
     <ScrollView
       contentContainerStyle={styles.scrollContent}
@@ -43,8 +45,8 @@ export function Screen({
     <View style={[styles.scrollContent, { flex: 1 }]}>{children}</View>
   );
   return (
-    <View style={[styles.outer, framed && styles.outerFramed]}>
-      <SafeAreaView style={[styles.column, framed && styles.columnFramed]} edges={['top', 'bottom']}>
+    <View style={[styles.outer, framed && styles.outerFramed, framed && !tall && { paddingVertical: 0 }]}>
+      <SafeAreaView style={[styles.column, framed && styles.columnFramed, framed && !tall && { borderRadius: 0, borderTopWidth: 0, borderBottomWidth: 0 }]} edges={['top', 'bottom']}>
         {body}
         {footer ? <View style={styles.footer}>{footer}</View> : null}
       </SafeAreaView>

@@ -7,7 +7,7 @@ COPY pyproject.toml ./
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
-RUN pip install --no-cache-dir . && useradd --create-home appuser && mkdir -p var && chown appuser var
+RUN pip install --no-cache-dir ".[postgres]" && useradd --create-home appuser && mkdir -p var && chown appuser var
 USER appuser
 
 EXPOSE 8000

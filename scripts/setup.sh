@@ -9,7 +9,7 @@ node -e 'const m=+process.versions.node.split(".")[0]; if (m < 22) { console.err
 cd "$ROOT/backend"
 [ -d .venv ] || python3 -m venv .venv
 .venv/bin/pip install --upgrade pip -q
-.venv/bin/pip install -e ".[dev]" -q
+.venv/bin/pip install -e . --prefer-binary
 [ -f .env ] || cp .env.example .env
 .venv/bin/python -m app.cli reset-demo
 

@@ -207,6 +207,7 @@ shop-portal/src/ pages/, components/, lib/
 
 ```powershell
 cd backend
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"   # test + lint tools (once)
 .\.venv\Scripts\python.exe -m pytest -q          # 41 tests: domain rules + full API flows
 .\.venv\Scripts\python.exe -m ruff check app tests
 .\.venv\Scripts\python.exe -m mypy app
