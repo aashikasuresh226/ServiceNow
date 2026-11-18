@@ -23,7 +23,9 @@ class OtpStartIn(Model):
 class OtpStartOut(Model):
     phone: str
     resend_after_seconds: int
-    dev_code: str | None = Field(None, description="Local demo only: the code that was texted")
+    dev_code: str | None = Field(
+        None, description="Development without Twilio only: the code, shown on screen"
+    )
 
 
 class OtpVerifyIn(Model):
@@ -60,13 +62,31 @@ class ShopLoginIn(Model):
 class ShopLoginOut(Model):
     step: str  # "mfa" (enter code) | "mfa_setup" (enroll 2-step first)
     token: str
-    dev_code: str | None = None
 
 
 class MfaEnrollOut(Model):
     secret: str
     otpauth_uri: str
-    dev_code: str | None = None
+
+
+class NonceOut(Model):
+    nonce: str
+
+
+class GoogleHomeownerIn(Model):
+    id_token: str = Field(min_length=20, max_length=4096)
+
+
+class GoogleShopIn(GoogleHomeownerIn):
+    shop_name: str | None = Field(None, max_length=160)
+
+
+class PhoneStartIn(Model):
+    phone: str = Field(min_length=7, max_length=20)
+
+
+class PhoneVerifyIn(PhoneStartIn):
+    code: str = Field(min_length=4, max_length=8)
 
 
 class MfaCodeIn(Model):
@@ -80,7 +100,8 @@ class MfaLoginIn(MfaCodeIn):
 # --- Homeowner ------------------------------------------------------------------------------
 class HomeownerOut(Model):
     id: uuid.UUID
-    phone: str
+    phone: str | None
+    email: str | None
     name: str | None
     address: str | None
     lat: float | None
@@ -91,15 +112,12 @@ class HomeownerOut(Model):
 
 class HomeownerUpdateIn(Model):
     name: str | None = Field(None, max_length=120)
-    address: str | None = Field(None, max_length=300)
-    lat: float | None = Field(None, ge=-90, le=90)
-    lng: float | None = Field(None, ge=-180, le=180)
+    address: str | None = Field(None, max_length=300)  # looked up with the geocoder
     sms_opt_in: bool | None = None
 
 
 class CardSetupOut(Model):
-    provider: str  # "stripe" | "demo"
-    publishable_key: str | None
+    publishable_key: str
     customer_id: str
     setup_intent_id: str
     client_secret: str
@@ -110,19 +128,13 @@ class CardSetupFinishIn(Model):
     setup_intent_id: str = Field(max_length=100)
 
 
-class DemoCardIn(Model):
-    setup_intent_id: str = Field(max_length=100)
-    card_number: str = Field(min_length=12, max_length=23)
-
-
 # --- Requests -------------------------------------------------------------------------------
 class RequestCreateIn(Model):
     symptoms: list[str] = Field(default_factory=list, max_length=6)
     description: str | None = Field(None, max_length=2000)
     urgency: str = "asap"
+    # Defaults to the homeowner's saved address; looked up with the geocoder.
     address: str | None = Field(None, max_length=300)
-    lat: float | None = Field(None, ge=-90, le=90)
-    lng: float | None = Field(None, ge=-180, le=180)
 
 
 class UnitUpdateIn(Model):
@@ -295,6 +307,14 @@ class BlockOut(Model):
     kind: str
     starts_at: datetime
     ends_at: datetime
+    label: str | None = None
+    source: str | None = None  # job | manual | hours | servicetitan | housecall_pro
+
+
+class CalendarLinkOut(Model):
+    url: str  # https link to the .ics feed
+    webcal_url: str  # opens Apple Calendar / Outlook directly
+    google_url: str  # "add by URL" in Google Calendar (needs the API reachable from the internet)
 
 
 class BusyIn(Model):

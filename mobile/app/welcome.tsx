@@ -1,18 +1,19 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Text, View, useWindowDimensions } from 'react-native';
 
+import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
 import { HouseIllustration } from '@/components/illustrations';
 import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, Muted, Row, Screen } from '@/components/ui';
 import { api } from '@/lib/api';
+import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
 import { useAction, useOptions } from '@/lib/hooks';
 
-const DEMO_PHONE = '(555) 555-0100';
-
 export default function Welcome() {
   const options = useOptions();
+  const { signIn } = useAuth();
   const { height } = useWindowDimensions();
   const compact = height < 820;
   const [phone, setPhone] = useState('');
@@ -25,30 +26,36 @@ export default function Welcome() {
     });
   });
   const submit = (value: string) => {
-    if (value.replace(/\D/g, '').length < 7) {
-      start.setError('Enter your mobile number');
+    if (value.replace(/\D/g, '').length < 10) {
+      start.setError('Enter your 10-digit mobile number');
       return;
     }
     void start.run(value);
   };
 
+  const google = useAction(async (idToken: string) => {
+    const session = await api.googleSignIn(idToken);
+    const me = await signIn(session);
+    router.replace(nextOnboardingRoute(me, options));
+  });
+  const getNonce = useCallback(async () => (await api.googleNonce()).nonce, []);
+  const googleClientId = options?.features.google_client_id;
+  const showGoogle = Boolean(googleClientId) && googleSignInAvailable();
+  const devTexts = options?.features.texts === 'development';
+
   return (
     <Screen
       footer={
         <>
-          <Button label="Continue" icon="phone" busy={start.busy} onPress={() => submit(phone)} />
-          {options?.demo_mode ? (
-            <Button label="Use demo homeowner" variant="secondary" disabled={start.busy}
-              onPress={() => { setPhone(DEMO_PHONE); submit(DEMO_PHONE); }} />
-          ) : null}
+          <Button label="Continue with phone" icon="phone" busy={start.busy} onPress={() => submit(phone)} />
           <Muted style={{ textAlign: 'center', fontSize: 11 }}>
             By continuing you agree to the Terms and Privacy Policy. Message and data rates may apply.
           </Muted>
         </>
       }
     >
-      <Card tone="soft" style={{ alignItems: 'center', paddingVertical: compact ? 12 : 28 }}>
-        <HouseIllustration width={compact ? 170 : 250} />
+      <Card tone="soft" style={{ alignItems: 'center', paddingVertical: compact ? 10 : 24 }}>
+        <HouseIllustration width={compact ? 150 : 230} />
       </Card>
       <View style={{ alignItems: 'center', gap: 2 }}>
         <Text style={{ fontSize: compact ? 26 : 30, fontWeight: '800', color: colors.ink, letterSpacing: -0.5 }}>
@@ -56,6 +63,20 @@ export default function Welcome() {
         </Text>
         <Body style={{ color: colors.muted }}>HVAC help, matched in minutes</Body>
       </View>
+
+      {showGoogle && googleClientId ? (
+        <>
+          <GoogleSignIn clientId={googleClientId} getNonce={getNonce}
+            onCredential={(token) => google.run(token)} />
+          <ErrorText message={google.error} />
+          <Row style={{ gap: 10 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: colors.line }} />
+            <Muted>or use your phone</Muted>
+            <View style={{ flex: 1, height: 1, backgroundColor: colors.line }} />
+          </Row>
+        </>
+      ) : null}
+
       <Field
         label="Mobile number"
         value={phone}
@@ -68,13 +89,13 @@ export default function Welcome() {
         returnKeyType="go"
       />
       <ErrorText message={start.error} />
-      {options?.demo_mode ? (
+      {devTexts ? (
         <Row>
-          <Badge label="DEMO MODE" tone="amber" />
-          <Muted style={{ flex: 1 }}>Codes appear on screen. Any number works.</Muted>
+          <Badge label="TEST MODE" tone="amber" />
+          <Muted style={{ flex: 1 }}>Texting isn't set up yet, so your code is shown on screen.</Muted>
         </Row>
       ) : (
-        <Muted>We'll text you a code to sign in. No password needed.</Muted>
+        <Muted>We'll text you a 6-digit code. No password needed.</Muted>
       )}
     </Screen>
   );

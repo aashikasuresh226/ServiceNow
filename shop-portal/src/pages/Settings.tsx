@@ -34,8 +34,9 @@ export function SettingsPage() {
           <div className="field">
             <label htmlFor="shop-address">Shop address</label>
             <input id="shop-address" className="input" value={address} onChange={(e) => setAddress(e.target.value)}
-              placeholder="Street, city, ZIP" />
-            <span className="small muted">Technicians are matched by distance from here.</span>
+              placeholder="123 Main St, Atlanta, GA 30303" />
+            <span className="small muted">Include street number, city, state and ZIP. We look it up
+              to find your location; technicians are matched by distance from here.</span>
           </div>
           <ErrorAlert message={save.error} />
           <div className="row">

@@ -1,4 +1,4 @@
-"""Test fixtures: a real app + SQLite database, with fakes for every integration."""
+"""Test fixtures: a real app + SQLite database, with test doubles for outside services."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from app.core.clock import FrozenClock
 from app.core.config import Environment, Settings
 from app.core.db import Base
 from app.core.security import hash_password
-from app.integrations.payments.fake import FakePaymentGateway
+from app.domain.geo import LatLng
+from app.integrations.geocoding import GeocodeResult
 from app.integrations.sms import ConsoleSmsSender
 from app.main import create_app
 from app.models import Shop, ShopUser, Technician
@@ -46,6 +47,17 @@ def png_bytes() -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", raw) + chunk(b"IEND", b"")
 
 
+class PinnedGeocoder:
+    """Every address resolves to HOME unless it starts with "@lat,lng " (keeps tests exact)."""
+
+    async def geocode(self, address: str) -> GeocodeResult:
+        if address.startswith("@"):
+            coords, _, rest = address[1:].partition(" ")
+            lat, lng = (float(v) for v in coords.split(","))
+            return GeocodeResult(LatLng(lat, lng), rest or address)
+        return GeocodeResult(LatLng(*HOME), address.strip())
+
+
 @pytest.fixture
 def clock() -> FrozenClock:
     return FrozenClock(datetime(2026, 7, 15, 16, 0, tzinfo=UTC))
@@ -54,7 +66,11 @@ def clock() -> FrozenClock:
 @pytest.fixture
 async def container(tmp_path: Path, clock: FrozenClock) -> AsyncIterator[Container]:
     settings = Settings(
-        environment=Environment.DEV,  # exposes dev codes so tests can sign in
+        environment=Environment.TEST,
+        ai_provider="fake",
+        payments_provider="fake",
+        geocoding_provider="fake",
+        sms_provider="console",  # codes come back as dev_code so tests can sign in
         # Set HVAC_TEST_DATABASE_URL to run the suite against Postgres (as CI should).
         database_url=os.environ.get(
             "HVAC_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
@@ -63,7 +79,7 @@ async def container(tmp_path: Path, clock: FrozenClock) -> AsyncIterator[Contain
         run_worker_in_process=False,
     )
     built = build_container(settings)
-    built = replace(built, clock=clock, sms=ConsoleSmsSender(), payments=FakePaymentGateway())
+    built = replace(built, clock=clock, sms=ConsoleSmsSender(), geocoder=PinnedGeocoder())
     async with built.engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -174,20 +190,12 @@ async def homeowner_login(
     r = await client.patch(
         "/me",
         headers=headers,
-        json={"name": "Jordan Lee", "address": "191 Peachtree St", "lat": HOME[0], "lng": HOME[1]},
+        json={"name": "Jordan Lee", "address": "191 Peachtree St NE, Atlanta, GA 30303"},
     )
     assert r.status_code == 200, r.text
     if with_card:
+        # The test gateway stands in for Stripe Elements confirming the SetupIntent.
         setup = (await client.post("/me/payment-methods/setup", headers=headers)).json()
-        r = await client.post(
-            "/me/payment-methods/demo-card",
-            headers=headers,
-            json={
-                "setup_intent_id": setup["setup_intent_id"],
-                "card_number": "4242 4242 4242 4242",
-            },
-        )
-        assert r.status_code == 204, r.text
         r = await client.post(
             "/me/payment-methods/finish",
             headers=headers,
@@ -219,8 +227,6 @@ async def analyzed_request(
         json={
             "symptoms": symptoms or ["no_cooling"],
             "description": "Blowing warm air",
-            "lat": HOME[0],
-            "lng": HOME[1],
         },
     )
     assert r.status_code == 201, r.text

@@ -9,6 +9,7 @@ import type {
   CardSetup,
   Homeowner,
   Options,
+  OtpStarted,
   ServiceRequest,
   Tokens,
 } from './types';
@@ -111,17 +112,21 @@ export const api = {
 
   // Auth
   startOtp: (phone: string) =>
-    request<{ phone: string; resend_after_seconds: number; dev_code: string | null }>(
-      'POST',
-      '/auth/homeowner/otp/start',
-      { phone },
-      { auth: false },
-    ),
+    request<OtpStarted>('POST', '/auth/homeowner/otp/start', { phone }, { auth: false }),
   verifyOtp: (phone: string, code: string) =>
     request<Tokens & { needs_profile: boolean }>(
       'POST',
       '/auth/homeowner/otp/verify',
       { phone, code },
+      { auth: false },
+    ),
+  googleNonce: () =>
+    request<{ nonce: string }>('POST', '/auth/google/nonce', undefined, { auth: false }),
+  googleSignIn: (idToken: string) =>
+    request<Tokens & { needs_profile: boolean }>(
+      'POST',
+      '/auth/homeowner/google',
+      { id_token: idToken },
       { auth: false },
     ),
   logout: (refreshToken: string) =>
@@ -131,12 +136,10 @@ export const api = {
   me: () => request<Homeowner>('GET', '/me'),
   updateMe: (data: Partial<Pick<Homeowner, 'name' | 'address' | 'sms_opt_in'>>) =>
     request<Homeowner>('PATCH', '/me', data),
+  startAddPhone: (phone: string) => request<OtpStarted>('POST', '/me/phone/start', { phone }),
+  verifyAddPhone: (phone: string, code: string) =>
+    request<Homeowner>('POST', '/me/phone/verify', { phone, code }),
   startCardSetup: () => request<CardSetup>('POST', '/me/payment-methods/setup'),
-  demoCard: (setupIntentId: string, cardNumber: string) =>
-    request<void>('POST', '/me/payment-methods/demo-card', {
-      setup_intent_id: setupIntentId,
-      card_number: cardNumber,
-    }),
   finishCardSetup: (setupIntentId: string) =>
     request<Homeowner>('POST', '/me/payment-methods/finish', { setup_intent_id: setupIntentId }),
 

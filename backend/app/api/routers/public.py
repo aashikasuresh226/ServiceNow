@@ -66,7 +66,15 @@ async def options(c: ContainerDep) -> dict[str, object]:
         "certifications": _options(enums.Certification),
         "soft_skills": _options(enums.SoftSkill),
         "diagnostic_fee_cents": DIAGNOSTIC_FEE_CENTS,
-        "demo_mode": c.settings.environment.value == "dev",
+        # What's switched on, so the apps only show features that work.
+        "features": {
+            "google_client_id": c.settings.google_web_client_id,
+            "payments": c.payments is not None,
+            "stripe_publishable_key": c.payments.publishable_key if c.payments else None,
+            "photo_analysis": c.analyzer is not None,
+            "texts": "twilio" if c.phone_verify is not None else "development",
+            "scheduling_integrations": c.settings.scheduling_integrations_enabled,
+        },
     }
 
 
@@ -94,6 +102,8 @@ async def payments_webhook(
     c: ContainerDep,
     stripe_signature: str | None = Header(None),
 ) -> dict[str, bool]:
+    if c.payments is None:
+        raise NotFound("Payments aren't set up")
     event = c.payments.parse_webhook(payload=await request.body(), signature=stripe_signature)
     session.add(ProcessedWebhook(event_id=event.id))
     try:

@@ -40,17 +40,24 @@ class StripePaymentGateway:
         self.is_test_mode = secret_key.startswith("sk_test_")
 
     async def ensure_customer(
-        self, *, existing_id: str | None, phone: str, name: str | None, reference: str
+        self,
+        *,
+        existing_id: str | None,
+        phone: str,
+        email: str | None,
+        name: str | None,
+        reference: str,
     ) -> str:
         if existing_id:
             return existing_id
+        params: dict[str, Any] = {"name": name or "", "metadata": {"homeowner_id": reference}}
+        if phone:
+            params["phone"] = phone
+        if email:
+            params["email"] = email
         customer = await self._call(
             self._client.v1.customers.create_async(
-                params={
-                    "phone": phone,
-                    "name": name or "",
-                    "metadata": {"homeowner_id": reference},
-                },
+                params=cast(Any, params),
                 options={"idempotency_key": f"customer-{reference}"},
             )
         )
@@ -59,11 +66,15 @@ class StripePaymentGateway:
     async def create_setup_session(self, *, customer_id: str) -> SetupSession:
         intent = await self._call(
             self._client.v1.setup_intents.create_async(
-                params={
-                    "customer": customer_id,
-                    "usage": "off_session",
-                    "automatic_payment_methods": {"enabled": True},
-                }
+                params=cast(
+                    Any,
+                    {
+                        "customer": customer_id,
+                        "usage": "off_session",
+                        # Cards only (no Apple Pay / Google Pay / Link wallets).
+                        "payment_method_types": ["card"],
+                    },
+                )
             )
         )
         key = await self._call(

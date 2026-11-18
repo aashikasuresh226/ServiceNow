@@ -1,16 +1,18 @@
-/** Sign in / create account, then the mandatory 2-step verification. */
+/**
+ * Sign in / create account with Google or email + password, then the mandatory
+ * authenticator-app code (2-step verification) on every shop account.
+ */
 import QRCode from 'qrcode';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { GoogleButton } from '../components/GoogleButton';
 import { Icon } from '../components/Icon';
 import { Button, ErrorAlert } from '../components/ui';
 import { api, setTokens } from '../lib/api';
 import { useAction, useOptions } from '../lib/hooks';
 import type { LoginStep } from '../lib/types';
-
-const DEMO = { email: 'demo@coolbreeze.example.com', password: 'DemoPassword123!' };
 
 function Hero() {
   return (
@@ -47,13 +49,19 @@ export function AuthPage() {
       : await api.signup({ email, password, shop_name: shopName }));
   });
   const onSubmit = (e: FormEvent) => { e.preventDefault(); void submit.run(); };
+  const google = useAction(async (idToken: string) => {
+    setStep(await api.google(idToken, mode === 'signup' ? shopName.trim() : undefined));
+  });
+  const getNonce = useCallback(async () => (await api.googleNonce()).nonce, []);
+  const googleClientId = options?.features.google_client_id;
+  const canUseGoogle = mode === 'login' || shopName.trim().length >= 2;
 
   if (step?.step === 'mfa') {
     return <MfaVerify step={step} onDone={() => navigate('/', { replace: true })} onBack={() => setStep(null)} />;
   }
   if (step?.step === 'mfa_setup') {
     return <MfaSetup token={step.token} isNew={mode === 'signup'}
-      onDone={() => navigate(mode === 'signup' ? '/onboarding/payouts' : '/', { replace: true })} />;
+      onDone={() => navigate(mode === 'signup' && options?.features.payments ? '/onboarding/payouts' : '/', { replace: true })} />;
   }
 
   return (
@@ -86,30 +94,38 @@ export function AuthPage() {
           <Button type="submit" variant="primary" busy={submit.busy}>
             {mode === 'login' ? 'Sign in' : 'Create account'}
           </Button>
-          <p className="row small muted"><Icon name="shield" size={14} color="var(--primary)" /> 2-step verification is required on every shop account</p>
-          {options?.demo_mode && mode === 'login' ? (
-            <div className="notice small">
-              <span><strong>Demo mode.</strong> Sign in as Cool Breeze HVAC.{' '}
-                <a href="#demo" onClick={(e) => { e.preventDefault(); setEmail(DEMO.email); setPassword(DEMO.password); }}>Fill demo login</a></span>
-            </div>
+          {googleClientId ? (
+            <>
+              <div className="row small muted" style={{ gap: 10 }}>
+                <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />or<span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+              </div>
+              {canUseGoogle ? (
+                <GoogleButton key={mode} clientId={googleClientId} getNonce={getNonce}
+                  text={mode === 'login' ? 'signin_with' : 'signup_with'}
+                  onCredential={(token) => google.run(token)} />
+              ) : (
+                <p className="small muted" style={{ textAlign: 'center' }}>Enter your shop name to sign up with Google.</p>
+              )}
+              <ErrorAlert message={google.error} />
+            </>
           ) : null}
+          <p className="row small muted"><Icon name="shield" size={14} color="var(--primary)" /> 2-step verification is required on every shop account</p>
         </form>
       </div>
     </div>
   );
 }
 
-function CodeForm({ title, subtitle, devCode, submitLabel, onSubmit, error, busy, children }: {
+function CodeForm({ title, subtitle, submitLabel, onSubmit, error, busy, children }: {
   title: string;
   subtitle: string;
-  devCode: string | null;
   submitLabel: string;
   onSubmit: (code: string) => void;
   error: string | null;
   busy: boolean;
   children?: React.ReactNode;
 }) {
-  const [code, setCode] = useState(devCode ?? '');
+  const [code, setCode] = useState('');
   return (
     <div className="auth-page">
       <form className="card" style={{ maxWidth: 440, width: '100%', padding: 28 }}
@@ -122,7 +138,6 @@ function CodeForm({ title, subtitle, devCode, submitLabel, onSubmit, error, busy
           <input id="code" className="input code-input" inputMode="numeric" autoComplete="one-time-code"
             value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} autoFocus />
         </div>
-        {devCode ? <div className="notice small">Demo mode: the current code was filled in for you.</div> : null}
         <ErrorAlert message={error} />
         <Button type="submit" variant="primary" busy={busy} disabled={code.length !== 6}>{submitLabel}</Button>
       </form>
@@ -137,7 +152,7 @@ function MfaVerify({ step, onDone, onBack }: { step: LoginStep; onDone: () => vo
   });
   return (
     <CodeForm title="2-step verification" subtitle="Enter the code from your authenticator app."
-      devCode={step.dev_code} submitLabel="Verify" onSubmit={(c) => verify.run(c)}
+      submitLabel="Verify" onSubmit={(c) => verify.run(c)}
       error={verify.error} busy={verify.busy}>
       <a href="#back" className="small" onClick={(e) => { e.preventDefault(); onBack(); }}>Use a different account</a>
     </CodeForm>
@@ -145,7 +160,7 @@ function MfaVerify({ step, onDone, onBack }: { step: LoginStep; onDone: () => vo
 }
 
 function MfaSetup({ token, onDone }: { token: string; isNew: boolean; onDone: () => void }) {
-  const [enroll, setEnroll] = useState<{ secret: string; otpauth_uri: string; dev_code: string | null } | null>(null);
+  const [enroll, setEnroll] = useState<{ secret: string; otpauth_uri: string } | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const start = useAction(async () => {
     const result = await api.enrollMfa(token);
@@ -170,7 +185,7 @@ function MfaSetup({ token, onDone }: { token: string; isNew: boolean; onDone: ()
   return (
     <CodeForm title="Turn on 2-step verification"
       subtitle="Scan this with Google Authenticator, 1Password or a similar app, then enter the code it shows."
-      devCode={enroll.dev_code} submitLabel="Turn on & continue" onSubmit={(c) => activate.run(c)}
+      submitLabel="Turn on & continue" onSubmit={(c) => activate.run(c)}
       error={activate.error} busy={activate.busy}>
       <div className="row" style={{ alignItems: 'center' }}>
         {qr ? <img src={qr} width={150} height={150} alt="QR code for your authenticator app" /> : null}

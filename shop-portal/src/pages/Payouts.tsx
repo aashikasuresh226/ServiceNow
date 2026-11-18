@@ -36,6 +36,32 @@ export function PayoutFlowDiagram() {
 }
 
 export function PayoutsCard({ onboarding = false }: { onboarding?: boolean }) {
+  const { me, options } = usePortal();
+  if (options && !options.features.payments) {
+    return (
+      <section className="card" aria-labelledby="payouts-title">
+        <div className="row between">
+          <h2 id="payouts-title">Get paid</h2>
+          <span className="badge neutral">Payments off</span>
+        </div>
+        <p className="muted">
+          In-app payments switch on once the platform's Stripe account is connected. Until then you
+          can go live without payouts, and homeowners pay you directly for each job.
+        </p>
+        <PayoutFlowDiagram />
+        {onboarding ? <ContinueButton /> : null}
+      </section>
+    );
+  }
+  return <StripePayouts onboarding={onboarding} shopName={me.shop.name} />;
+}
+
+function ContinueButton() {
+  const navigate = useNavigate();
+  return <div><Button variant="primary" onClick={() => navigate('/', { replace: true })}>Continue to dashboard</Button></div>;
+}
+
+function StripePayouts({ onboarding }: { onboarding: boolean; shopName: string }) {
   const { me, setMe } = usePortal();
   const shop = me.shop;
   const [params] = useSearchParams();
@@ -106,7 +132,7 @@ export function PayoutsOnboarding() {
   return (
     <div className="stack" style={{ maxWidth: 640 }}>
       <h1>Set up payouts</h1>
-      <p className="muted">Connect a bank account so you can go live and receive jobs.</p>
+      <p className="muted">Connect a bank account so you can receive payment for jobs.</p>
       <PayoutsCard onboarding />
     </div>
   );

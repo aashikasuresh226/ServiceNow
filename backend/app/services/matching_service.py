@@ -18,6 +18,7 @@ from app.domain.matching import MatchCriteria, RankedCandidate, eligible_candida
 from app.domain.waitlist import TechSlot, estimate_wait_minutes
 from app.models import Homeowner, ServiceRequest, Shop, Technician
 from app.services.availability_service import AvailabilityService
+from app.services.calendar_service import CalendarService
 from app.services.lifecycle import clear_assignment, transition
 from app.services.notifications import notify_homeowner
 from app.services.payment_service import PaymentService
@@ -34,6 +35,7 @@ class MatchingService:
         self.settings = container.settings
         self.availability = AvailabilityService(session, container)
         self.payments = PaymentService(session, container)
+        self.calendar = CalendarService(session, container)
 
     # --- Criteria ---------------------------------------------------------------
     @staticmethod
@@ -134,6 +136,7 @@ class MatchingService:
         request.proposal_expires_at = None
         request.offer_expires_at = now + timedelta(seconds=self.settings.offer_ttl_seconds)
         transition(self.s, request, S.OFFERED, Actor.HOMEOWNER)
+        await self.calendar.book(request)
 
     async def widen_search(self, request: ServiceRequest) -> None:
         """Drop soft-skill preferences to get matched faster."""
@@ -147,6 +150,7 @@ class MatchingService:
 
     async def cancel(self, request: ServiceRequest, actor: Actor, reason: str) -> None:
         await self.payments.release_hold(request)
+        await self.calendar.release(request)
         clear_assignment(request)
         request.canceled_reason = reason[:200]
         transition(self.s, request, S.CANCELED, actor, note=reason[:300])
@@ -161,6 +165,7 @@ class MatchingService:
             await self._reassign_within_shop(request, shop, technician_id, now)
         request.offer_expires_at = None
         transition(self.s, request, S.DISPATCHED, Actor.SHOP)
+        await self.calendar.confirm(request)
         tech = await self.s.get(Technician, request.technician_id)
         homeowner = await self.s.get(Homeowner, request.homeowner_id)
         if tech and homeowner:
@@ -211,6 +216,7 @@ class MatchingService:
             declined.add(str(request.technician_id))
         request.declined_technician_ids = sorted(declined)
         await self.payments.release_hold(request)
+        await self.calendar.release(request)
         clear_assignment(request)
         best = await self._pick_and_reserve(request, now)
         if best:
@@ -230,6 +236,7 @@ class MatchingService:
         await self.payments.place_hold(request, homeowner, shop, request.estimate_low_cents or 0)
         request.offer_expires_at = now + timedelta(seconds=self.settings.offer_ttl_seconds)
         transition(self.s, request, S.OFFERED, Actor.SYSTEM, note=note)
+        await self.calendar.book(request)
 
     # --- Background work (called by the worker) -----------------------------------------
     async def expire_proposals(self) -> int:

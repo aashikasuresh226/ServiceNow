@@ -10,9 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, InvalidState, NotFound
-from app.domain.enums import Actor, EquipmentType, RequestStatus, SoftSkill, Symptom, Urgency
+from app.domain.enums import (
+    Actor,
+    EquipmentType,
+    IssueCategory,
+    RequestStatus,
+    SoftSkill,
+    Symptom,
+    Urgency,
+)
 from app.domain.pricing import PRICE_BOOK, estimate_for
-from app.integrations.ai.base import PhotoInput
+from app.integrations.ai.base import AnalysisResult, Diagnosis, PhotoInput, UnitInfo
 from app.integrations.storage import sniff_image_type
 from app.models import Homeowner, RequestPhoto, ServiceRequest
 from app.services.lifecycle import transition
@@ -53,22 +61,19 @@ class RequestService:
         description: str | None,
         urgency: str,
         address: str | None,
-        lat: float | None,
-        lng: float | None,
     ) -> ServiceRequest:
         symptoms = validate_options(symptoms, Symptom, "symptom")
         validate_options([urgency], Urgency, "urgency")
         if not symptoms and not (description and description.strip()):
             raise AppError("Tell us what's going wrong", code="missing_description")
 
-        if lat is None or lng is None:
-            if address:
-                geo = await self.c.geocoder.geocode(address)
-                lat, lng, address = geo.location.lat, geo.location.lng, geo.formatted_address
-            elif homeowner.lat is not None and homeowner.lng is not None:
-                lat, lng, address = homeowner.lat, homeowner.lng, homeowner.address
-            else:
-                raise AppError("Add your service address", code="missing_address")
+        if address and address.strip() and address.strip() != homeowner.address:
+            geo = await self.c.geocoder.geocode(address)
+            lat, lng, address = geo.location.lat, geo.location.lng, geo.formatted_address
+        elif homeowner.lat is not None and homeowner.lng is not None:
+            lat, lng, address = homeowner.lat, homeowner.lng, homeowner.address
+        else:
+            raise AppError("Add your service address", code="missing_address")
 
         request = ServiceRequest(
             homeowner_id=homeowner.id,
@@ -109,13 +114,7 @@ class RequestService:
     async def analyze(self, request: ServiceRequest) -> ServiceRequest:
         if request.status not in EDITABLE_STATUSES:
             raise InvalidState("This request has already been analyzed and matched")
-        photos = [
-            PhotoInput(await self.c.storage.read(p.storage_key), p.content_type)
-            for p in request.photos
-        ]
-        result = await self.c.analyzer.analyze(
-            symptoms=request.symptoms, description=request.description, photos=photos
-        )
+        result = await self._run_analysis(request)
         estimate = estimate_for(result.diagnosis.primary_issue)
         price_entry = PRICE_BOOK[result.diagnosis.primary_issue]
 
@@ -133,6 +132,8 @@ class RequestService:
             ],
             "confidence": result.diagnosis.confidence.value,
             "safety_warning": result.diagnosis.safety_warning,
+            "visible_issues": result.diagnosis.visible_issues,
+            "ai_used": self.c.analyzer is not None,
         }
         request.issue_category = result.diagnosis.primary_issue.value
         request.requires_refrigerant_work = price_entry.requires_refrigerant_work or any(
@@ -143,6 +144,27 @@ class RequestService:
         transition(self.s, request, S.ANALYZED, Actor.SYSTEM)
         await self.s.flush()
         return request
+
+    async def _run_analysis(self, request: ServiceRequest) -> AnalysisResult:
+        if self.c.analyzer is None:
+            # Photo analysis is switched off (no Anthropic key): nothing is guessed.
+            return AnalysisResult(
+                unit=UnitInfo(None, None, None, EquipmentType.UNKNOWN, None),
+                diagnosis=Diagnosis(
+                    primary_issue=IssueCategory.GENERAL_DIAGNOSTIC,
+                    summary="Your technician will diagnose the problem on site.",
+                ),
+            )
+        photos = [
+            PhotoInput(await self.c.storage.read(p.storage_key), p.content_type)
+            for p in request.photos
+        ]
+        return await self.c.analyzer.analyze(
+            symptoms=request.symptoms,
+            description=request.description,
+            photos=photos,
+            current_year=self.c.clock.now().year,
+        )
 
     async def update_unit(
         self,

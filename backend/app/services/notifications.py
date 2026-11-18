@@ -11,7 +11,12 @@ log = logging.getLogger(__name__)
 
 
 async def notify_homeowner(container: Container, homeowner: Homeowner, message: str) -> None:
-    if not homeowner.sms_opt_in:
+    if not homeowner.sms_opt_in or not homeowner.phone:
+        return
+    if container.sms is None:
+        log.info(
+            "Text to homeowner %s not sent (Twilio Messaging not set up): %s", homeowner.id, message
+        )
         return
     try:
         await container.sms.send(to=homeowner.phone, body=message)

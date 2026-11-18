@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 
-from app.api.deps import ContainerDep, SessionDep, ShopSetupDep
+from app.api.deps import ContainerDep, SessionDep, ShopSetupDep, client_ip
 from app.core.errors import Forbidden, Unauthorized
 from app.core.security import Role, TokenType
 from app.models import ShopUser
 from app.schemas.api import (
+    GoogleHomeownerIn,
+    GoogleShopIn,
     HomeownerSessionOut,
     MfaCodeIn,
     MfaEnrollOut,
     MfaLoginIn,
+    NonceOut,
     OtpStartIn,
     OtpStartOut,
     OtpVerifyIn,
@@ -27,8 +30,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # --- Homeowners -----------------------------------------------------------------------------
 @router.post("/homeowner/otp/start", response_model=OtpStartOut)
-async def start_otp(body: OtpStartIn, session: SessionDep, c: ContainerDep) -> OtpStartOut:
-    started = await AuthService(session, c).start_phone_otp(body.phone)
+async def start_otp(
+    body: OtpStartIn, request: Request, session: SessionDep, c: ContainerDep
+) -> OtpStartOut:
+    started = await AuthService(session, c).start_phone_otp(body.phone, ip=client_ip(request))
     return OtpStartOut(
         phone=started.phone,
         resend_after_seconds=started.resend_after_seconds,
@@ -38,15 +43,49 @@ async def start_otp(body: OtpStartIn, session: SessionDep, c: ContainerDep) -> O
 
 @router.post("/homeowner/otp/verify", response_model=HomeownerSessionOut)
 async def verify_otp(
-    body: OtpVerifyIn, session: SessionDep, c: ContainerDep
+    body: OtpVerifyIn, request: Request, session: SessionDep, c: ContainerDep
 ) -> HomeownerSessionOut:
-    _, tokens, needs_profile = await AuthService(session, c).verify_phone_otp(body.phone, body.code)
+    _, tokens, needs_profile = await AuthService(session, c).verify_phone_otp(
+        body.phone, body.code, ip=client_ip(request)
+    )
     return HomeownerSessionOut(
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token,
         expires_in=tokens.expires_in,
         needs_profile=needs_profile,
     )
+
+
+# --- Sign in with Google ---------------------------------------------------------------------
+@router.post("/google/nonce", response_model=NonceOut)
+async def google_nonce(session: SessionDep, c: ContainerDep) -> NonceOut:
+    """A single-use value the browser passes to Google; the ID token must carry it back."""
+    return NonceOut(nonce=await AuthService(session, c).new_google_nonce())
+
+
+@router.post("/homeowner/google", response_model=HomeownerSessionOut)
+async def homeowner_google(
+    body: GoogleHomeownerIn, request: Request, session: SessionDep, c: ContainerDep
+) -> HomeownerSessionOut:
+    _, tokens, needs_profile = await AuthService(session, c).google_homeowner(
+        body.id_token, ip=client_ip(request)
+    )
+    return HomeownerSessionOut(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
+        needs_profile=needs_profile,
+    )
+
+
+@router.post("/shop/google", response_model=ShopLoginOut)
+async def shop_google(
+    body: GoogleShopIn, request: Request, session: SessionDep, c: ContainerDep
+) -> ShopLoginOut:
+    _, token, kind = await AuthService(session, c).google_shop(
+        body.id_token, shop_name=body.shop_name, ip=client_ip(request)
+    )
+    return ShopLoginOut(step="mfa" if kind == TokenType.MFA else "mfa_setup", token=token)
 
 
 # --- Sessions -----------------------------------------------------------------------------------
@@ -67,30 +106,31 @@ async def logout(body: RefreshIn, session: SessionDep, c: ContainerDep) -> None:
 
 # --- Shops ----------------------------------------------------------------------------------------
 @router.post("/shop/signup", response_model=ShopLoginOut, status_code=status.HTTP_201_CREATED)
-async def shop_signup(body: ShopSignupIn, session: SessionDep, c: ContainerDep) -> ShopLoginOut:
-    _, token = await AuthService(session, c).shop_signup(
+async def shop_signup(
+    body: ShopSignupIn, request: Request, session: SessionDep, c: ContainerDep
+) -> ShopLoginOut:
+    service = AuthService(session, c)
+    service.limit_ip(client_ip(request))
+    _, token = await service.shop_signup(
         email=body.email, password=body.password, shop_name=body.shop_name, name=body.name
     )
     return ShopLoginOut(step="mfa_setup", token=token)
 
 
 @router.post("/shop/login", response_model=ShopLoginOut)
-async def shop_login(body: ShopLoginIn, session: SessionDep, c: ContainerDep) -> ShopLoginOut:
-    service = AuthService(session, c)
-    user, token, kind = await service.shop_login(email=body.email, password=body.password)
-    step = "mfa" if kind == TokenType.MFA else "mfa_setup"
-    return ShopLoginOut(
-        step=step, token=token, dev_code=service.dev_totp_code(user) if step == "mfa" else None
+async def shop_login(
+    body: ShopLoginIn, request: Request, session: SessionDep, c: ContainerDep
+) -> ShopLoginOut:
+    _, token, kind = await AuthService(session, c).shop_login(
+        email=body.email, password=body.password, ip=client_ip(request)
     )
+    return ShopLoginOut(step="mfa" if kind == TokenType.MFA else "mfa_setup", token=token)
 
 
 @router.post("/shop/mfa/enroll", response_model=MfaEnrollOut)
 async def mfa_enroll(principal: ShopSetupDep, session: SessionDep, c: ContainerDep) -> MfaEnrollOut:
-    service = AuthService(session, c)
-    secret, uri = await service.enroll_mfa(principal.user)
-    return MfaEnrollOut(
-        secret=secret, otpauth_uri=uri, dev_code=service.dev_totp_code(principal.user)
-    )
+    secret, uri = await AuthService(session, c).enroll_mfa(principal.user)
+    return MfaEnrollOut(secret=secret, otpauth_uri=uri)
 
 
 @router.post("/shop/mfa/activate", response_model=TokensOut)

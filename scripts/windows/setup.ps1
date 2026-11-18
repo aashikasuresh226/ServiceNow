@@ -40,8 +40,8 @@ Write-Host "Downloading packages (usually 1-3 minutes)..."
 & $VenvPy -m pip install -e . --prefer-binary --disable-pip-version-check; Check "Installing backend packages"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env" }
 
-Step "Creating the demo database"
-& $VenvPy -m app.cli reset-demo; Check "Creating the demo database"
+Step "Creating or updating the database"
+& $VenvPy -m app.cli migrate; Check "Updating the database"
 
 # --- Homeowner app -----------------------------------------------------------------------
 Step "Installing the homeowner app (this can take a few minutes)"

@@ -8,7 +8,7 @@ import { Viewfinder } from '@/components/illustrations';
 import { colors } from '@/components/theme';
 import { Button, ErrorText, Muted, Row, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { api, UserError } from '@/lib/api';
-import { useAction } from '@/lib/hooks';
+import { useAction, useOptions } from '@/lib/hooks';
 import type { ServiceRequest } from '@/lib/types';
 
 const ANALYSIS_STEPS = ['Reading the data plate', 'Identifying your unit', 'Checking likely causes',
@@ -16,6 +16,7 @@ const ANALYSIS_STEPS = ['Reading the data plate', 'Identifying your unit', 'Chec
 
 export default function Photo() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const aiOn = useOptions()?.features.photo_analysis ?? false;
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   const [analysisStep, setAnalysisStep] = useState(0);
 
@@ -75,7 +76,7 @@ export default function Photo() {
   return (
     <Screen footer={
       <>
-        <Button label={photos.length ? 'Analyze my unit' : 'Take photo'}
+        <Button label={photos.length ? (aiOn ? 'Analyze my unit' : 'Continue') : 'Take photo'}
           icon={photos.length ? 'sparkle' : 'camera'} busy={upload.busy}
           onPress={() => (photos.length ? analyze.run() : upload.run('camera'))} />
         {!photos.length ? (
@@ -103,6 +104,11 @@ export default function Photo() {
         ) : null}
       </Row>
       <Muted>Indoor or outdoor unit both work. Up to 5 photos.</Muted>
+      {aiOn ? (
+        <Muted>Claude reads the label (brand, model, serial, age, refrigerant) and looks for visible problems.</Muted>
+      ) : (
+        <Muted>Photo analysis isn't switched on yet. Your photos are shared with your technician.</Muted>
+      )}
       <ErrorText message={upload.error ?? analyze.error} />
     </Screen>
   );

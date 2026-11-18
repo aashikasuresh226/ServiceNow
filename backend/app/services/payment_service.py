@@ -1,4 +1,8 @@
-"""Money movement for a request: hold → (re-hold if the quote is higher) → capture."""
+"""Money movement for a request: hold → (re-hold if the quote is higher) → capture.
+
+When Stripe isn't configured, payments are switched off: no card is needed,
+nothing is held or charged, and the shop collects payment itself.
+"""
 
 from __future__ import annotations
 
@@ -21,10 +25,16 @@ class PaymentService:
         self.gateway = container.payments
         self.fee_bps = container.settings.platform_fee_bps
 
+    @property
+    def enabled(self) -> bool:
+        return self.gateway is not None
+
     async def place_hold(
         self, request: ServiceRequest, homeowner: Homeowner, shop: Shop, amount_cents: int
     ) -> None:
         """Authorize (not charge) the card, routed to the shop's payout account."""
+        if self.gateway is None:
+            return
         if not homeowner.payment_customer_id or not homeowner.default_payment_method_id:
             raise PaymentRequired(
                 "Add a payment method to book a technician", code="payment_method_required"
@@ -46,7 +56,7 @@ class PaymentService:
         request.authorized_cents = auth.amount_cents
 
     async def release_hold(self, request: ServiceRequest) -> None:
-        if request.payment_intent_id and request.captured_cents is None:
+        if self.gateway and request.payment_intent_id and request.captured_cents is None:
             try:
                 await self.gateway.cancel(intent_id=request.payment_intent_id)
             except Exception:
@@ -59,11 +69,15 @@ class PaymentService:
         self, request: ServiceRequest, homeowner: Homeowner, shop: Shop, amount_cents: int
     ) -> None:
         """Called when the homeowner approves a quote above the current hold."""
+        if self.gateway is None:
+            return
         if request.authorized_cents is not None and amount_cents <= request.authorized_cents:
             return
         await self.place_hold(request, homeowner, shop, amount_cents)
 
     async def capture(self, request: ServiceRequest) -> None:
+        if self.gateway is None:
+            return  # payments off: the shop collects payment directly
         if request.final_price_cents is None or not request.payment_intent_id:
             raise InvalidState("Nothing to charge for this job")
         amount = request.final_price_cents

@@ -1,5 +1,6 @@
 /** Typed client for the shop endpoints. Refreshes an expired session once, then gives up. */
 import type {
+  CalendarLink,
   Dashboard,
   Job,
   LoginStep,
@@ -121,10 +122,13 @@ export const api = {
     request<LoginStep>('POST', '/auth/shop/signup', data),
   login: (email: string, password: string) =>
     request<LoginStep>('POST', '/auth/shop/login', { email, password }),
+  googleNonce: () => request<{ nonce: string }>('POST', '/auth/google/nonce'),
+  google: (id_token: string, shop_name?: string) =>
+    request<LoginStep>('POST', '/auth/shop/google', shop_name ? { id_token, shop_name } : { id_token }),
   loginMfa: (token: string, code: string) =>
     request<Tokens>('POST', '/auth/shop/login/mfa', { token, code }),
   enrollMfa: (setupToken: string) =>
-    request<{ secret: string; otpauth_uri: string; dev_code: string | null }>(
+    request<{ secret: string; otpauth_uri: string }>(
       'POST', '/auth/shop/mfa/enroll', undefined, { token: setupToken }),
   activateMfa: (setupToken: string, code: string) =>
     request<Tokens>('POST', '/auth/shop/mfa/activate', { code }, { token: setupToken }),
@@ -153,6 +157,9 @@ export const api = {
     request<Technician>('POST', `/shop/technicians/${id}/busy`, { minutes }),
   clearBusy: (id: string) => request<Technician>('DELETE', `/shop/technicians/${id}/busy`),
   importTechnicians: () => request<{ count: number }>('POST', '/shop/technicians/import'),
+
+  calendarLink: (id: string, rotate = false) =>
+    request<CalendarLink>('GET', `/shop/technicians/${id}/calendar${rotate ? '?rotate=true' : ''}`),
 
   availability: () => request<TechDay[]>('GET', '/shop/availability'),
   dashboard: () => request<Dashboard>('GET', '/shop/dashboard'),

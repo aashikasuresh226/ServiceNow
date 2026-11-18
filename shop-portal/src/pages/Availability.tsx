@@ -1,8 +1,15 @@
-/** Today's board: each tech's shifts and bookings, with quick manual busy/free controls. */
+/**
+ * Today's board: each tech's open hours, jobs booked through the app (with the
+ * customer once the shop accepts), and manual busy time. Each tech also has a
+ * private calendar link to subscribe to from their phone.
+ */
+import { useState } from 'react';
+
 import { Avatar } from '../components/Icon';
 import { Button, ErrorAlert } from '../components/ui';
 import { api } from '../lib/api';
 import { clock, useAction, useLiveData, usePortal } from '../lib/hooks';
+import type { CalendarLink, Technician } from '../lib/types';
 
 const START_HOUR = 6;
 const END_HOUR = 22;
@@ -36,8 +43,12 @@ export function AvailabilityPage() {
             : synced ? `Synced ${clock(synced)}` : 'Waiting for first sync'}
         </span>
       </div>
-      <p className="muted">Open time is offered to nearby homeowners. Mark a tech busy for walk-in or phone jobs.</p>
+      <p className="muted">Open time is offered to nearby homeowners. Jobs booked in the app are added
+        here automatically. Mark a tech busy for walk-in or phone jobs.</p>
       <ErrorAlert message={board.error ?? busy.error ?? free.error} />
+      {board.data && !board.data.length ? (
+        <div className="card soft">No technicians yet. Add them on the Technicians page.</div>
+      ) : null}
       <div className="card table-wrap">
         <div style={{ minWidth: 720, display: 'grid', gap: 10 }}>
           <div className="row" style={{ paddingLeft: 200, gap: 0 }}>
@@ -62,19 +73,53 @@ export function AvailabilityPage() {
                     style={{ left: `${position(b.starts_at)}%`, width: `${position(b.ends_at) - position(b.starts_at)}%` }}>Open</div>
                 ))}
                 {d.blocks.filter((b) => b.kind === 'busy').map((b) => (
-                  <div key={`b${b.starts_at}`} className="block busy" title={`${clock(b.starts_at)}–${clock(b.ends_at)}`}
-                    style={{ left: `${position(b.starts_at)}%`, width: `${Math.max(1, position(b.ends_at) - position(b.starts_at))}%` }}>Busy</div>
+                  <div key={`b${b.starts_at}${b.label ?? ''}`} className={`block busy${b.source === 'job' ? ' job' : ''}`}
+                    title={`${clock(b.starts_at)}–${clock(b.ends_at)}${b.label ? ` · ${b.label}` : ''}`}
+                    style={{ left: `${position(b.starts_at)}%`, width: `${Math.max(1, position(b.ends_at) - position(b.starts_at))}%` }}>
+                    {b.source === 'job' ? b.label ?? 'Job' : 'Busy'}
+                  </div>
                 ))}
                 <div className="now" style={{ left: `${nowPct}%` }} aria-hidden="true" />
               </div>
               <div className="row" style={{ flexWrap: 'nowrap', gap: 6 }}>
                 <Button size="small" onClick={() => busy.run(d.technician.id, 45)} disabled={!d.technician.is_active}>Busy 45m</Button>
                 <Button size="small" onClick={() => free.run(d.technician.id)}>Free now</Button>
+                <CalendarButton tech={d.technician} />
               </div>
             </div>
           ))}
         </div>
       </div>
+    </>
+  );
+}
+
+function CalendarButton({ tech }: { tech: Technician }) {
+  const [link, setLink] = useState<CalendarLink | null>(null);
+  const [copied, setCopied] = useState(false);
+  const load = useAction(async (rotate: boolean) => setLink(await api.calendarLink(tech.id, rotate)));
+  if (!link) {
+    return <Button size="small" busy={load.busy} onClick={() => load.run(false)}>Calendar link</Button>;
+  }
+  return (
+    <>
+    <Button size="small" onClick={() => setLink(null)}>Calendar link</Button>
+    <div className="calendar-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setLink(null); }}>
+    <div className="calendar-pop card" role="dialog" aria-modal="true" aria-label={`${tech.name}'s calendar link`}>
+      <strong className="small">Subscribe to {tech.name.split(' ')[0]}'s jobs</strong>
+      <input className="input small" readOnly value={link.url} onFocus={(e) => e.currentTarget.select()} aria-label="Calendar feed URL" />
+      <div className="row" style={{ gap: 6 }}>
+        <Button size="small" onClick={async () => { await navigator.clipboard.writeText(link.url); setCopied(true); }}>
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+        <a className="btn small" href={link.webcal_url}>Apple / Outlook</a>
+        <a className="btn small" href={link.google_url} target="_blank" rel="noreferrer">Google Calendar</a>
+        <Button size="small" onClick={() => setLink(null)}>Close</Button>
+      </div>
+      <span className="small muted">Google Calendar needs the API to be reachable on the internet
+        (not localhost). Anyone with this link sees the jobs. <a href="#new" onClick={(e) => { e.preventDefault(); void load.run(true); }}>Make a new link</a> to revoke old ones.</span>
+    </div>
+    </div>
     </>
   );
 }

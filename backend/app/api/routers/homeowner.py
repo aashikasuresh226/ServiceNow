@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, File, UploadFile, status
+from fastapi import APIRouter, File, Request, UploadFile, status
 
-from app.api.deps import ContainerDep, HomeownerDep, SessionDep
+from app.api.deps import ContainerDep, HomeownerDep, SessionDep, client_ip
 from app.api.presenters import request_out
-from app.core.errors import AppError, NotFound
-from app.integrations.payments.fake import FakePaymentGateway
 from app.models import ServiceRequest
 from app.schemas.api import (
     CardSetupFinishIn,
     CardSetupOut,
-    DemoCardIn,
     HomeownerOut,
     HomeownerUpdateIn,
+    OtpStartOut,
+    PhoneStartIn,
+    PhoneVerifyIn,
     PreferencesIn,
     RatingIn,
     RequestCreateIn,
@@ -24,6 +24,7 @@ from app.schemas.api import (
     UnitUpdateIn,
 )
 from app.services.account_service import AccountService
+from app.services.auth_service import AuthService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.request_service import RequestService
@@ -42,39 +43,43 @@ async def update_me(
     body: HomeownerUpdateIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
 ) -> HomeownerOut:
     await AccountService(session, c).update_profile(
-        me,
-        name=body.name,
-        address=body.address,
-        lat=body.lat,
-        lng=body.lng,
-        sms_opt_in=body.sms_opt_in,
+        me, name=body.name, address=body.address, sms_opt_in=body.sms_opt_in
     )
+    return HomeownerOut.model_validate(me)
+
+
+@router.post("/me/phone/start", response_model=OtpStartOut)
+async def start_add_phone(
+    body: PhoneStartIn, request: Request, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> OtpStartOut:
+    """Google users add a mobile number (verified with a texted code)."""
+    started = await AuthService(session, c).start_add_phone(me, body.phone, ip=client_ip(request))
+    return OtpStartOut(
+        phone=started.phone,
+        resend_after_seconds=started.resend_after_seconds,
+        dev_code=started.dev_code,
+    )
+
+
+@router.post("/me/phone/verify", response_model=HomeownerOut)
+async def finish_add_phone(
+    body: PhoneVerifyIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> HomeownerOut:
+    await AuthService(session, c).finish_add_phone(me, body.phone, body.code)
     return HomeownerOut.model_validate(me)
 
 
 @router.post("/me/payment-methods/setup", response_model=CardSetupOut)
 async def start_card_setup(me: HomeownerDep, session: SessionDep, c: ContainerDep) -> CardSetupOut:
     setup = await AccountService(session, c).start_card_setup(me)
-    is_demo = isinstance(c.payments, FakePaymentGateway)
+    assert c.payments is not None  # start_card_setup raises when payments are off
     return CardSetupOut(
-        provider="demo" if is_demo else "stripe",
-        publishable_key=None if is_demo else c.payments.publishable_key,
+        publishable_key=c.payments.publishable_key,
         customer_id=setup.customer_id,
         setup_intent_id=setup.setup_intent_id,
         client_secret=setup.client_secret,
         ephemeral_key_secret=setup.ephemeral_key_secret,
     )
-
-
-@router.post("/me/payment-methods/demo-card", status_code=status.HTTP_204_NO_CONTENT)
-async def demo_card(body: DemoCardIn, me: HomeownerDep, c: ContainerDep) -> None:
-    """Demo mode only: stands in for Stripe's card form. Never sees real card data in prod."""
-    if not isinstance(c.payments, FakePaymentGateway):
-        raise NotFound("Not available")
-    digits = "".join(ch for ch in body.card_number if ch.isdigit())
-    if len(digits) < 12:
-        raise AppError("Enter a test card number", code="invalid_card")
-    c.payments.record_demo_card(body.setup_intent_id, digits[-4:])
 
 
 @router.post("/me/payment-methods/finish", response_model=HomeownerOut)
@@ -107,8 +112,6 @@ async def create_request(
         description=body.description,
         urgency=body.urgency,
         address=body.address,
-        lat=body.lat,
-        lng=body.lng,
     )
     return await _present(session, c, request)
 

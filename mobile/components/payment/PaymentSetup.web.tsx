@@ -1,6 +1,6 @@
 /**
- * Browser: Stripe's Payment Element (cards; Apple Pay in Safari, Google Pay in Chrome)
- * confirming a SetupIntent. Falls back to the demo form when the backend runs without Stripe.
+ * Browser: Stripe's Payment Element confirming a SetupIntent. Cards only: the
+ * backend's SetupIntent allows only cards, and wallets are turned off here.
  */
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 // The 'pure' entry only fetches Stripe.js when loadStripe() is called (not in demo mode).
@@ -15,7 +15,6 @@ import type { CardSetup, Homeowner } from '@/lib/types';
 
 import { colors } from '../theme';
 import { Button, ErrorText, Loading, Muted } from '../ui';
-import { DemoCardForm } from './DemoCardForm';
 
 const stripeCache = new Map<string, Promise<Stripe | null>>();
 function getStripe(key: string): Promise<Stripe | null> {
@@ -37,9 +36,6 @@ export function PaymentSetup({ onSaved, submitLabel = 'Save payment method' }: {
 
   if (load.error) return <ErrorText message={load.error} />;
   if (!setup) return <Loading />;
-  if (setup.provider === 'demo' || !setup.publishable_key) {
-    return <DemoCardForm setup={setup} onSaved={onSaved} submitLabel={submitLabel} />;
-  }
   return <StripeForm setup={setup} onSaved={onSaved} submitLabel={submitLabel} />;
 }
 
@@ -48,7 +44,7 @@ function StripeForm({ setup, onSaved, submitLabel }: {
   onSaved: (me: Homeowner) => void;
   submitLabel: string;
 }) {
-  const stripePromise = useMemo(() => getStripe(setup.publishable_key!), [setup.publishable_key]);
+  const stripePromise = useMemo(() => getStripe(setup.publishable_key), [setup.publishable_key]);
   return (
     <Elements
       stripe={stripePromise}
@@ -86,7 +82,7 @@ function ConfirmForm({ setup, onSaved, submitLabel }: {
     <View style={{ gap: 12 }}>
       <Muted>Secured by Stripe. You won't be charged until a job is done.</Muted>
       <div style={{ minHeight: 120 }}>
-        <PaymentElement options={{ layout: 'tabs' }} />
+        <PaymentElement options={{ layout: 'tabs', wallets: { applePay: 'never', googlePay: 'never' } }} />
       </div>
       <ErrorText message={save.error} />
       <Button label={submitLabel} icon="lock" busy={save.busy} disabled={!stripe}

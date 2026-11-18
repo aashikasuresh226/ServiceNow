@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, status
 
 from app.api.deps import ContainerDep, SessionDep, ShopDep
 from app.api.presenters import shop_job_out
-from app.core.errors import NotFound
+from app.core.errors import InvalidState, NotFound
 from app.models import ServiceRequest, Technician
 from app.schemas.api import (
     AcceptIn,
     BlockOut,
     BusyIn,
+    CalendarLinkOut,
     CountOut,
     DashboardOut,
     LinkOut,
@@ -31,6 +33,7 @@ from app.schemas.api import (
     TechnicianOut,
 )
 from app.services.availability_service import AvailabilityService
+from app.services.calendar_service import CalendarService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.shop_service import ShopService
@@ -104,6 +107,10 @@ async def connect_scheduling(
     body: SchedulingConnectIn, principal: ShopDep, session: SessionDep, c: ContainerDep
 ) -> CountOut:
     """Verify credentials, store them encrypted, import technicians, run a first sync."""
+    if not c.settings.scheduling_integrations_enabled:
+        raise InvalidState(
+            "ServiceTitan and Housecall Pro connections are coming soon.", code="coming_soon"
+        )
     imported = await ShopService(session, c).connect_scheduling(
         principal.shop, body.provider, body.credentials, body.write_back_jobs
     )
@@ -182,6 +189,26 @@ async def clear_busy(
     return _tech_out(tech)
 
 
+@router.get("/technicians/{technician_id}/calendar", response_model=CalendarLinkOut)
+async def calendar_link(
+    technician_id: uuid.UUID,
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+    rotate: bool = Query(False),
+) -> CalendarLinkOut:
+    """Private calendar feed for one technician (subscribe from Google/Apple/Outlook)."""
+    tech = await ShopService(session, c).get_technician(principal.shop, technician_id)
+    service = CalendarService(session, c)
+    url = service.feed_url(await service.feed_token(tech, rotate=rotate))
+    webcal = "webcal://" + url.split("://", 1)[1]
+    return CalendarLinkOut(
+        url=url,
+        webcal_url=webcal,
+        google_url=f"https://calendar.google.com/calendar/r?cid={quote(webcal, safe='')}",
+    )
+
+
 # --- Availability + dashboard -------------------------------------------------------------------
 @router.get("/availability", response_model=list[TechDayOut])
 async def availability(
@@ -192,7 +219,13 @@ async def availability(
         TechDayOut(
             technician=_tech_out(d.technician),
             blocks=[
-                BlockOut(kind=b.kind.value, starts_at=b.starts_at, ends_at=b.ends_at)
+                BlockOut(
+                    kind=b.kind.value,
+                    starts_at=b.starts_at,
+                    ends_at=b.ends_at,
+                    label=b.label,
+                    source=b.source,
+                )
                 for b in d.blocks
             ],
             free_now=d.free_now,

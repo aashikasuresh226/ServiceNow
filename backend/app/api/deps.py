@@ -19,6 +19,11 @@ from app.models import Homeowner, Shop, ShopUser
 _bearer = HTTPBearer(auto_error=False)
 
 
+def client_ip(request: Request) -> str | None:
+    """Caller's IP for rate limiting. Behind a proxy, run uvicorn with --proxy-headers."""
+    return request.client.host if request.client else None
+
+
 def get_container(request: Request) -> Container:
     return request.app.state.container
 

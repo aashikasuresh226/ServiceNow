@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 
 import { api, bindTokenStore } from './api';
 import { getItem, removeItem, setItem } from './storage';
-import type { Homeowner, Tokens } from './types';
+import type { Homeowner, Options, Tokens } from './types';
 
 const STORAGE_KEY = 'hvac.session';
 
@@ -98,8 +98,11 @@ export function useAuth(): AuthState {
 }
 
 /** Where a signed-in homeowner should go next, based on what's missing. */
-export function nextOnboardingRoute(me: Homeowner): '/profile' | '/payment' | '/home' {
-  if (!me.name || !me.address) return '/profile';
-  if (!me.payment_method_label) return '/payment';
+export function nextOnboardingRoute(
+  me: Homeowner,
+  options: Options | null,
+): '/profile' | '/payment' | '/home' {
+  if (!me.name || !me.address || !me.phone) return '/profile';
+  if (options?.features.payments && !me.payment_method_label) return '/payment';
   return '/home';
 }

@@ -22,6 +22,12 @@ class UnitInfo:
     equipment_type: EquipmentType
     approx_age_years: int | None
     tonnage: float | None = None
+    manufacture_year: int | None = None
+    refrigerant: str | None = None  # e.g. R-410A, R-22 (phased out), R-454B
+    fuel: str | None = None  # electric | natural_gas | propane | oil
+    seer_rating: float | None = None
+    voltage: str | None = None
+    photo_feedback: str | None = None  # e.g. "Label is blurry: retake closer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +37,7 @@ class Diagnosis:
     alternatives: list[IssueCategory] = field(default_factory=list)
     confidence: Confidence = Confidence.LOW
     safety_warning: str | None = None
+    visible_issues: list[str] = field(default_factory=list)  # what the photo shows
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,5 +48,10 @@ class AnalysisResult:
 
 class UnitAnalyzer(Protocol):
     async def analyze(
-        self, *, symptoms: list[str], description: str | None, photos: list[PhotoInput]
+        self,
+        *,
+        symptoms: list[str],
+        description: str | None,
+        photos: list[PhotoInput],
+        current_year: int,
     ) -> AnalysisResult: ...

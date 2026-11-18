@@ -5,9 +5,11 @@ import { colors } from '@/components/theme';
 import { Body, Button, Card, KeyValue, Muted, Row, Screen, StepHeader, Title } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { formatPhone } from '@/lib/format';
+import { useOptions } from '@/lib/hooks';
 
 export default function Account() {
   const { me, signOut } = useAuth();
+  const options = useOptions();
   if (!me) return null;
   return (
     <Screen>
@@ -16,9 +18,11 @@ export default function Account() {
       <Card>
         <KeyValue k="Name" v={me.name ?? '—'} />
         <KeyValue k="Phone" v={formatPhone(me.phone)} />
+        {me.email ? <KeyValue k="Google" v={me.email} /> : null}
         <Muted>{me.address}</Muted>
         <Button label="Edit details" variant="secondary" onPress={() => router.push('/profile')} />
       </Card>
+      {options?.features.payments ? (
       <Card>
         <Row>
           <Icon name="card" size={20} color={colors.primary} />
@@ -28,6 +32,11 @@ export default function Account() {
           variant="secondary"
           onPress={() => router.push({ pathname: '/payment', params: { returnTo: '/account' } })} />
       </Card>
+      ) : (
+        <Card tone="muted">
+          <Muted>In-app payments aren't switched on yet. Pay your technician's shop directly.</Muted>
+        </Card>
+      )}
       <Button label="Sign out" variant="danger" icon="logout"
         onPress={async () => { await signOut(); router.replace('/welcome'); }} />
     </Screen>

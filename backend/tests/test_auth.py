@@ -5,7 +5,9 @@ from __future__ import annotations
 import httpx
 import pyotp
 
+from app.container import Container
 from app.core.clock import FrozenClock
+from app.integrations.payments.fake import FakePaymentGateway
 from tests.conftest import SHOP_PASSWORD, SeededShop, analyzed_request, homeowner_login
 
 
@@ -100,7 +102,9 @@ async def test_homeowner_token_cannot_call_shop_api(client: httpx.AsyncClient) -
     assert (await client.get("/shop/me", headers=home)).status_code == 403
 
 
-async def test_go_live_requires_payouts(client: httpx.AsyncClient, clock: FrozenClock) -> None:
+async def test_go_live_requires_payouts(
+    client: httpx.AsyncClient, clock: FrozenClock, container: Container
+) -> None:
     r = await client.post(
         "/auth/shop/signup",
         json={
@@ -125,9 +129,12 @@ async def test_go_live_requires_payouts(client: httpx.AsyncClient, clock: Frozen
 
     link = (await client.post("/shop/payouts/onboarding-link", headers=shop)).json()["url"]
     account_id = link.rsplit("/", 1)[1]
-    r = await client.get(f"/dev/fake-payout-onboarding/{account_id}", follow_redirects=False)
-    assert r.status_code == 307
-    await client.patch("/shop/me", headers=shop, json={"address": "1 Main St, Atlanta"})
+    # Stand-in for finishing Stripe's hosted onboarding.
+    assert isinstance(container.payments, FakePaymentGateway)
+    container.payments.complete_onboarding(account_id)
+    me = (await client.post("/shop/payouts/refresh", headers=shop)).json()
+    assert me["shop"]["payouts_enabled"] is True
+    await client.patch("/shop/me", headers=shop, json={"address": "1 Main St, Atlanta, GA 30303"})
     await client.post(
         "/shop/technicians",
         headers=shop,

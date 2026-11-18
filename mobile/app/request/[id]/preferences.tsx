@@ -58,7 +58,7 @@ export default function Preferences() {
           <TextLink label="Change" onPress={() => router.push('/profile')} />
         </View>
       </Card>
-      {!me?.payment_method_label ? (
+      {options?.features.payments && !me?.payment_method_label ? (
         <Row>
           <Muted style={{ flex: 1 }}>You'll need a payment method to confirm a booking.</Muted>
           <TextLink label="Add" onPress={() => router.push({ pathname: '/payment', params: { returnTo: `/request/${id}/preferences` } })} />

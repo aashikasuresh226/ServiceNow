@@ -21,6 +21,8 @@ class Block:
     kind: AvailabilityKind
     starts_at: datetime
     ends_at: datetime
+    label: str | None = None
+    source: str | None = None
 
     def contains(self, t: datetime) -> bool:
         return self.starts_at <= t < self.ends_at

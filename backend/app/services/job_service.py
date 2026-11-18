@@ -12,6 +12,7 @@ from app.core.errors import AppError, InvalidState, NotFound
 from app.domain.enums import Actor, RequestStatus
 from app.domain.state_machine import HOMEOWNER_CANCELABLE
 from app.models import Homeowner, ServiceRequest, Shop, Technician
+from app.services.calendar_service import CalendarService
 from app.services.lifecycle import transition
 from app.services.matching_service import MatchingService
 from app.services.notifications import notify_homeowner
@@ -88,11 +89,15 @@ class JobService:
         await self.payments.capture(request)
         request.completed_at = self.c.clock.now()
         transition(self.s, request, S.COMPLETED, Actor.SHOP)
-        await self._notify(
-            request,
-            "Your HVAC job is complete. Your card was charged "
-            f"${(request.captured_cents or 0) / 100:,.2f}. Thanks!",
-        )
+        await CalendarService(self.s, self.c).finish(request)
+        if request.captured_cents is not None:
+            message = (
+                "Your HVAC job is complete. Your card was charged "
+                f"${request.captured_cents / 100:,.2f}. Thanks!"
+            )
+        else:
+            message = "Your HVAC job is complete. Thanks for using HVAC Connect!"
+        await self._notify(request, message)
 
     async def rate(self, request: ServiceRequest, rating: int) -> None:
         if request.status != S.COMPLETED.value:

@@ -7,12 +7,22 @@ export type Options = {
   equipment_types: Option[];
   certifications: Option[];
   soft_skills: Option[];
-  demo_mode: boolean;
+  features: Features;
+};
+
+/** What the backend has switched on (each turns on when its keys are configured). */
+export type Features = {
+  google_client_id: string | null;
+  payments: boolean;
+  stripe_publishable_key: string | null;
+  photo_analysis: boolean;
+  texts: 'twilio' | 'development';
+  scheduling_integrations: boolean;
 };
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number };
 
-export type LoginStep = { step: 'mfa' | 'mfa_setup'; token: string; dev_code: string | null };
+export type LoginStep = { step: 'mfa' | 'mfa_setup'; token: string };
 
 export type Shop = {
   id: string;
@@ -51,9 +61,20 @@ export type Technician = {
   rating_count: number;
 };
 
+export type Block = {
+  kind: 'shift' | 'busy';
+  starts_at: string;
+  ends_at: string;
+  label: string | null;
+  /** job = booked through the app; manual = marked busy here; hours = working hours */
+  source: string | null;
+};
+
+export type CalendarLink = { url: string; webcal_url: string; google_url: string };
+
 export type TechDay = {
   technician: Technician;
-  blocks: { kind: 'shift' | 'busy'; starts_at: string; ends_at: string }[];
+  blocks: Block[];
   free_now: boolean;
   on_job: boolean;
 };
@@ -90,10 +111,22 @@ export type Job = {
   unit: {
     brand: string | null;
     model_number: string | null;
+    serial_number?: string | null;
     equipment_type: string;
     approx_age_years: number | null;
+    manufacture_year?: number | null;
+    tonnage?: number | null;
+    refrigerant?: string | null;
+    fuel?: string | null;
+    seer_rating?: number | null;
   } | null;
-  diagnosis: { primary_issue_label: string; summary: string; confidence: string } | null;
+  diagnosis: {
+    primary_issue_label: string;
+    summary: string;
+    confidence: string;
+    visible_issues?: string[];
+    ai_used?: boolean;
+  } | null;
   estimate: { diagnostic_fee_cents: number | null; low_cents: number | null };
   soft_skills: string[];
   technician_id: string | null;

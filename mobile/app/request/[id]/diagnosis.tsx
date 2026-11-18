@@ -10,7 +10,7 @@ import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, Loading, Muted, Row, Screen, Segmented, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { labelFor, useAction, useOptions } from '@/lib/hooks';
-import type { ServiceRequest } from '@/lib/types';
+import type { ServiceRequest, UnitInfo } from '@/lib/types';
 import { decorative } from '@/components/a11y';
 
 const CONFIDENCE_BARS = { low: 1, medium: 2, high: 3 } as const;
@@ -52,17 +52,41 @@ export default function DiagnosisScreen() {
           )}
           <View style={styles.identified}>
             <Icon name="sparkle" size={11} color={colors.primary} strokeWidth={3} />
-            <Text style={styles.identifiedText}>{unit.edited_by_homeowner ? 'Edited by you' : 'Identified'}</Text>
+            <Text style={styles.identifiedText}>
+              {unit.edited_by_homeowner ? 'Edited by you' : dx.ai_used === false ? 'Your photo' : 'Identified'}
+            </Text>
           </View>
         </View>
+        {dx.ai_used === false && !unit.edited_by_homeowner ? null : (
         <Row style={{ justifyContent: 'space-around' }}>
           <Fact icon="building" value={unit.brand ?? 'Unknown'} />
           <Fact icon="tag" value={unit.model_number ?? '—'} />
-          <Fact icon="calendar" value={unit.approx_age_years != null ? `~${unit.approx_age_years} yrs` : 'Age ?'} />
+          <Fact icon="calendar" value={ageLabel(unit)} />
         </Row>
-        <Muted style={{ textAlign: 'center' }}>{labelFor(options, 'equipment_types', unit.equipment_type)}</Muted>
+        )}
+        {dx.ai_used === false && !unit.edited_by_homeowner ? null : (
+          <Muted style={{ textAlign: 'center' }}>{labelFor(options, 'equipment_types', unit.equipment_type)}</Muted>
+        )}
+        {labelFacts(unit).length ? (
+          <Row style={{ flexWrap: 'wrap', justifyContent: 'center', gap: 6 }}>
+            {labelFacts(unit).map((f) => <Badge key={f} label={f} tone="neutral" />)}
+          </Row>
+        ) : null}
       </Card>
+      {unit.photo_feedback ? (
+        <Card tone="amber" style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+          <Icon name="camera" size={18} color={colors.amberInk} />
+          <Body style={{ flex: 1, color: colors.amberInk }}>{unit.photo_feedback}</Body>
+        </Card>
+      ) : null}
+      {dx.ai_used === false ? (
+        <Card tone="muted">
+          <Muted>Photo analysis isn't switched on yet, so we haven't guessed the problem. Your
+            photos and description go to the technician, who diagnoses it on site.</Muted>
+        </Card>
+      ) : null}
 
+      {dx.ai_used === false ? null : (
       <Card tone="soft" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <Svg width={40} height={44} viewBox="0 0 40 44" {...decorative}>
           <Path d="M15 8V2M25 8V2" stroke={colors.primary} strokeWidth={2.5} strokeLinecap="round" />
@@ -80,7 +104,14 @@ export default function DiagnosisScreen() {
           </Row>
         </View>
       </Card>
-      <Body style={{ color: colors.body }}>{dx.summary}</Body>
+      )}
+      {dx.ai_used === false ? null : <Body style={{ color: colors.body }}>{dx.summary}</Body>}
+      {dx.visible_issues?.length ? (
+        <View style={{ gap: 4 }}>
+          <Muted>Seen in your photo:</Muted>
+          {dx.visible_issues.map((v) => <Body key={v} style={{ color: colors.body }}>• {v}</Body>)}
+        </View>
+      ) : null}
       {dx.alternatives.length ? (
         <Row style={{ flexWrap: 'wrap' }}>
           <Muted>Also possible:</Muted>
@@ -88,12 +119,28 @@ export default function DiagnosisScreen() {
         </Row>
       ) : null}
       <Row style={{ justifyContent: 'space-between' }}>
-        <Muted>AI suggestion · your technician confirms</Muted>
+        <Muted>{dx.ai_used === false ? 'Diagnosed on site' : 'Read by AI · your technician confirms'}</Muted>
         {!editing ? <TextLink label="Edit details" onPress={() => setEditing(true)} /> : null}
       </Row>
       {editing ? <EditUnit request={request} onSaved={(r) => { setRequest(r); setEditing(false); }} /> : null}
     </Screen>
   );
+}
+
+function ageLabel(unit: UnitInfo): string {
+  if (unit.manufacture_year) return `${unit.manufacture_year} (~${unit.approx_age_years ?? '?'} yrs)`;
+  return unit.approx_age_years != null ? `~${unit.approx_age_years} yrs` : 'Age ?';
+}
+
+function labelFacts(unit: UnitInfo): string[] {
+  const facts: string[] = [];
+  if (unit.tonnage) facts.push(`${unit.tonnage} ton`);
+  if (unit.refrigerant) facts.push(unit.refrigerant);
+  if (unit.seer_rating) facts.push(`SEER ${unit.seer_rating}`);
+  if (unit.fuel) facts.push(unit.fuel.replace('_', ' '));
+  if (unit.voltage) facts.push(unit.voltage);
+  if (unit.serial_number) facts.push(`S/N ${unit.serial_number}`);
+  return facts;
 }
 
 function Fact({ icon, value }: { icon: IconName; value: string }) {

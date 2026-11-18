@@ -32,11 +32,19 @@ function JobSummary({ job }: { job: Job }) {
       )}
       <div className="stack spacer" style={{ gap: 4, minWidth: 220 }}>
         <span className="row small strong" style={{ color: 'var(--primary)', gap: 4 }}>
-          <Icon name="sparkle" size={14} /> AI summary
+          {job.diagnosis?.ai_used === false
+            ? <>Request details · photo analysis off</>
+            : <><Icon name="sparkle" size={14} /> AI summary</>}
         </span>
         <span><span className="muted">Unit:</span> {job.unit?.brand ?? 'Unknown brand'} {job.unit?.model_number ?? ''}
           {job.unit ? ` · ${label(options, 'equipment_types', job.unit.equipment_type)}` : ''}
-          {job.unit?.approx_age_years != null ? ` · ~${job.unit.approx_age_years} yrs` : ''}</span>
+          {job.unit?.manufacture_year ? ` · made ${job.unit.manufacture_year}` : ''}
+          {job.unit?.approx_age_years != null ? ` · ~${job.unit.approx_age_years} yrs` : ''}
+          {job.unit?.tonnage ? ` · ${job.unit.tonnage} ton` : ''}
+          {job.unit?.refrigerant ? ` · ${job.unit.refrigerant}` : ''}</span>
+        {job.diagnosis?.visible_issues?.length ? (
+          <span><span className="muted">Seen in photo:</span> {job.diagnosis.visible_issues.join('; ')}</span>
+        ) : null}
         <span><span className="muted">Likely issue:</span> {job.diagnosis?.primary_issue_label ?? 'Needs diagnosis'}</span>
         <span><span className="muted">Homeowner says:</span>{' '}
           {job.description ? `“${job.description}”` : job.symptoms.map((s) => label(options, 'symptoms', s)).join(', ')}</span>
@@ -81,7 +89,11 @@ export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void 
           {freeTechs.map((d) => <option key={d.technician.id} value={d.technician.id}>Reassign to {d.technician.name}</option>)}
         </select>
       </div>
-      <p className="small muted">You'll receive {money(job.payout_cents)} after the platform fee (based on the estimate; final price set on site).</p>
+      {options?.features.payments ? (
+        <p className="small muted">You'll receive {money(job.payout_cents)} after the platform fee (based on the estimate; final price set on site).</p>
+      ) : (
+        <p className="small muted">Accepting adds the job and customer details to the technician's calendar. You set the final price on site and collect payment directly.</p>
+      )}
       <ErrorAlert message={accept.error ?? decline.error} />
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         <Button busy={decline.busy} onClick={() => decline.run()}>Decline</Button>
@@ -92,6 +104,8 @@ export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void 
 }
 
 function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) {
+  const { options } = usePortal();
+  const paymentsOn = options?.features.payments ?? false;
   const [price, setPrice] = useState('');
   const [notes, setNotes] = useState('');
   const act = useAction(async (fn: () => Promise<unknown>) => { await fn(); onChanged(); });
@@ -144,11 +158,15 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
       {job.status === 'in_progress' ? (
         <div className="row">
           <span className="muted small">Approved {money(job.quote?.final_price_cents)}.</span>
-          <Button variant="primary" icon="check" busy={act.busy} onClick={() => act.run(() => api.complete(job.id))}>Mark complete & charge</Button>
+          <Button variant="primary" icon="check" busy={act.busy} onClick={() => act.run(() => api.complete(job.id))}>{paymentsOn ? 'Mark complete & charge' : 'Mark complete'}</Button>
         </div>
       ) : null}
       {job.status === 'completed' ? (
-        <p className="small"><strong>Charged {money(job.payment.captured_cents)}</strong> · you receive {money(job.payout_cents)}</p>
+        job.payment.captured_cents != null ? (
+          <p className="small"><strong>Charged {money(job.payment.captured_cents)}</strong> · you receive {money(job.payout_cents)}</p>
+        ) : (
+          <p className="small"><strong>Done · {money(job.quote?.final_price_cents)}</strong> · collect payment directly</p>
+        )
       ) : null}
       <ErrorAlert message={act.error} />
     </section>

@@ -9,14 +9,26 @@ export type Options = {
   certifications: Option[];
   soft_skills: Option[];
   diagnostic_fee_cents: number;
-  demo_mode: boolean;
+  features: Features;
+};
+
+/** What the backend has switched on (each turns on when its keys are configured). */
+export type Features = {
+  google_client_id: string | null;
+  payments: boolean;
+  stripe_publishable_key: string | null;
+  photo_analysis: boolean;
+  /** 'twilio' = codes arrive by text; 'development' = codes are shown on screen. */
+  texts: 'twilio' | 'development';
+  scheduling_integrations: boolean;
 };
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number };
 
 export type Homeowner = {
   id: string;
-  phone: string;
+  phone: string | null;
+  email: string | null;
   name: string | null;
   address: string | null;
   lat: number | null;
@@ -46,6 +58,12 @@ export type UnitInfo = {
   equipment_type: string;
   approx_age_years: number | null;
   tonnage: number | null;
+  manufacture_year?: number | null;
+  refrigerant?: string | null;
+  fuel?: string | null;
+  seer_rating?: number | null;
+  voltage?: string | null;
+  photo_feedback?: string | null;
   edited_by_homeowner?: boolean;
 };
 
@@ -56,6 +74,9 @@ export type Diagnosis = {
   alternatives: { issue: string; label: string }[];
   confidence: 'low' | 'medium' | 'high';
   safety_warning: string | null;
+  visible_issues?: string[];
+  /** false when photo analysis is switched off (no Anthropic key yet). */
+  ai_used?: boolean;
 };
 
 export type TechnicianSummary = {
@@ -102,10 +123,11 @@ export type ServiceRequest = {
 };
 
 export type CardSetup = {
-  provider: 'stripe' | 'demo';
-  publishable_key: string | null;
+  publishable_key: string;
   customer_id: string;
   setup_intent_id: string;
   client_secret: string;
   ephemeral_key_secret: string | null;
 };
+
+export type OtpStarted = { phone: string; resend_after_seconds: number; dev_code: string | null };

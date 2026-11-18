@@ -7,16 +7,17 @@ import { useLiveData, usePortal } from '../lib/hooks';
 import { OfferCard } from './Jobs';
 
 export function DashboardPage() {
-  const { me } = usePortal();
+  const { me, options } = usePortal();
   const shop = me.shop;
+  const paymentsOn = options?.features.payments ?? false;
   const stats = useLiveData(() => api.dashboard(), 4000);
   const offers = useLiveData(() => api.jobs(['offered']), 4000);
   const techs = useLiveData(() => api.technicians());
 
   const steps = [
-    { done: shop.payouts_enabled, label: 'Set up payouts with Stripe', to: '/settings' },
+    ...(paymentsOn ? [{ done: shop.payouts_enabled, label: 'Set up payouts with Stripe', to: '/settings' }] : []),
     { done: !!shop.address, label: 'Add your shop address', to: '/settings' },
-    { done: (techs.data ?? []).some((t) => t.is_active), label: 'Add technicians with qualifications & soft skills', to: '/technicians' },
+    { done: (techs.data ?? []).some((t) => t.is_active), label: 'Add technicians with working hours, qualifications & soft skills', to: '/technicians' },
     { done: shop.is_live, label: 'Go live with the switch at the top right', to: '/' },
   ];
   const setupDone = steps.every((s) => s.done);
@@ -45,10 +46,9 @@ export function DashboardPage() {
               </li>
             ))}
           </ol>
-          {shop.scheduling_provider === 'none' ? (
+          {!paymentsOn ? (
             <p className="small muted">
-              Optional: <Link to="/integrations">connect ServiceTitan or Housecall Pro</Link> to sync
-              availability automatically. Without it, we use each technician's working hours.
+              In-app payments aren't switched on yet (no Stripe keys), so customers pay you directly.
             </p>
           ) : null}
         </section>

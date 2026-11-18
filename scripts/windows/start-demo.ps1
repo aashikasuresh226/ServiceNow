@@ -3,6 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\windows\start-demo.ps1
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$Backend = Join-Path $Root "backend"
 
 function Open-Window($title, $dir, $command) {
   Start-Process powershell -WorkingDirectory $dir -ArgumentList @(
@@ -10,7 +11,13 @@ function Open-Window($title, $dir, $command) {
   )
 }
 
-Open-Window "HVAC API (port 8000)" (Join-Path $Root "backend") ".\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000"
+# Apply any new database changes (safe to run every time; keeps your data).
+Set-Location $Backend
+.\.venv\Scripts\python.exe -m app.cli migrate
+if ($LASTEXITCODE -ne 0) { throw "Database update failed. See the messages above." }
+.\.venv\Scripts\python.exe -m app.cli check
+
+Open-Window "HVAC API (port 8000)" $Backend ".\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000"
 Open-Window "Shop portal (port 5173)" (Join-Path $Root "shop-portal") "npm run dev"
 Open-Window "Homeowner app (port 8081)" (Join-Path $Root "mobile") "npx expo start --web --port 8081"
 
@@ -19,6 +26,6 @@ Start-Sleep -Seconds 8
 Start-Process "http://localhost:5173"
 Start-Sleep -Seconds 12
 Start-Process "http://localhost:8081"
-Write-Host "Shop portal:   http://localhost:5173   (demo@coolbreeze.example.com / DemoPassword123!)"
-Write-Host "Homeowner app: http://localhost:8081   (tap 'Use demo homeowner')"
+Write-Host "Shop portal:   http://localhost:5173   (create your shop account)"
+Write-Host "Homeowner app: http://localhost:8081   (sign in with Google or a phone number)"
 Write-Host "Close the three PowerShell windows to stop everything."

@@ -1,4 +1,4 @@
-"""Deterministic analyzer for demos and tests: infers a likely issue from symptoms."""
+"""Deterministic analyzer for the automated tests only (never used by the running app)."""
 
 from __future__ import annotations
 
@@ -54,7 +54,12 @@ _RULES: list[tuple[Symptom, EquipmentType, IssueCategory, list[IssueCategory], s
 
 class FakeUnitAnalyzer:
     async def analyze(
-        self, *, symptoms: list[str], description: str | None, photos: list[PhotoInput]
+        self,
+        *,
+        symptoms: list[str],
+        description: str | None,
+        photos: list[PhotoInput],
+        current_year: int,
     ) -> AnalysisResult:
         rule = next((r for r in _RULES if r[0].value in symptoms), None)
         if rule:

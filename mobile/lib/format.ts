@@ -30,7 +30,8 @@ export function countdown(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export function formatPhone(e164: string): string {
+export function formatPhone(e164: string | null | undefined): string {
+  if (!e164) return '—';
   const d = e164.replace(/\D/g, '');
   if (d.length === 11 && d.startsWith('1')) {
     return `(${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`;

@@ -44,10 +44,6 @@ class Shop(IdMixin, TimestampMixin, Base):
     users = relationship("ShopUser", back_populates="shop", cascade="all, delete-orphan")
     technicians = relationship("Technician", back_populates="shop", cascade="all, delete-orphan")
 
-    @property
-    def can_receive_jobs(self) -> bool:
-        return self.is_live and self.payouts_enabled and self.lat is not None
-
 
 class Technician(IdMixin, TimestampMixin, Base):
     __tablename__ = "technicians"
@@ -74,6 +70,9 @@ class Technician(IdMixin, TimestampMixin, Base):
     # {"mon": [["08:00", "17:00"]], ...} in the shop's local timezone.
     working_hours: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
+    # Secret token in the technician's calendar feed URL (.ics). Rotating it revokes old links.
+    calendar_token: Mapped[str | None] = mapped_column(String(64), unique=True)
+
     rating_sum: Mapped[int] = mapped_column(default=0, nullable=False)
     rating_count: Mapped[int] = mapped_column(default=0, nullable=False)
 
@@ -90,7 +89,8 @@ class Technician(IdMixin, TimestampMixin, Base):
 class AvailabilityBlock(IdMixin, TimestampMixin, Base):
     """A time range when a tech is on shift (SHIFT) or booked (BUSY).
 
-    Synced from the shop's scheduling software, or generated from working_hours.
+    Sources: a job booked through the app ("job", linked to its request), time a
+    dispatcher blocked by hand ("manual"), or the shop's scheduling software.
     """
 
     __tablename__ = "availability_blocks"
@@ -104,5 +104,9 @@ class AvailabilityBlock(IdMixin, TimestampMixin, Base):
     ends_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)  # provider name or "hours"
     label: Mapped[str | None] = mapped_column(String(120))
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), index=True
+    )
+    details: Mapped[str | None] = mapped_column(Text)
 
     technician = relationship("Technician", back_populates="availability")

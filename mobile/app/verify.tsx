@@ -9,15 +9,22 @@ import { Badge, Button, Card, ErrorText, Muted, Screen, StepHeader, TextLink, Ti
 import { api } from '@/lib/api';
 import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { formatPhone } from '@/lib/format';
-import { useAction, useCountdown } from '@/lib/hooks';
+import { useAction, useCountdown, useOptions } from '@/lib/hooks';
 import { decorative } from '@/components/a11y';
 
 const LENGTH = 6;
 
+/**
+ * Enter the texted code. Two uses:
+ * - signing in with a phone number (default)
+ * - adding a phone number to a signed-in account (purpose=add, e.g. after Google sign-in)
+ */
 export default function Verify() {
-  const params = useLocalSearchParams<{ phone: string; devCode?: string }>();
+  const params = useLocalSearchParams<{ phone: string; devCode?: string; purpose?: string }>();
   const phone = params.phone ?? '';
-  const { signIn } = useAuth();
+  const adding = params.purpose === 'add';
+  const options = useOptions();
+  const { signIn, setMe } = useAuth();
   const [code, setCode] = useState(params.devCode ?? '');
   const [devCode, setDevCode] = useState(params.devCode ?? '');
   const [resendAt, setResendAt] = useState(() => new Date(Date.now() + 30_000).toISOString());
@@ -25,12 +32,18 @@ export default function Verify() {
   const input = useRef<ComponentRef<typeof TextInput>>(null);
 
   const verify = useAction(async (value: string) => {
+    if (adding) {
+      const me = await api.verifyAddPhone(phone, value);
+      setMe(me);
+      router.replace(nextOnboardingRoute(me, options));
+      return;
+    }
     const session = await api.verifyOtp(phone, value);
     const me = await signIn(session);
-    router.replace(nextOnboardingRoute(me));
+    router.replace(nextOnboardingRoute(me, options));
   });
   const resend = useAction(async () => {
-    const result = await api.startOtp(phone);
+    const result = adding ? await api.startAddPhone(phone) : await api.startOtp(phone);
     setResendAt(new Date(Date.now() + result.resend_after_seconds * 1000).toISOString());
     if (result.dev_code) {
       setDevCode(result.dev_code);
@@ -93,8 +106,11 @@ export default function Verify() {
       )}
       {devCode ? (
         <Card tone="amber" style={{ gap: 6 }}>
-          <Badge label="DEMO MODE" tone="amber" />
-          <Muted>Code {devCode} was filled in for you. In production it arrives by text.</Muted>
+          <Badge label="TEST MODE" tone="amber" />
+          <Muted>
+            Texting isn't set up yet (no Twilio keys), so code {devCode} was filled in for you.
+            Once Twilio is connected, codes arrive by text only.
+          </Muted>
         </Card>
       ) : null}
     </Screen>

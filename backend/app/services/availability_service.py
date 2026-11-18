@@ -71,7 +71,7 @@ class AvailabilityService:
         )
         for row in rows:
             blocks[row.technician_id].append(
-                Block(AvailabilityKind(row.kind), row.starts_at, row.ends_at)
+                Block(AvailabilityKind(row.kind), row.starts_at, row.ends_at, row.label, row.source)
             )
         for tech in technicians:
             shop = shops[tech.shop_id]
@@ -88,16 +88,14 @@ class AvailabilityService:
         """All active techs of job-ready shops near a location, with availability."""
         dlat = MAX_SERVICE_RADIUS_KM / 111.0
         dlng = dlat * 2  # generous for US latitudes
-        shops = list(
-            await self.s.scalars(
-                select(Shop).where(
-                    Shop.is_live.is_(True),
-                    Shop.payouts_enabled.is_(True),
-                    Shop.lat.between(near.lat - dlat, near.lat + dlat),
-                    Shop.lng.between(near.lng - dlng, near.lng + dlng),
-                )
-            )
+        query = select(Shop).where(
+            Shop.is_live.is_(True),
+            Shop.lat.between(near.lat - dlat, near.lat + dlat),
+            Shop.lng.between(near.lng - dlng, near.lng + dlng),
         )
+        if self.c.payments is not None:  # with payments on, shops must be able to get paid
+            query = query.where(Shop.payouts_enabled.is_(True))
+        shops = list(await self.s.scalars(query))
         if not shops:
             return []
         shop_by_id = {s.id: s for s in shops}

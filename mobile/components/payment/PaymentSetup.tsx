@@ -1,6 +1,7 @@
 /**
- * iOS/Android: Stripe PaymentSheet (cards, Apple Pay, Google Pay) saving a card
- * for later off-session charges. Web version: PaymentSetup.web.tsx.
+ * iOS/Android: Stripe PaymentSheet saving a card for later off-session charges.
+ * Cards only (the backend's SetupIntent allows only cards; no Apple Pay / Google Pay).
+ * Web version: PaymentSetup.web.tsx.
  */
 import { initPaymentSheet, initStripe, presentPaymentSheet } from '@stripe/stripe-react-native';
 import { useEffect, useState } from 'react';
@@ -12,7 +13,6 @@ import { useAction } from '@/lib/hooks';
 import type { CardSetup, Homeowner } from '@/lib/types';
 
 import { Button, ErrorText, Loading, Muted } from '../ui';
-import { DemoCardForm } from './DemoCardForm';
 
 export function PaymentSetup({ onSaved, submitLabel = 'Save payment method' }: {
   onSaved: (me: Homeowner) => void;
@@ -36,8 +36,6 @@ export function PaymentSetup({ onSaved, submitLabel = 'Save payment method' }: {
       customerId: s.customer_id,
       customerEphemeralKeySecret: s.ephemeral_key_secret ?? '',
       setupIntentClientSecret: s.client_secret,
-      applePay: { merchantCountryCode: 'US' },
-      googlePay: { merchantCountryCode: 'US', testEnv: s.publishable_key?.startsWith('pk_test') },
       returnURL: 'hvacconnect://stripe-redirect',
     });
     if (init.error) throw new UserError(init.error.message);
@@ -51,12 +49,9 @@ export function PaymentSetup({ onSaved, submitLabel = 'Save payment method' }: {
 
   if (load.error) return <ErrorText message={load.error} />;
   if (!setup) return <Loading />;
-  if (setup.provider === 'demo') {
-    return <DemoCardForm setup={setup} onSaved={onSaved} submitLabel={submitLabel} />;
-  }
   return (
     <View style={{ gap: 12 }}>
-      <Muted>Add a card, Apple Pay or Google Pay. Secured by Stripe.</Muted>
+      <Muted>Add a debit or credit card. Secured by Stripe.</Muted>
       <ErrorText message={present.error} />
       <Button label={submitLabel} icon="lock" busy={present.busy} onPress={() => present.run(setup)} />
     </View>

@@ -1,7 +1,7 @@
-"""Payment gateway interface (Stripe in production, an in-memory fake for demos/tests).
+"""Payment gateway interface (Stripe; an in-memory fake exists for the automated tests).
 
 Flow, modeled on ride-hailing apps:
-1. Homeowner saves a card (SetupIntent) during sign-up; nothing is charged.
+1. Homeowner saves a card (SetupIntent, cards only) during sign-up; nothing is charged.
 2. Confirming a booking places a hold (manual-capture PaymentIntent) for the estimate,
    routed to the shop's connected account with the platform fee attached.
 3. When the job is done, the approved final amount is captured.
@@ -52,7 +52,13 @@ class PaymentGateway(Protocol):
     is_test_mode: bool
 
     async def ensure_customer(
-        self, *, existing_id: str | None, phone: str, name: str | None, reference: str
+        self,
+        *,
+        existing_id: str | None,
+        phone: str,
+        email: str | None,
+        name: str | None,
+        reference: str,
     ) -> str: ...
 
     async def create_setup_session(self, *, customer_id: str) -> SetupSession: ...

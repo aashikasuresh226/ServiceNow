@@ -208,11 +208,7 @@ async def test_cancel_releases_hold(
 @pytest.mark.parametrize("bad", [b"not an image", b"%PDF-1.4 fake"])
 async def test_rejects_non_image_uploads(client: httpx.AsyncClient, bad: bytes) -> None:
     home = await homeowner_login(client, with_card=False)
-    rid = (
-        await client.post(
-            "/requests", headers=home, json={"symptoms": ["noisy"], "lat": 33.7, "lng": -84.4}
-        )
-    ).json()["id"]
+    rid = (await client.post("/requests", headers=home, json={"symptoms": ["noisy"]})).json()["id"]
     r = await client.post(
         f"/requests/{rid}/photos", headers=home, files={"file": ("x.jpg", bad, "image/jpeg")}
     )

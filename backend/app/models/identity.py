@@ -15,7 +15,11 @@ from app.models.base import IdMixin, TimestampMixin
 class Homeowner(IdMixin, TimestampMixin, Base):
     __tablename__ = "homeowners"
 
-    phone: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    # Set only after the number is verified with a one-time code.
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True)
+    # Set when the homeowner signs in with Google (email verified by Google).
+    email: Mapped[str | None] = mapped_column(String(254), unique=True)
+    google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
     name: Mapped[str | None] = mapped_column(String(120))
     address: Mapped[str | None] = mapped_column(String(300))
     lat: Mapped[float | None] = mapped_column(Float)
@@ -29,13 +33,18 @@ class Homeowner(IdMixin, TimestampMixin, Base):
 
 
 class PhoneOtp(IdMixin, TimestampMixin, Base):
-    """A one-time code sent by SMS. Only a hash of the code is stored."""
+    """A one-time code sent by SMS.
+
+    With Twilio Verify, Twilio holds the code and code_hash is empty; the row is
+    still kept to enforce our per-number rate limits. Without Twilio (development
+    only) the code is generated here and only its hash is stored.
+    """
 
     __tablename__ = "phone_otps"
     __table_args__ = (Index("ix_phone_otps_phone_created", "phone", "created_at"),)
 
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
-    code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    code_hash: Mapped[str | None] = mapped_column(String(128))
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -48,7 +57,9 @@ class ShopUser(IdMixin, TimestampMixin, Base):
         Uuid, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False, index=True
     )
     email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Empty for accounts that only use "Sign in with Google".
+    password_hash: Mapped[str | None] = mapped_column(String(256))
+    google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
     name: Mapped[str | None] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(20), default="owner", nullable=False)
     # TOTP secret, encrypted at rest. 2-step verification is mandatory for shop users.
@@ -69,3 +80,13 @@ class RefreshToken(IdMixin, TimestampMixin, Base):
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class AuthNonce(IdMixin, TimestampMixin, Base):
+    """Single-use nonce for "Sign in with Google": the ID token must carry one we issued."""
+
+    __tablename__ = "auth_nonces"
+
+    nonce_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

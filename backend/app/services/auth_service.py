@@ -1,5 +1,12 @@
-"""Authentication for homeowners (SMS one-time code) and shop users
-(password + mandatory TOTP 2-step), with rotating refresh tokens."""
+"""Authentication.
+
+Homeowners: "Continue with Google" or a one-time code texted to their phone
+(Twilio Verify). Google users then verify a phone number too, so technicians
+can reach them.
+Shop users: "Continue with Google" or email + password, always followed by a
+mandatory authenticator-app code (TOTP).
+All sessions use short-lived access tokens + rotating refresh tokens.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +18,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
-from app.core.config import Environment
-from app.core.errors import Conflict, RateLimited, Unauthorized
+from app.core.errors import AppError, Conflict, NotFound, RateLimited, Unauthorized
 from app.core.security import (
     DUMMY_PASSWORD_HASH,
     Role,
@@ -29,11 +35,16 @@ from app.core.security import (
     verify_password,
     verify_totp,
 )
-from app.models import Homeowner, PhoneOtp, RefreshToken, Shop, ShopUser
+from app.integrations.google_auth import GoogleIdentity
+from app.models import AuthNonce, Homeowner, PhoneOtp, RefreshToken, Shop, ShopUser
 from app.services.phone import normalize_phone
 
 MIN_PASSWORD_LENGTH = 12
 APP_NAME = "HVAC Connect"
+NONCE_TTL = timedelta(minutes=10)
+# Per-IP ceilings (on top of the per-number limits stored in the database).
+OTP_STARTS_PER_IP_PER_HOUR = 20
+SIGN_IN_ATTEMPTS_PER_IP_PER_15_MIN = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +58,7 @@ class SessionTokens:
 class OtpStarted:
     phone: str
     resend_after_seconds: int
-    dev_code: str | None  # only populated with the console SMS provider (local demo)
+    dev_code: str | None  # only when Twilio isn't set up (development): shown on screen
 
 
 class AuthService:
@@ -117,9 +128,30 @@ class AuthService:
             .values(revoked_at=self.c.clock.now())
         )
 
-    # --- Homeowners: SMS one-time code -----------------------------------------------
-    async def start_phone_otp(self, raw_phone: str) -> OtpStarted:
+    # --- Rate limiting ----------------------------------------------------------------
+    def limit_ip(self, ip: str | None, bucket: str = "sign_in") -> None:
+        if not ip:
+            return
+        if bucket == "otp":
+            self.c.rate_limiter.check(
+                "otp", ip, limit=OTP_STARTS_PER_IP_PER_HOUR, window_seconds=3600
+            )
+        else:
+            self.c.rate_limiter.check(
+                "sign_in", ip, limit=SIGN_IN_ATTEMPTS_PER_IP_PER_15_MIN, window_seconds=900
+            )
+
+    # --- Phone one-time codes -----------------------------------------------------------
+    def _normalize_allowed(self, raw_phone: str) -> str:
         phone = normalize_phone(raw_phone)
+        allowed = self.settings.sms_allowed_country_codes
+        if allowed and not any(phone.startswith(code) for code in allowed):
+            raise AppError("We can only text US numbers right now", code="phone_not_supported")
+        return phone
+
+    async def start_phone_otp(self, raw_phone: str, *, ip: str | None = None) -> OtpStarted:
+        phone = self._normalize_allowed(raw_phone)
+        self.limit_ip(ip, "otp")
         now = self.c.clock.now()
         latest = await self.s.scalar(
             select(PhoneOtp).where(PhoneOtp.phone == phone).order_by(PhoneOtp.created_at.desc())
@@ -135,27 +167,32 @@ class AuthService:
         if (sent_last_hour or 0) >= self.settings.otp_max_per_hour:
             raise RateLimited("Too many codes requested. Please try again later.")
 
-        code = generate_otp_code()
-        self.s.add(
-            PhoneOtp(
-                phone=phone,
-                code_hash=hash_otp(code, phone, self.settings.jwt_secret.get_secret_value()),
-                expires_at=now + timedelta(minutes=self.settings.otp_ttl_minutes),
-                created_at=now,  # rate limits compare against the injected clock
+        record = PhoneOtp(
+            phone=phone,
+            expires_at=now + timedelta(minutes=self.settings.otp_ttl_minutes),
+            created_at=now,  # rate limits compare against the injected clock
+        )
+        dev_code: str | None = None
+        if self.c.phone_verify is not None:
+            await self.c.phone_verify.start(phone)  # Twilio generates and texts the code
+        else:
+            # Development without Twilio: generate locally, store only a keyed hash.
+            dev_code = generate_otp_code()
+            record.code_hash = hash_otp(
+                dev_code, phone, self.settings.jwt_secret.get_secret_value()
             )
-        )
+            if self.c.sms is not None:
+                await self.c.sms.send(
+                    to=phone, body=f"{dev_code} is your {APP_NAME} code. It expires in 10 minutes."
+                )
+        self.s.add(record)
         await self.s.flush()
-        await self.c.sms.send(
-            to=phone, body=f"{code} is your {APP_NAME} code. It expires in 10 minutes."
-        )
-        dev_code = code if self.settings.sms_provider == "console" else None
         return OtpStarted(phone, cooldown, dev_code)
 
-    async def verify_phone_otp(
-        self, raw_phone: str, code: str
-    ) -> tuple[Homeowner, SessionTokens, bool]:
-        phone = normalize_phone(raw_phone)
+    async def _check_phone_code(self, phone: str, code: str) -> None:
+        """Raises unless `code` is the current code for `phone`."""
         now = self.c.clock.now()
+        code = code.strip()
         otp = await self.s.scalar(
             select(PhoneOtp)
             .where(
@@ -172,14 +209,33 @@ class AuthService:
             otp.consumed_at = now
             await self.s.commit()
             raise Unauthorized("Too many attempts. Please request a new code.", code="otp_locked")
-        expected = hash_otp(code.strip(), phone, self.settings.jwt_secret.get_secret_value())
-        if not constant_time_equals(expected, otp.code_hash):
+        if not code.isdigit() or len(code) != 6:
+            await self.s.commit()
+            raise Unauthorized("That code isn't right", code="otp_invalid")
+        if self.c.phone_verify is not None and otp.code_hash is None:
+            try:
+                approved = await self.c.phone_verify.check(phone, code)
+            except AppError as exc:
+                if exc.code == "otp_expired":
+                    otp.consumed_at = now
+                    await self.s.commit()
+                    raise Unauthorized(exc.message, code="otp_expired") from exc
+                raise
+        else:
+            expected = hash_otp(code, phone, self.settings.jwt_secret.get_secret_value())
+            approved = otp.code_hash is not None and constant_time_equals(expected, otp.code_hash)
+        if not approved:
             await self.s.commit()  # persist the failed attempt before raising
             raise Unauthorized("That code isn't right", code="otp_invalid")
         otp.consumed_at = now
 
+    async def verify_phone_otp(
+        self, raw_phone: str, code: str, *, ip: str | None = None
+    ) -> tuple[Homeowner, SessionTokens, bool]:
+        self.limit_ip(ip)
+        phone = self._normalize_allowed(raw_phone)
+        await self._check_phone_code(phone, code)
         homeowner = await self.s.scalar(select(Homeowner).where(Homeowner.phone == phone))
-        is_new = homeowner is None
         if homeowner is None:
             homeowner = Homeowner(phone=phone)
             self.s.add(homeowner)
@@ -187,7 +243,122 @@ class AuthService:
         tokens = await self.issue_session(
             TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
         )
-        return homeowner, tokens, is_new or not homeowner.name
+        return homeowner, tokens, needs_profile(homeowner)
+
+    async def start_add_phone(
+        self, homeowner: Homeowner, raw_phone: str, *, ip: str | None = None
+    ) -> OtpStarted:
+        """Signed-in homeowner (e.g. via Google) adds a mobile number."""
+        phone = self._normalize_allowed(raw_phone)
+        await self._ensure_phone_free(homeowner, phone)
+        return await self.start_phone_otp(phone, ip=ip)
+
+    async def finish_add_phone(self, homeowner: Homeowner, raw_phone: str, code: str) -> Homeowner:
+        phone = self._normalize_allowed(raw_phone)
+        await self._ensure_phone_free(homeowner, phone)
+        await self._check_phone_code(phone, code)
+        homeowner.phone = phone
+        await self.s.flush()
+        return homeowner
+
+    async def _ensure_phone_free(self, homeowner: Homeowner, phone: str) -> None:
+        owner = await self.s.scalar(select(Homeowner.id).where(Homeowner.phone == phone))
+        if owner is not None and owner != homeowner.id:
+            raise Conflict(
+                "This number belongs to another account. Sign out and continue with your "
+                "phone number instead.",
+                code="phone_taken",
+            )
+
+    # --- Sign in with Google ------------------------------------------------------------
+    async def new_google_nonce(self) -> str:
+        if self.c.google is None:
+            raise NotFound("Google sign-in isn't set up", code="google_not_configured")
+        nonce = new_refresh_token()
+        self.s.add(
+            AuthNonce(nonce_hash=hash_token(nonce), expires_at=self.c.clock.now() + NONCE_TTL)
+        )
+        await self.s.flush()
+        return nonce
+
+    async def _verify_google(self, id_token: str) -> GoogleIdentity:
+        if self.c.google is None:
+            raise NotFound("Google sign-in isn't set up", code="google_not_configured")
+        identity = await self.c.google.verify(id_token)
+        now = self.c.clock.now()
+        record = (
+            await self.s.scalar(
+                select(AuthNonce).where(AuthNonce.nonce_hash == hash_token(identity.nonce))
+            )
+            if identity.nonce
+            else None
+        )
+        if record is None or record.used_at is not None or record.expires_at <= now:
+            raise Unauthorized("Google sign-in expired. Please try again.", code="bad_nonce")
+        record.used_at = now
+        return identity
+
+    async def google_homeowner(
+        self, id_token: str, *, ip: str | None = None
+    ) -> tuple[Homeowner, SessionTokens, bool]:
+        self.limit_ip(ip)
+        identity = await self._verify_google(id_token)
+        homeowner = await self.s.scalar(
+            select(Homeowner).where(Homeowner.google_sub == identity.subject)
+        )
+        if homeowner is None:
+            homeowner = await self.s.scalar(
+                select(Homeowner).where(Homeowner.email == identity.email)
+            )
+            if homeowner is not None and homeowner.google_sub not in (None, identity.subject):
+                raise Conflict("This email is linked to another Google account", code="email_taken")
+        if homeowner is None:
+            homeowner = Homeowner(name=identity.name)
+            self.s.add(homeowner)
+        homeowner.google_sub = identity.subject
+        homeowner.email = identity.email
+        if not homeowner.name and identity.name:
+            homeowner.name = identity.name
+        await self.s.flush()
+        tokens = await self.issue_session(
+            TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
+        )
+        return homeowner, tokens, needs_profile(homeowner)
+
+    async def google_shop(
+        self, id_token: str, *, shop_name: str | None, ip: str | None = None
+    ) -> tuple[ShopUser, str, TokenType]:
+        """Google sign-in for shops. Still requires the authenticator-app code afterwards."""
+        self.limit_ip(ip)
+        identity = await self._verify_google(id_token)
+        user = await self.s.scalar(select(ShopUser).where(ShopUser.google_sub == identity.subject))
+        if user is None:
+            user = await self.s.scalar(select(ShopUser).where(ShopUser.email == identity.email))
+            if user is not None:
+                if user.google_sub not in (None, identity.subject):
+                    raise Conflict(
+                        "This email is linked to another Google account", code="email_taken"
+                    )
+                user.google_sub = identity.subject  # Google verified this email address
+        if user is None:
+            if not shop_name or not shop_name.strip():
+                raise NotFound(
+                    "No shop account uses this Google account yet. Create one first.",
+                    code="no_shop_account",
+                )
+            shop = Shop(name=shop_name.strip()[:160])
+            self.s.add(shop)
+            await self.s.flush()
+            user = ShopUser(
+                shop_id=shop.id,
+                email=identity.email,
+                google_sub=identity.subject,
+                name=identity.name,
+            )
+            self.s.add(user)
+        await self.s.flush()
+        kind = TokenType.MFA if user.mfa_enabled else TokenType.MFA_SETUP
+        return user, self._limited_token(user, kind), kind
 
     # --- Shop users: password + TOTP ------------------------------------------------
     async def shop_signup(
@@ -210,12 +381,16 @@ class AuthService:
         await self.s.flush()
         return user, self._limited_token(user, TokenType.MFA_SETUP)
 
-    async def shop_login(self, *, email: str, password: str) -> tuple[ShopUser, str, TokenType]:
+    async def shop_login(
+        self, *, email: str, password: str, ip: str | None = None
+    ) -> tuple[ShopUser, str, TokenType]:
+        self.limit_ip(ip)
         user = await self.s.scalar(select(ShopUser).where(ShopUser.email == email.strip().lower()))
         # Verify against a dummy hash when the user doesn't exist, so response
         # timing doesn't reveal which emails have accounts.
-        ok = verify_password(password, user.password_hash if user else DUMMY_PASSWORD_HASH)
-        if user is None or not ok:
+        stored = user.password_hash if user and user.password_hash else DUMMY_PASSWORD_HASH
+        ok = verify_password(password, stored)
+        if user is None or not user.password_hash or not ok:
             raise Unauthorized("Email or password is incorrect", code="bad_credentials")
         kind = TokenType.MFA if user.mfa_enabled else TokenType.MFA_SETUP
         return user, self._limited_token(user, kind), kind
@@ -229,15 +404,6 @@ class AuthService:
             now=self.c.clock.now(),
             ttl=ttl,
         )
-
-    def dev_totp_code(self, user: ShopUser) -> str | None:
-        """Current 2-step code, exposed only in local dev so demos don't need a phone."""
-        if self.settings.environment != Environment.DEV or not user.totp_secret_encrypted:
-            return None
-        import pyotp
-
-        secret = self.c.encryptor.decrypt(user.totp_secret_encrypted)
-        return pyotp.TOTP(secret).at(self.c.clock.now())
 
     async def enroll_mfa(self, user: ShopUser) -> tuple[str, str]:
         if user.mfa_enabled:
@@ -263,6 +429,12 @@ class AuthService:
         )
 
     def _check_totp(self, user: ShopUser, code: str) -> None:
+        # Brute-force guard: the 6-digit space is small, so cap guesses per account.
+        self.c.rate_limiter.check("totp", str(user.id), limit=10, window_seconds=900)
         secret = self.c.encryptor.decrypt(user.totp_secret_encrypted or "")
         if not verify_totp(secret, code, at=self.c.clock.now()):
             raise Unauthorized("That code isn't right", code="mfa_invalid")
+
+
+def needs_profile(homeowner: Homeowner) -> bool:
+    return not (homeowner.name and homeowner.address and homeowner.phone)

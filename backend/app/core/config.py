@@ -7,11 +7,15 @@ and in tests without third-party accounts. Production must set real providers;
 
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 from functools import lru_cache
+from typing import Annotated, Any
 
-from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_log = logging.getLogger(__name__)
 
 
 class Environment(StrEnum):
@@ -56,12 +60,22 @@ class Settings(BaseSettings):
     otp_resend_cooldown_seconds: int = 30
     otp_max_per_hour: int = 5
 
-    # --- Integrations (each "fake" or a real provider) -------------------------
-    ai_provider: str = "fake"  # fake | anthropic
+    # --- Integrations ------------------------------------------------------------
+    # Each one switches on when its keys are set. Without keys a feature is OFF
+    # (never faked): photo analysis is skipped, payments aren't collected, etc.
+    # "fake" providers exist only for the automated tests (HVAC_ENVIRONMENT=test).
+
+    # Sign in with Google: OAuth client IDs from Google Cloud Console (comma-separated).
+    # The first one is the Web client ID used by the homeowner app and shop portal.
+    google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    # Claude reads the unit photo.
+    ai_provider: str = "auto"  # auto (on when a key is set) | anthropic | off | fake (tests)
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5-5"
 
-    payments_provider: str = "fake"  # fake | stripe
+    # Stripe: cards for homeowners, Connect payouts for shops.
+    payments_provider: str = "auto"  # auto | stripe | off | fake (tests)
     stripe_secret_key: SecretStr | None = None
     stripe_publishable_key: str = ""
     stripe_webhook_secret: SecretStr | None = None
@@ -69,13 +83,28 @@ class Settings(BaseSettings):
     platform_fee_bps: int = 1500  # 15.00% platform fee on each job
     currency: str = "usd"
 
-    sms_provider: str = "console"  # console | twilio
+    # Phone sign-in codes are sent and checked by Twilio Verify. Job updates are
+    # texted with Twilio Messaging (needs a sending number or Messaging Service).
+    # Without Twilio, in development only, codes are printed in the API window
+    # and shown on screen so you can test.
+    sms_provider: str = "auto"  # auto | twilio | console (dev only)
     twilio_account_sid: str = ""
     twilio_auth_token: SecretStr | None = None
+    twilio_verify_service_sid: str = ""
     twilio_from_number: str = ""
+    twilio_messaging_service_sid: str = ""
+    # Only these country codes may request codes (blocks SMS-pumping fraud).
+    sms_allowed_country_codes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["+1"]
+    )
 
-    geocoding_provider: str = "fake"  # fake | mapbox
+    # Address lookup. "census" is the free US Census Bureau geocoder (no key).
+    geocoding_provider: str = "census"  # census | google | mapbox | fake (tests)
+    google_maps_api_key: SecretStr | None = None
     mapbox_token: SecretStr | None = None
+
+    # ServiceTitan / Housecall Pro sync. Off until API access is granted.
+    scheduling_integrations_enabled: bool = False
 
     storage_dir: str = "./var/uploads"
     max_photo_bytes: int = 10 * 1024 * 1024
@@ -92,6 +121,50 @@ class Settings(BaseSettings):
     scheduling_sync_interval_seconds: int = 300
     worker_tick_seconds: int = 5
 
+    @field_validator("google_client_ids", "sms_allowed_country_codes", mode="before")
+    @classmethod
+    def _split_commas(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _ignore_old_demo_values(self) -> Settings:
+        """Older .env files set the demo stand-ins ("fake"). Outside tests, treat them as
+        "use the real service when its key is set" instead of refusing to start."""
+        if self.environment != Environment.TEST:
+            for name, real in (
+                ("ai_provider", "auto"),
+                ("payments_provider", "auto"),
+                ("geocoding_provider", "census"),
+            ):
+                if getattr(self, name) == "fake":
+                    _log.warning("Ignoring HVAC_%s=fake (test-only); using %s", name.upper(), real)
+                    object.__setattr__(self, name, real)
+        return self
+
+    def validate_providers(self) -> None:
+        """Test doubles are only allowed in tests; on-screen codes only outside prod."""
+        problems: list[str] = []
+        for name in ("ai_provider", "payments_provider", "geocoding_provider", "sms_provider"):
+            if getattr(self, name) == "fake" and self.environment != Environment.TEST:
+                problems.append(f"HVAC_{name.upper()}=fake is only for automated tests")
+        if self.resolved_sms_provider == "console" and self.environment == Environment.PROD:
+            problems.append("Twilio must be configured in prod")
+        if self.ai_provider == "anthropic" and not self.anthropic_api_key:
+            problems.append("HVAC_ANTHROPIC_API_KEY is required for HVAC_AI_PROVIDER=anthropic")
+        if self.payments_provider == "stripe" and not self.stripe_secret_key:
+            problems.append("HVAC_STRIPE_SECRET_KEY is required for HVAC_PAYMENTS_PROVIDER=stripe")
+        stripe_on = self.payments_enabled and self.payments_provider != "fake"
+        if stripe_on and not self.stripe_publishable_key:
+            problems.append("HVAC_STRIPE_PUBLISHABLE_KEY must be set with the secret key")
+        if self.geocoding_provider == "google" and not self.google_maps_api_key:
+            problems.append("HVAC_GOOGLE_MAPS_API_KEY is required for google geocoding")
+        if self.geocoding_provider == "mapbox" and not self.mapbox_token:
+            problems.append("HVAC_MAPBOX_TOKEN is required for mapbox geocoding")
+        if problems:
+            raise RuntimeError("Invalid configuration: " + "; ".join(problems))
+
     def validate_for_production(self) -> None:
         if self.environment != Environment.PROD:
             return
@@ -100,15 +173,44 @@ class Settings(BaseSettings):
             problems.append("HVAC_JWT_SECRET must be set")
         if self.encryption_key.get_secret_value().startswith("ZGV2LW9ubHk"):
             problems.append("HVAC_ENCRYPTION_KEY must be set")
-        for name in ("ai_provider", "payments_provider", "geocoding_provider"):
-            if getattr(self, name) == "fake":
-                problems.append(f"HVAC_{name.upper()} must not be 'fake' in prod")
-        if self.sms_provider == "console":
-            problems.append("HVAC_SMS_PROVIDER must not be 'console' in prod")
-        if self.payments_provider == "stripe" and not self.stripe_webhook_secret:
+        for name in ("ai_provider", "payments_provider", "sms_provider", "geocoding_provider"):
+            if getattr(self, name) in ("fake", "console"):
+                problems.append(f"HVAC_{name.upper()} can't be '{getattr(self, name)}' in prod")
+        if self.sms_twilio_ready is False:
+            problems.append("Twilio (HVAC_TWILIO_*) must be configured in prod")
+        if self.payments_enabled and not self.stripe_webhook_secret:
             problems.append("HVAC_STRIPE_WEBHOOK_SECRET must be set")
         if problems:
             raise RuntimeError("Invalid production configuration: " + "; ".join(problems))
+
+    # --- Resolved feature switches ---------------------------------------------------
+    @property
+    def ai_enabled(self) -> bool:
+        if self.ai_provider == "auto":
+            return self.anthropic_api_key is not None
+        return self.ai_provider in ("anthropic", "fake")
+
+    @property
+    def payments_enabled(self) -> bool:
+        if self.payments_provider == "auto":
+            return self.stripe_secret_key is not None
+        return self.payments_provider in ("stripe", "fake")
+
+    @property
+    def sms_twilio_ready(self) -> bool:
+        return bool(
+            self.twilio_account_sid and self.twilio_auth_token and self.twilio_verify_service_sid
+        )
+
+    @property
+    def resolved_sms_provider(self) -> str:
+        if self.sms_provider == "auto":
+            return "twilio" if self.sms_twilio_ready else "console"
+        return self.sms_provider
+
+    @property
+    def google_web_client_id(self) -> str | None:
+        return self.google_client_ids[0] if self.google_client_ids else None
 
 
 @lru_cache

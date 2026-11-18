@@ -1,4 +1,4 @@
-"""In-memory payment gateway. Behaves like Stripe's happy path for demos and tests.
+"""In-memory payment gateway for the automated tests only (never used by the running app).
 
 Payout onboarding is simulated: the "onboarding link" points back to the API,
 which marks the account complete and redirects to the shop portal.
@@ -43,7 +43,13 @@ class FakePaymentGateway:
     payout_schedules: dict[str, str] = field(default_factory=dict)
 
     async def ensure_customer(
-        self, *, existing_id: str | None, phone: str, name: str | None, reference: str
+        self,
+        *,
+        existing_id: str | None,
+        phone: str,
+        email: str | None,
+        name: str | None,
+        reference: str,
     ) -> str:
         if existing_id and existing_id in self.customers:
             return existing_id

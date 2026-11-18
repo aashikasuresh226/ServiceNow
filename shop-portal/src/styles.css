@@ -136,6 +136,7 @@ textarea.input { min-height: 80px; resize: vertical; }
 .timeline .block { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; }
 .timeline .shift { background: var(--primary-tint); color: var(--primary); }
 .timeline .busy { background: var(--line-strong); color: var(--body); border-left: 2px solid #fff; }
+.timeline .job { background: var(--amber-soft, #fdf1e3); color: var(--amber-ink, #8a3f06); border-left: 3px solid var(--amber, #e6892e); padding: 0 6px; text-overflow: ellipsis; }
 .timeline .now { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--danger); }
 
 .auth-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
@@ -151,3 +152,6 @@ textarea.input { min-height: 80px; resize: vertical; }
 .photo-thumb { width: 120px; height: 96px; border-radius: 10px; object-fit: cover; background: #eef0f3; }
 .empty { text-align: center; padding: 28px; color: var(--muted); display: grid; gap: 8px; justify-items: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.calendar-backdrop { position: fixed; inset: 0; background: rgba(20, 24, 33, .35); z-index: 20; display: grid; place-items: center; padding: 16px; }
+.calendar-pop { width: min(440px, 100%); display: grid; gap: 10px; padding: 16px; box-shadow: 0 12px 32px rgba(0,0,0,.18); }

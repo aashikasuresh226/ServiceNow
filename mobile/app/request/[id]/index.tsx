@@ -116,7 +116,12 @@ function Chip({ icon, label, tone = 'plain' }: { icon: IconName; label: string; 
   );
 }
 
+function usePaymentsOn(): boolean {
+  return useOptions()?.features.payments ?? false;
+}
+
 function Proposed({ request, onChange }: Props) {
+  const payments = usePaymentsOn();
   const seconds = useCountdown(request.proposal_expires_at);
   const confirm = useAction(async () => onChange(await api.confirm(request.id)));
   const cancel = useAction(async () => onChange(await api.cancel(request.id)));
@@ -124,7 +129,8 @@ function Proposed({ request, onChange }: Props) {
   return (
     <Screen footer={
       <>
-        <Button label={`Confirm booking · hold ${money(request.estimate.low_cents)}`} busy={confirm.busy}
+        <Button label={payments ? `Confirm booking · hold ${money(request.estimate.low_cents)}` : 'Confirm booking'}
+          busy={confirm.busy}
           onPress={() => confirm.run()} />
         <TextLink label="Cancel" color={colors.muted} onPress={() => cancel.run()} />
       </>
@@ -137,8 +143,9 @@ function Proposed({ request, onChange }: Props) {
       <TechCard request={request} />
       <Card tone="muted">
         <KeyValue k="Estimate" v={`from ${money(request.estimate.low_cents)}`} />
-        <Muted>A hold is placed on your card now. You're only charged after you approve the
-          final price.</Muted>
+        <Muted>{payments
+          ? "A hold is placed on your card now. You're only charged after you approve the final price."
+          : 'You approve the final price before any work. Pay the shop directly when the job is done.'}</Muted>
       </Card>
       {seconds != null ? (
         <Muted style={{ textAlign: 'center' }}>{seconds > 0
@@ -210,12 +217,14 @@ function Person({ color, size = 24 }: { color: string; size?: number }) {
 }
 
 function Offered({ request, onChange }: Props) {
+  const payments = usePaymentsOn();
   const seconds = useCountdown(request.offer_expires_at);
   const cancel = useAction(async () => onChange(await api.cancel(request.id)));
   return (
     <Screen footer={<TextLink label="Cancel request" color={colors.muted} onPress={() => cancel.run()} />}>
       <StepHeader onBack={() => router.replace('/home')} />
-      <Title sub="Your card hold is in place. The shop is confirming the job.">Booking sent</Title>
+      <Title sub={payments ? 'Your card hold is in place. The shop is confirming the job.'
+        : 'The job is on the technician\'s calendar. The shop is confirming it.'}>Booking sent</Title>
       <TechCard request={request} />
       <Card tone="soft" style={{ flexDirection: 'row', alignItems: 'center' }}>
         <Icon name="clock" size={20} color={colors.primary} />
@@ -303,6 +312,7 @@ function Tracking({ request, onChange }: Props) {
 }
 
 function Quote({ request, onChange }: Props) {
+  const payments = usePaymentsOn();
   const approve = useAction(async () => onChange(await api.approveQuote(request.id)));
   const q = request.quote!;
   const overEstimate = request.estimate.low_cents != null && q.final_price_cents > request.estimate.low_cents;
@@ -318,9 +328,9 @@ function Quote({ request, onChange }: Props) {
       </Card>
       <Card tone="muted">
         <KeyValue k="Original estimate" v={`from ${money(request.estimate.low_cents)}`} />
-        <KeyValue k="Card on hold" v={money(request.payment.authorized_cents)} />
+        {payments ? <KeyValue k="Card on hold" v={money(request.payment.authorized_cents)} /> : null}
       </Card>
-      {overEstimate ? (
+      {payments && overEstimate ? (
         <Muted>Approving updates your card hold to the final price. You're charged when the job is done.</Muted>
       ) : null}
       <Stages status={request.status} />
@@ -357,7 +367,9 @@ function Completed({ request, onChange }: Props) {
       <Card>
         <KeyValue k="Technician" v={request.technician?.name ?? '—'} />
         <KeyValue k="Work" v={request.diagnosis?.primary_issue_label ?? 'HVAC service'} />
-        <KeyValue k="Charged" v={money(request.payment.captured_cents)} />
+        {request.payment.captured_cents != null
+          ? <KeyValue k="Charged" v={money(request.payment.captured_cents)} />
+          : <KeyValue k="Price" v={`${money(request.quote?.final_price_cents)} · pay the shop`} />}
         {request.completed_at ? <Muted>{new Date(request.completed_at).toLocaleString()}</Muted> : null}
       </Card>
       <Card tone="soft" style={{ alignItems: 'center' }}>

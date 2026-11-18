@@ -25,6 +25,7 @@ from app.domain.enums import (
     SchedulingProvider,
     SoftSkill,
 )
+from app.integrations.payments.base import PaymentGateway
 from app.models import AvailabilityBlock, ServiceRequest, Shop, ShopUser, Technician
 from app.services.availability_service import AvailabilityService
 from app.services.validation import validate_options
@@ -77,7 +78,7 @@ class ShopService:
     async def set_live(self, shop: Shop, live: bool) -> Shop:
         if live:
             problems = []
-            if not shop.payouts_enabled:
+            if self.c.payments is not None and not shop.payouts_enabled:
                 problems.append("finish payout setup")
             if shop.lat is None:
                 problems.append("add your shop address")
@@ -96,20 +97,26 @@ class ShopService:
         return shop
 
     # --- Payouts (Stripe Connect) -------------------------------------------------
+    def _gateway(self) -> PaymentGateway:
+        if self.c.payments is None:
+            raise AppError("Payments aren't set up yet", code="payments_not_configured")
+        return self.c.payments
+
     async def payout_onboarding_link(self, shop: Shop, user: ShopUser) -> str:
+        gateway = self._gateway()
         if not shop.payout_account_id:
-            shop.payout_account_id = await self.c.payments.create_payout_account(
+            shop.payout_account_id = await gateway.create_payout_account(
                 email=user.email, business_name=shop.name, reference=str(shop.id)
             )
         base = self.c.settings.public_web_url
-        return await self.c.payments.payout_onboarding_link(
+        return await gateway.payout_onboarding_link(
             account_id=shop.payout_account_id,
             return_url=f"{base}/onboarding/payouts?status=done",
             refresh_url=f"{base}/onboarding/payouts?status=retry",
         )
 
     async def refresh_payout_status(self, shop: Shop) -> Shop:
-        if shop.payout_account_id:
+        if shop.payout_account_id and self.c.payments is not None:
             status = await self.c.payments.payout_account_status(account_id=shop.payout_account_id)
             shop.payouts_enabled = status.payouts_enabled
             if not shop.payouts_enabled:
@@ -119,7 +126,7 @@ class ShopService:
     async def set_payout_schedule(self, shop: Shop, schedule: str) -> Shop:
         if schedule not in PAYOUT_SCHEDULES:
             raise AppError("Choose daily, weekly or manual payouts", code="invalid_schedule")
-        if shop.payout_account_id:
+        if shop.payout_account_id and self.c.payments is not None:
             await self.c.payments.set_payout_schedule(
                 account_id=shop.payout_account_id, interval=schedule
             )
