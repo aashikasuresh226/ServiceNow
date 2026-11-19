@@ -7,20 +7,22 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.api.deps import ContainerDep, SessionDep, TechDep
-from app.api.presenters import message_out, tech_job_out
-from app.core.errors import Forbidden
-from app.models import ServiceRequest
+from app.api.presenters import message_out, outside_job_out, tech_job_out
+from app.core.errors import Forbidden, NotFound
+from app.models import ServiceRequest, Technician
 from app.schemas.api import (
     DeclineIn,
     LocationIn,
     MessageIn,
     MessageOut,
+    OutsideJobOut,
     QuoteIn,
     TechBoardOut,
     TechJobOut,
     TechMeOut,
 )
 from app.services.message_service import MessageService
+from app.services.outside_jobs import OutsideJob, OutsideJobService
 from app.services.tech_app_service import TechAppService
 
 router = APIRouter(prefix="/tech", tags=["technician"])
@@ -43,15 +45,50 @@ async def me(principal: TechDep) -> TechMeOut:
 
 
 @router.get("/jobs", response_model=TechBoardOut)
-async def board(principal: TechDep, session: SessionDep, c: ContainerDep) -> TechBoardOut:
+async def board_for(principal: TechDep, session: SessionDep, c: ContainerDep) -> TechBoardOut:
     data = await TechAppService(session, c).board(principal.tech)
     tech = principal.tech
+    outside = await OutsideJobService(session, c).for_technician(tech)
+    hidden = data.hidden_jobs
+    if tech.schedule_view == "next" and outside:
+        # Next job only: the earliest of our jobs and the shop's own jobs.
+        first_ours = data.jobs[0].eta_at if data.jobs else None
+        first_theirs = outside[0].job.starts_at
+        if first_ours is not None and (first_theirs is None or first_ours <= first_theirs):
+            hidden += len(outside)
+            outside = []
+        else:
+            hidden += len(outside) - 1 + len(data.jobs)
+            outside = outside[:1]
+            data = type(data)(data.offers, [], 0, data.recent)
     return TechBoardOut(
         offers=[tech_job_out(c, r, tech) for r in data.offers],
         jobs=[tech_job_out(c, r, tech) for r in data.jobs],
-        hidden_jobs=data.hidden_jobs,
+        hidden_jobs=hidden,
         recent=[tech_job_out(c, r, tech) for r in data.recent],
+        outside_jobs=[_outside(o, tech) for o in outside],
     )
+
+
+def _outside(item: OutsideJob, tech: Technician) -> OutsideJobOut:
+    return outside_job_out(
+        item.job,
+        technician_name=item.technician_name,
+        show_phone=tech.can_contact_customers,
+        customer_uses_app=item.customer_uses_app,
+    )
+
+
+@router.get("/outside-jobs/{job_id}", response_model=OutsideJobOut)
+async def outside_job(
+    job_id: uuid.UUID, principal: TechDep, session: SessionDep, c: ContainerDep
+) -> OutsideJobOut:
+    """A job from the company's Housecall Pro (read-only here)."""
+    tech = principal.tech
+    board = await board_for(principal, session, c)
+    if not any(o.id == job_id for o in board.outside_jobs):
+        raise NotFound("Job not found")
+    return _outside(await OutsideJobService(session, c).get_for_technician(tech, job_id), tech)
 
 
 async def _job(

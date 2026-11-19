@@ -12,6 +12,7 @@ import type {
   Message,
   Options,
   OtpStarted,
+  OutsideJob,
   Providers,
   PublicProvider,
   ShareInfo,
@@ -142,6 +143,11 @@ export const api = {
 
   // Profile + card
   me: () => request<Homeowner>('GET', '/me'),
+  suggestions: () => request<{ name: string | null; address: string | null; companies: string[] }>('GET', '/me/suggestions'),
+  inviteInfo: (code: string) =>
+    request<{ shop_name: string; shop_phone: string | null }>('GET', `/invites/${encodeURIComponent(code)}`, undefined, { auth: false }),
+  acceptInvite: (code: string) =>
+    request<{ shop_name: string; shop_phone: string | null }>('POST', '/me/invite', { code }),
   updateMe: (data: Partial<Pick<Homeowner, 'name' | 'address' | 'sms_opt_in'>>) =>
     request<Homeowner>('PATCH', '/me', data),
   startAddPhone: (phone: string) => request<OtpStarted>('POST', '/me/phone/start', { phone }),
@@ -209,6 +215,7 @@ export const techApi = {
 
   me: () => request<TechMe>('GET', '/tech/me'),
   board: () => request<TechBoard>('GET', '/tech/jobs'),
+  outsideJob: (id: string) => request<OutsideJob>('GET', `/tech/outside-jobs/${id}`),
   job: (id: string) => request<TechJob>('GET', `/tech/jobs/${id}`),
   accept: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/accept`),
   decline: (id: string, reason?: string) => request<void>('POST', `/tech/jobs/${id}/decline`, { reason }),

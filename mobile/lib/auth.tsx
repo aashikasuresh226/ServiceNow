@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 
 import { api, bindTokenStore, techApi } from './api';
+import { acceptPendingInvite } from './invite';
 import { getItem, removeItem, setItem } from './storage';
 import type { Homeowner, Options, TechMe, Tokens } from './types';
 
@@ -98,6 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(
     async (next: Tokens) => {
       persist(next, 'homeowner');
+      // Signed up from a company's invite link: become that company's customer.
+      await acceptPendingInvite();
       const profile = await api.me();
       setMe(profile);
       return profile;

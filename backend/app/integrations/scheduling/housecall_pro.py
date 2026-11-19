@@ -67,6 +67,26 @@ class HcpJob:
         return self.work_status.startswith("complete")
 
 
+@dataclass(frozen=True, slots=True)
+class HcpCustomer:
+    id: str
+    name: str
+    phone: str | None  # as typed in Housecall Pro (mobile, else home, else work)
+    email: str | None
+    address: str | None  # first address, one line
+
+
+@dataclass(frozen=True, slots=True)
+class HcpJobDetail:
+    """A job as listed by GET /jobs, with what a technician needs to run it."""
+
+    job: HcpJob
+    customer: HcpCustomer | None
+    address: str | None
+    description: str | None
+    invoice_number: str | None
+
+
 class HousecallProClient:
     provides_shifts = False
 
@@ -133,6 +153,36 @@ class HousecallProClient:
             },
         )
         return [b for job in jobs for b in _job_to_blocks(job)]
+
+    async def fetch_jobs(self, *, start: datetime, end: datetime) -> list[HcpJobDetail]:
+        """Jobs scheduled in [start, end), plus the newest jobs (which may be unscheduled)."""
+        scheduled = await self._get_all(
+            "/jobs",
+            "jobs",
+            {
+                "scheduled_start_min": start.astimezone(UTC).isoformat(),
+                "scheduled_start_max": end.astimezone(UTC).isoformat(),
+            },
+        )
+        newest = await self._request(
+            "GET",
+            "/jobs",
+            params={
+                "page": 1,
+                "page_size": 50,
+                "sort_by": "created_at",
+                "sort_direction": "desc",
+            },
+        )
+        seen: dict[str, HcpJobDetail] = {}
+        for row in [*scheduled, *newest.get("jobs", [])]:
+            if isinstance(row, dict) and row.get("id"):
+                seen.setdefault(str(row["id"]), parse_job_detail(row))
+        return list(seen.values())
+
+    async def list_customers(self) -> list[HcpCustomer]:
+        rows = await self._get_all("/customers", "customers", {})
+        return [parse_customer(r) for r in rows if isinstance(r, dict) and r.get("id")]
 
     async def get_job(self, job_id: str) -> HcpJob | None:
         """None if the job was deleted in Housecall Pro."""
@@ -299,6 +349,42 @@ def parse_job(body: dict[str, Any]) -> HcpJob:
         employee_ids=[i for i in ids if i and i != "None"],
         scheduled_start=_parse(schedule.get("scheduled_start")),
         scheduled_end=_parse(schedule.get("scheduled_end")),
+    )
+
+
+def parse_customer(body: dict[str, Any]) -> HcpCustomer:
+    name = " ".join(p for p in (body.get("first_name"), body.get("last_name")) if p)
+    phone = body.get("mobile_number") or body.get("home_number") or body.get("work_number")
+    addresses = body.get("addresses") or []
+    return HcpCustomer(
+        id=str(body["id"]),
+        name=name.strip() or str(body.get("company") or "").strip() or "Customer",
+        phone=str(phone) if phone else None,
+        email=str(body["email"]).strip() if body.get("email") else None,
+        address=format_address(addresses[0])
+        if addresses and isinstance(addresses[0], dict)
+        else None,
+    )
+
+
+def format_address(row: dict[str, Any]) -> str | None:
+    street = " ".join(str(p) for p in (row.get("street"), row.get("street_line_2")) if p)
+    tail = " ".join(str(p) for p in (row.get("state"), row.get("zip")) if p)
+    text = ", ".join(p for p in (street, str(row.get("city") or ""), tail) if p)
+    return text or None
+
+
+def parse_job_detail(body: dict[str, Any]) -> HcpJobDetail:
+    customer = body.get("customer")
+    address = body.get("address")
+    return HcpJobDetail(
+        job=parse_job(body),
+        customer=parse_customer(customer)
+        if isinstance(customer, dict) and customer.get("id")
+        else None,
+        address=format_address(address) if isinstance(address, dict) else None,
+        description=(str(body.get("description") or "").strip() or None),
+        invoice_number=str(body["invoice_number"]) if body.get("invoice_number") else None,
     )
 
 

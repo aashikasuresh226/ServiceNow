@@ -218,3 +218,45 @@ export type Job = {
   external_job_id: string | null;
   external_error: string | null;
 };
+
+/** A job from the shop's Housecall Pro, copied every minute (read-only here). */
+export type OutsideJob = {
+  id: string;
+  provider: string;
+  invoice_number: string | null;
+  work_status: string;
+  description: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  address: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  technician_id: string | null;
+  technician_name: string | null;
+  customer_uses_app: boolean;
+};
+
+export type Customer = {
+  id: string;
+  provider: 'housecall_pro' | 'app';
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  status: 'joined' | 'invited' | 'not_invited';
+  invited_at: string | null;
+  joined_at: string | null;
+  last_job_at: string | null;
+  invite_url: string;
+  invite_message: string;
+};
+
+export type CustomerList = {
+  customers: Customer[];
+  total: number;
+  joined: number;
+  invited: number;
+  imported_at: string | null;
+  shop_invite_url: string;
+  shop_invite_message: string;
+};

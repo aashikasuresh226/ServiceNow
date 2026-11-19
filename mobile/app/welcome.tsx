@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Text, View, useWindowDimensions } from 'react-native';
 
 import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
 import { useAction, useOptions } from '@/lib/hooks';
+import { getPendingInvite } from '@/lib/invite';
 
 export default function Welcome() {
   const options = useOptions();
@@ -17,6 +18,8 @@ export default function Welcome() {
   const { height } = useWindowDimensions();
   const compact = height < 820;
   const [phone, setPhone] = useState('');
+  const [invitedBy, setInvitedBy] = useState<string | null>(null);
+  useEffect(() => { void getPendingInvite().then((i) => setInvitedBy(i?.shopName ?? null)); }, []);
 
   const start = useAction(async (value: string) => {
     const result = await api.startOtp(value);
@@ -63,6 +66,12 @@ export default function Welcome() {
         </Text>
         <Body style={{ color: colors.muted }}>HVAC help, matched in minutes</Body>
       </View>
+      {invitedBy ? (
+        <Card tone="muted" style={{ alignItems: 'center' }}>
+          <Badge label={`Invited by ${invitedBy}`} />
+          <Muted style={{ textAlign: 'center' }}>Use the number {invitedBy} has for you to connect your account.</Muted>
+        </Card>
+      ) : null}
 
       {showGoogle && googleClientId ? (
         <>

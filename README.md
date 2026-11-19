@@ -290,7 +290,7 @@ Each shop chooses who picks the technician (**How you take jobs** in the portal)
 |---|---|---|---|
 | **HVAC Connect picks** (default) | Working hours, jobs booked here, time off | Soonest qualified tech; their app gets the offer if allowed | The technician right away |
 | **My office picks** | Same | The office, from a list sorted by soonest arrival, when accepting | The company until the office picks |
-| **Housecall Pro's dispatcher** | Housecall Pro's scheduled jobs (synced every 5 min) + working hours | The dispatcher, in Housecall Pro as usual | The company until it's assigned there |
+| **Housecall Pro's dispatcher** | Housecall Pro's scheduled jobs (synced every minute) + working hours | The dispatcher, in Housecall Pro as usual | The company until it's assigned there |
 
 **Housecall Pro** (`integrations/scheduling/housecall_pro.py`, `services/external_jobs.py`):
 the shop pastes an API key (MAX plan; App Store → API) under **How you take jobs**. We check
@@ -305,6 +305,29 @@ homeowner. If the shop pastes our webhook URL into Housecall Pro, updates arrive
 (the URL holds a secret per shop; we re-read the job rather than trusting the message).
 If the homeowner cancels, we add a note in Housecall Pro and remove the job from its
 schedule. Failed sends show on the job in the portal and are retried.
+
+**The shop's own Housecall Pro jobs** (booked by their office, not through us) are copied
+every minute (`ExternalJobService.import_shop`): jobs scheduled from yesterday to 14 days
+ahead plus the 50 newest (so unscheduled ones show too), with their customers. The assigned
+technician sees them in the technician app (badge *Housecall Pro*; call and directions,
+read-only: they're run in Housecall Pro), the office sees them under **Jobs → In Housecall
+Pro**, and the technician's time is blocked for matching. Reassigned, rescheduled or deleted
+jobs update at the next copy. With the webhook URL pasted into Housecall Pro, a new job
+arrives within seconds. (Housecall Pro can only reach the webhook on a public server, not
+on `localhost`; locally the one-minute copy is what you'll see.)
+
+**Existing customers** (`services/customer_service.py`, portal **Customers**): the shop's
+whole Housecall Pro customer list is imported on connect and daily (or **Import from
+Housecall Pro**). Each customer gets a personal invite link; **Text** / **Email** open the
+shop's own Messages app or email with a ready message (free, and it comes from a number
+customers know), **Copy message** works anywhere. There's also a shop-wide link with a QR
+code for invoices, Housecall Pro email/postcard campaigns, a website, or a technician's
+phone at the door. Nobody gets an account without signing up themselves; when they do with
+the phone number (verified by text) or email (verified by Google) the shop has on file,
+they're linked automatically: the shop sees *Using the app*, the app pre-fills their name
+and address, the shop is shown first as *Your company* and gets first look at their
+requests. A forwarded link doesn't expose the original customer's details: the person is
+added as a new customer instead.
 
 **Time off**: on **Technicians → Edit**, add days off (vacation, appointments); matching
 skips those times.

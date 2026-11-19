@@ -8,10 +8,11 @@ from datetime import timedelta
 from app.container import Container
 from app.domain.enums import RequestStatus
 from app.domain.pricing import platform_fee
-from app.models import JobOffer, Message, RequestPhoto, ServiceRequest, Technician
+from app.models import ExternalJob, JobOffer, Message, RequestPhoto, ServiceRequest, Technician
 from app.schemas.api import (
     EstimateInfo,
     MessageOut,
+    OutsideJobOut,
     PaymentInfo,
     PhotoOut,
     QuoteInfo,
@@ -264,4 +265,28 @@ def estimate_info(request: ServiceRequest) -> EstimateInfo:
         high_cents=request.estimate_high_cents,
         basis=diagnosis.get("estimate_basis"),
         source=diagnosis.get("estimate_source"),
+    )
+
+
+def outside_job_out(
+    job: ExternalJob,
+    *,
+    technician_name: str | None,
+    show_phone: bool,
+    customer_uses_app: bool,
+) -> OutsideJobOut:
+    return OutsideJobOut(
+        id=job.id,
+        provider=job.provider,
+        invoice_number=job.invoice_number,
+        work_status=job.work_status,
+        description=job.description,
+        customer_name=job.customer_name,
+        customer_phone=job.customer_phone if show_phone else None,
+        address=job.address,
+        starts_at=job.starts_at,
+        ends_at=job.ends_at,
+        technician_id=job.technician_id,
+        technician_name=technician_name,
+        customer_uses_app=customer_uses_app,
     )

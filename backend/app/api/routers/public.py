@@ -16,6 +16,8 @@ from app.core.errors import NotFound
 from app.domain import enums
 from app.domain.pricing import DIAGNOSTIC_FEE_CENTS
 from app.models import Homeowner, ProcessedWebhook, RequestPhoto, Shop
+from app.schemas.api import InviteOut
+from app.services.customer_service import CustomerService
 from app.services.provider_service import ProviderService
 
 log = logging.getLogger(__name__)
@@ -114,6 +116,14 @@ async def public_technician(
 async def public_shop(shop_id: uuid.UUID, session: SessionDep, c: ContainerDep) -> dict[str, Any]:
     """Public card for a shared company link."""
     return await ProviderService(session, c).public_shop(shop_id)
+
+
+@router.get("/invites/{code}", response_model=InviteOut)
+async def invite_info(code: str, session: SessionDep, c: ContainerDep) -> InviteOut:
+    """A company's invite link (/join/<code>): who invited you. Shows nothing personal."""
+    c.rate_limiter.check("invite", code[:16], limit=60, window_seconds=60)
+    info = await CustomerService(session, c).invite_info(code[:16])
+    return InviteOut(shop_name=info.shop_name, shop_phone=info.shop_phone)
 
 
 @router.post("/webhooks/housecall-pro/{token}", status_code=200)

@@ -13,14 +13,17 @@ from app.models import ServiceRequest
 from app.schemas.api import (
     CardSetupFinishIn,
     CardSetupOut,
+    CustomerInviteIn,
     HomeownerOut,
     HomeownerUpdateIn,
+    InviteOut,
     MatchIn,
     MessageIn,
     MessageOut,
     OtpStartOut,
     PhoneStartIn,
     PhoneVerifyIn,
+    ProfileSuggestionsOut,
     RatingIn,
     RequestCreateIn,
     RequestOut,
@@ -28,6 +31,7 @@ from app.schemas.api import (
 )
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
+from app.services.customer_service import CustomerService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.message_service import MessageService
@@ -51,6 +55,29 @@ async def update_me(
         me, name=body.name, address=body.address, sms_opt_in=body.sms_opt_in
     )
     return HomeownerOut.model_validate(me)
+
+
+@router.get("/me/suggestions", response_model=ProfileSuggestionsOut)
+async def profile_suggestions(
+    me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> ProfileSuggestionsOut:
+    """What a company the homeowner is a customer of has on file (to pre-fill the profile)."""
+    customers = CustomerService(session, c)
+    record = await customers.on_file(me)
+    return ProfileSuggestionsOut(
+        name=record.name if record else None,
+        address=record.address if record else None,
+        companies=await customers.company_names(me),
+    )
+
+
+@router.post("/me/invite", response_model=InviteOut)
+async def accept_invite(
+    body: CustomerInviteIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> InviteOut:
+    """Signed up from a company's invite link: they become (or stay) that company's customer."""
+    info = await CustomerService(session, c).accept_invite(me, body.code)
+    return InviteOut(shop_name=info.shop_name, shop_phone=info.shop_phone)
 
 
 @router.post("/me/phone/start", response_model=OtpStartOut)

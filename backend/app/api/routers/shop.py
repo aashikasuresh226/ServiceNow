@@ -3,24 +3,26 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, status
 
 from app.api.deps import ContainerDep, SessionDep, ShopDep
-from app.api.presenters import message_out, shop_job_out
+from app.api.presenters import message_out, outside_job_out, shop_job_out
 from app.container import Container
 from app.core.errors import InvalidState, NotFound
 from app.domain.enums import SchedulingProvider
-from app.models import ServiceRequest, Technician
+from app.models import ServiceRequest, Shop, ShopCustomer, Technician
 from app.schemas.api import (
     AcceptIn,
     BlockOut,
     BusyIn,
     CalendarLinkOut,
     CountOut,
+    CustomerListOut,
+    CustomerOut,
     DashboardOut,
     DispatchSettingsIn,
     EmailLinkOut,
@@ -28,6 +30,7 @@ from app.schemas.api import (
     LiveIn,
     MessageIn,
     MessageOut,
+    OutsideJobOut,
     PayoutScheduleIn,
     QuoteIn,
     SchedulingConnectIn,
@@ -46,9 +49,12 @@ from app.schemas.api import (
 )
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
+from app.services.customer_service import CustomerService, status_of
+from app.services.external_jobs import ExternalJobService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.message_service import MessageService
+from app.services.outside_jobs import OutsideJobService
 from app.services.shop_service import ShopService
 
 router = APIRouter(prefix="/shop", tags=["shop"])
@@ -140,6 +146,91 @@ async def disconnect_scheduling(principal: ShopDep, session: SessionDep, c: Cont
 @router.post("/scheduling/sync", response_model=CountOut)
 async def sync_now(principal: ShopDep, session: SessionDep, c: ContainerDep) -> CountOut:
     return CountOut(count=await AvailabilityService(session, c).sync_shop(principal.shop))
+
+
+# --- Housecall Pro jobs and customers ------------------------------------------------------------
+@router.get("/outside-jobs", response_model=list[OutsideJobOut])
+async def list_outside_jobs(
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+    days: int = Query(7, ge=1, le=31),
+) -> list[OutsideJobOut]:
+    """Jobs in the shop's Housecall Pro (copied every minute), from yesterday on."""
+    now = c.clock.now()
+    rows = await OutsideJobService(session, c).for_shop(
+        principal.shop.id, now - timedelta(days=1), now + timedelta(days=days)
+    )
+    return [
+        outside_job_out(
+            o.job,
+            technician_name=o.technician_name,
+            show_phone=True,
+            customer_uses_app=o.customer_uses_app,
+        )
+        for o in rows
+    ]
+
+
+@router.get("/customers", response_model=CustomerListOut)
+async def list_customers(
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+    q: str | None = Query(None, max_length=80),
+    status_filter: str | None = Query(None, alias="status", max_length=12),
+) -> CustomerListOut:
+    service = CustomerService(session, c)
+    shop = principal.shop
+    everyone = await service.list_for_shop(shop)
+    rows = await service.list_for_shop(shop, query=q, status=status_filter)
+    shop_url = service.invite_url(await service.ensure_shop_code(shop))
+    return CustomerListOut(
+        customers=[_customer_out(service, shop, r) for r in rows[:500]],
+        total=len(everyone),
+        joined=sum(1 for r in everyone if status_of(r) == "joined"),
+        invited=sum(1 for r in everyone if status_of(r) == "invited"),
+        imported_at=shop.customers_imported_at,
+        shop_invite_url=shop_url,
+        shop_invite_message=service.invite_message(shop, shop_url),
+    )
+
+
+def _customer_out(service: CustomerService, shop: Shop, row: ShopCustomer) -> CustomerOut:
+    url = service.invite_url(row.invite_code)
+    return CustomerOut(
+        id=row.id,
+        provider=row.provider,
+        name=row.name,
+        phone=row.phone,
+        email=row.email,
+        address=row.address,
+        status=status_of(row),
+        invited_at=row.invited_at,
+        joined_at=row.joined_at,
+        last_job_at=row.last_job_at,
+        invite_url=url,
+        invite_message=service.invite_message(shop, url, row.name),
+    )
+
+
+@router.post("/customers/{customer_id}/invited", response_model=CustomerOut)
+async def mark_customer_invited(
+    customer_id: uuid.UUID, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> CustomerOut:
+    """The shop sent this customer their invite (from its own phone or email)."""
+    service = CustomerService(session, c)
+    row = await service.get_for_shop(principal.shop, customer_id)
+    service.mark_invited(row)
+    return _customer_out(service, principal.shop, row)
+
+
+@router.post("/customers/import", response_model=CountOut)
+async def import_customers(principal: ShopDep, session: SessionDep, c: ContainerDep) -> CountOut:
+    """Re-read every customer from Housecall Pro now."""
+    if principal.shop.scheduling_provider != SchedulingProvider.HOUSECALL_PRO.value:
+        raise InvalidState("Connect Housecall Pro first (How you take jobs)")
+    return CountOut(count=await ExternalJobService(session, c).import_customers(principal.shop))
 
 
 # --- Technicians ---------------------------------------------------------------------------------

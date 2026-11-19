@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth';
 import { countdown, money, visitTime } from '@/lib/format';
 import { labelFor, useCountdown, useOptions, usePolling } from '@/lib/hooks';
 import { JOB_STATUS } from '@/lib/techStatus';
-import type { TechBoard, TechJob } from '@/lib/types';
+import type { OutsideJob, TechBoard, TechJob } from '@/lib/types';
 
 
 export default function TechHome() {
@@ -51,7 +51,11 @@ export default function TechHome() {
 
       <View style={{ gap: 8 }}>
         <Text style={styles.section}>{tech.schedule_view === 'next' ? 'Next' : 'Today and upcoming'}</Text>
-        {board.jobs.length ? board.jobs.map((job, i) => <JobRow key={job.id} job={job} highlight={i === 0} />) : (
+        {board.jobs.length || board.outside_jobs.length ? byTime(board).map((item, i) => (
+          'provider' in item
+            ? <OutsideRow key={item.id} job={item} highlight={i === 0} />
+            : <JobRow key={item.id} job={item} highlight={i === 0} />
+        )) : (
           <Card tone="muted"><Muted>No jobs right now. New jobs appear here automatically.</Muted></Card>
         )}
         {board.hidden_jobs ? (
@@ -79,6 +83,37 @@ export default function TechHome() {
           onPress={() => Linking.openURL(`tel:${tech.shop_phone}`)} />
       ) : null}
     </Screen>
+  );
+}
+
+/** Our jobs (started ones first) and the company's Housecall Pro jobs, by time. */
+function byTime(board: TechBoard): (TechJob | OutsideJob)[] {
+  const when = (item: TechJob | OutsideJob) => {
+    const at = 'provider' in item ? item.starts_at : item.arrival_at;
+    return at ? new Date(at).getTime() : Number.MAX_SAFE_INTEGER;
+  };
+  const started = board.jobs.filter((j) => j.status !== 'dispatched');
+  const rest = [...board.jobs.filter((j) => j.status === 'dispatched'), ...board.outside_jobs];
+  return [...started, ...rest.sort((a, b) => when(a) - when(b))];
+}
+
+function OutsideRow({ job, highlight }: { job: OutsideJob; highlight: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={() => router.push(`/tech/outside/${job.id}`)}
+      style={[styles.row, highlight && { borderColor: colors.primary, backgroundColor: colors.primarySoft }]}>
+      <View style={{ width: 64 }}>
+        <Text style={{ fontWeight: '700', color: colors.ink }}>
+          {job.starts_at ? new Date(job.starts_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
+        </Text>
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Body style={{ fontWeight: '700' }}>{job.customer_name ?? 'Customer'}</Body>
+        <Muted numberOfLines={1}>{job.address ?? job.description ?? ''}</Muted>
+        {job.starts_at && new Date(job.starts_at).toDateString() !== new Date().toDateString()
+          ? <Muted>{visitTime(job.starts_at)}</Muted> : null}
+      </View>
+      <Badge label="Housecall Pro" tone="neutral" />
+    </Pressable>
   );
 }
 

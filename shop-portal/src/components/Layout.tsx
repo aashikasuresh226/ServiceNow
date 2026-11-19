@@ -11,6 +11,7 @@ const NAV = [
   { to: '/', icon: 'dashboard', label: 'Dashboard', end: true },
   { to: '/jobs', icon: 'jobs', label: 'Jobs' },
   { to: '/technicians', icon: 'users', label: 'Technicians' },
+  { to: '/customers', icon: 'user', label: 'Customers' },
   { to: '/availability', icon: 'calendar', label: 'Availability' },
   { to: '/integrations', icon: 'plug', label: 'How you take jobs' },
   { to: '/settings', icon: 'settings', label: 'Shop & payouts' },

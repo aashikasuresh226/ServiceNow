@@ -150,7 +150,30 @@ export type TechJob = {
   completed_at: string | null;
 };
 
-export type TechBoard = { offers: TechJob[]; jobs: TechJob[]; hidden_jobs: number; recent: TechJob[] };
+export type TechBoard = {
+  offers: TechJob[];
+  jobs: TechJob[];
+  hidden_jobs: number;
+  recent: TechJob[];
+  outside_jobs: OutsideJob[];
+};
+
+/** A job from the company's own software (Housecall Pro). Read-only in our apps. */
+export type OutsideJob = {
+  id: string;
+  provider: string;
+  invoice_number: string | null;
+  work_status: string;
+  description: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  address: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  technician_id: string | null;
+  technician_name: string | null;
+  customer_uses_app: boolean;
+};
 
 export type InviteInfo = {
   shop_name: string;
@@ -212,6 +235,7 @@ export type OtpStarted = { phone: string; resend_after_seconds: number; dev_code
 export type ProviderShop = {
   id: string;
   name: string;
+  your_company?: boolean; // the homeowner is already this company's customer
   rating: number | null;
   rating_count: number;
   technician_count: number;

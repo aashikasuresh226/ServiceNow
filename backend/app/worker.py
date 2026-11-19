@@ -13,7 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -55,14 +55,36 @@ async def _sync_due_shops(container: Container, session: AsyncSession) -> int:
             select(Shop).where(Shop.scheduling_provider != SchedulingProvider.NONE.value)
         )
     )
+    hcp_interval = timedelta(seconds=container.settings.housecall_pro_import_seconds)
     synced = 0
     service = AvailabilityService(session, container)
     for shop in shops:
-        if shop.scheduling_last_synced_at and now - shop.scheduling_last_synced_at < interval:
+        every = (
+            hcp_interval
+            if shop.scheduling_provider == SchedulingProvider.HOUSECALL_PRO.value
+            else interval
+        )
+        if shop.scheduling_last_synced_at and now - shop.scheduling_last_synced_at < every:
             continue
         await service.sync_shop(shop)
         synced += 1
     return synced
+
+
+async def _import_customers(container: Container, session: AsyncSession) -> int:
+    """Re-read one Housecall Pro shop's full customer list when it's due (daily)."""
+    due = container.clock.now() - timedelta(hours=container.settings.customer_import_hours)
+    shop = await session.scalar(
+        select(Shop)
+        .where(
+            Shop.scheduling_provider == SchedulingProvider.HOUSECALL_PRO.value,
+            or_(Shop.customers_imported_at.is_(None), Shop.customers_imported_at <= due),
+        )
+        .limit(1)
+    )
+    if shop is None:
+        return 0
+    return await ExternalJobService(session, container).import_customers(shop)
 
 
 async def _purge_locations(session: AsyncSession) -> int:
@@ -82,6 +104,7 @@ async def tick(container: Container) -> None:
         container, "expire_offers", lambda s: MatchingService(s, container).expire_offers()
     )
     await _run_step(container, "sync_schedules", lambda s: _sync_due_shops(container, s))
+    await _run_step(container, "import_customers", lambda s: _import_customers(container, s))
     await _run_step(
         container, "process_waitlist", lambda s: MatchingService(s, container).process_waitlist()
     )

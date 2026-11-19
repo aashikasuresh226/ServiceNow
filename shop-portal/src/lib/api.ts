@@ -1,6 +1,9 @@
 /** Typed client for the shop endpoints. Refreshes an expired session once, then gives up. */
 import type {
   CalendarLink,
+  Customer,
+  CustomerList,
+  OutsideJob,
   Dashboard,
   Readiness,
   EmailLink,
@@ -124,6 +127,17 @@ async function request<T>(method: string, path: string, body?: unknown,
 
 export const api = {
   options: () => request<Options>('GET', '/meta/options'),
+
+  outsideJobs: () => request<OutsideJob[]>('GET', '/shop/outside-jobs'),
+  customers: (q?: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    const qs = params.toString();
+    return request<CustomerList>('GET', `/shop/customers${qs ? `?${qs}` : ''}`);
+  },
+  markInvited: (id: string) => request<Customer>('POST', `/shop/customers/${id}/invited`),
+  importCustomers: () => request<{ count: number }>('POST', '/shop/customers/import'),
 
   signup: (data: { email: string; password: string; shop_name: string; name?: string }) =>
     request<LoginStep>('POST', '/auth/shop/signup', data),

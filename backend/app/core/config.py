@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     average_travel_speed_kmh: float = 40.0
     default_job_duration_minutes: int = 90
     scheduling_sync_interval_seconds: int = 300
+    # Housecall Pro: the shop's own jobs and new customers are copied this often.
+    housecall_pro_import_seconds: int = 60
+    # ...and the full customer list is re-read this often (also on connect / on demand).
+    customer_import_hours: int = 24
     worker_tick_seconds: int = 5
 
     @property

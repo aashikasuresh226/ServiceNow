@@ -7,6 +7,10 @@ technicians there.
    picked a specific technician, so the dispatcher assigns someone as they already do.
 2. sync: we read the job back (polling every minute, or right away when Housecall Pro
    calls our webhook) and copy over who's assigned, schedule changes and status.
+3. import: every minute (or on a webhook) we also copy the shop's OWN Housecall Pro jobs
+   (ones not booked through us) and their customers, so the assigned technician sees the
+   job in the technician app and the office sees it in the portal. Read-only: the job
+   is still run in Housecall Pro.
 
 A failed push is kept as `external_error` (shown in the portal) and retried.
 """
@@ -15,17 +19,24 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError
-from app.domain.enums import Actor, RequestStatus, SchedulingProvider
-from app.integrations.scheduling.housecall_pro import HcpJob, HousecallProClient, parse_us_address
-from app.models import Homeowner, ServiceRequest, Shop, Technician
+from app.domain.enums import Actor, AvailabilityKind, RequestStatus, SchedulingProvider
+from app.integrations.scheduling.base import ExternalBlock
+from app.integrations.scheduling.housecall_pro import (
+    HcpJob,
+    HcpJobDetail,
+    HousecallProClient,
+    parse_us_address,
+)
+from app.models import ExternalJob, Homeowner, ServiceRequest, Shop, Technician
 from app.services.calendar_service import CalendarService
+from app.services.customer_service import CustomerService
 from app.services.lifecycle import transition
 from app.services.notifications import notify_homeowner
 
@@ -35,6 +46,9 @@ SYNCED = [S.DISPATCHED, S.EN_ROUTE, S.ON_SITE, S.QUOTED, S.IN_PROGRESS]
 SYNCED_VALUES = [s.value for s in SYNCED]
 PHOTO_LINK_TTL = timedelta(days=14)
 ARRIVAL_WINDOW_MINUTES = 60
+IMPORT_BEFORE = timedelta(days=1)
+IMPORT_AFTER = timedelta(days=14)
+UNSCHEDULED_KEEP = timedelta(days=30)
 
 
 class ExternalJobService:
@@ -280,6 +294,144 @@ class ExternalJobService:
                 f"{shop.name} canceled your visit. Open the app to find another technician.",
             )
 
+    # --- Import the shop's own jobs ----------------------------------------------------------
+    async def import_shop(self, shop: Shop) -> int:
+        """Copy the shop's Housecall Pro jobs (today -1 day to +14 days, plus the newest
+        ones) and their customers; store technicians' busy time. Returns jobs seen."""
+        client = self._client(shop)
+        if client is None:
+            return 0
+        now = self.c.clock.now()
+        start, end = now - IMPORT_BEFORE, now + IMPORT_AFTER
+        try:
+            details = await client.fetch_jobs(start=start, end=end)
+        except AppError as exc:
+            shop.scheduling_last_error = exc.message[:500]
+            log.warning("Housecall Pro import failed for shop %s: %s", shop.id, exc.message)
+            return 0
+        ours = set(
+            await self.s.scalars(
+                select(ServiceRequest.external_job_id).where(
+                    ServiceRequest.shop_id == shop.id, ServiceRequest.external_job_id.is_not(None)
+                )
+            )
+        )
+        theirs = [d for d in details if d.job.id not in ours]
+
+        # Busy time for matching (our own jobs already block their technician's time).
+        from app.services.availability_service import AvailabilityService  # import cycle
+
+        blocks = [
+            ExternalBlock(
+                emp, AvailabilityKind.BUSY, d.job.scheduled_start, d.job.scheduled_end, "Job"
+            )
+            for d in theirs
+            if d.job.scheduled_start
+            and d.job.scheduled_end
+            and not d.job.canceled
+            and not d.job.completed
+            for emp in d.job.employee_ids
+        ]
+        await AvailabilityService(self.s, self.c).store_blocks(
+            shop, SchedulingProvider.HOUSECALL_PRO, blocks, start, end
+        )
+
+        customers = CustomerService(self.s, self.c)
+        existing = {
+            row.external_id: row
+            for row in await self.s.scalars(
+                select(ExternalJob).where(
+                    ExternalJob.shop_id == shop.id,
+                    ExternalJob.provider == SchedulingProvider.HOUSECALL_PRO.value,
+                    ExternalJob.external_id.in_([d.job.id for d in theirs] or [""]),
+                )
+            )
+        }
+        techs: dict[str, Technician | None] = {}
+        for detail in theirs:
+            row = existing.get(detail.job.id)
+            if row is None:
+                row = ExternalJob(
+                    shop_id=shop.id,
+                    provider=SchedulingProvider.HOUSECALL_PRO.value,
+                    external_id=detail.job.id,
+                    seen_at=now,
+                )
+                self.s.add(row)
+            await self._copy_job(row, detail, shop, client, customers, techs, now)
+        await self.s.flush()
+        # Jobs that disappeared from the window were deleted or moved away in Housecall Pro.
+        seen = [d.job.id for d in theirs] or [""]
+        await self.s.execute(
+            delete(ExternalJob).where(
+                ExternalJob.shop_id == shop.id,
+                ExternalJob.external_id.not_in(seen),
+                or_(
+                    ExternalJob.starts_at.between(start, end),
+                    ExternalJob.starts_at < start - IMPORT_AFTER,
+                    ExternalJob.seen_at < now - UNSCHEDULED_KEEP,
+                ),
+            )
+        )
+        shop.scheduling_last_synced_at = now
+        shop.scheduling_last_error = None
+        await self.s.flush()
+        return len(theirs)
+
+    async def import_customers(self, shop: Shop) -> int:
+        """Every customer in the shop's Housecall Pro account (so the shop can invite them)."""
+        client = self._client(shop)
+        if client is None:
+            return 0
+        try:
+            rows = await client.list_customers()
+        except AppError as exc:
+            shop.customers_imported_at = self.c.clock.now()  # retry tomorrow, not every tick
+            shop.scheduling_last_error = exc.message[:500]
+            return 0
+        return await CustomerService(self.s, self.c).import_all(shop, rows)
+
+    async def _copy_job(
+        self,
+        row: ExternalJob,
+        detail: HcpJobDetail,
+        shop: Shop,
+        client: HousecallProClient,
+        customers: CustomerService,
+        techs: dict[str, Technician | None],
+        now: datetime,
+    ) -> None:
+        job = detail.job
+        tech = None
+        if job.employee_ids:
+            employee = job.employee_ids[0]
+            if employee not in techs:
+                techs[employee] = await self._tech_for(shop, employee, client)
+            tech = techs[employee]
+        customer = await customers.upsert_hcp(shop, detail.customer) if detail.customer else None
+        if (
+            customer is not None
+            and job.scheduled_start
+            and (customer.last_job_at is None or customer.last_job_at < job.scheduled_start)
+        ):
+            customer.last_job_at = job.scheduled_start
+        values = {
+            "technician_id": tech.id if tech else None,
+            "customer_id": customer.id if customer else None,
+            "invoice_number": detail.invoice_number,
+            "work_status": job.work_status[:32],
+            "description": detail.description[:2000] if detail.description else None,
+            "customer_name": detail.customer.name if detail.customer else None,
+            "customer_phone": customer.phone if customer else None,
+            "address": detail.address,
+            "starts_at": job.scheduled_start,
+            "ends_at": job.scheduled_end,
+        }
+        for key, value in values.items():
+            if getattr(row, key) != value:  # don't re-encrypt unchanged values every minute
+                setattr(row, key, value)
+        row.seen_at = now
+
     # --- Webhook ------------------------------------------------------------------------------
     async def handle_webhook(self, token: str, payload: dict[str, object]) -> bool:
         """Housecall Pro tells us something changed: re-read that job now. We never trust
@@ -289,6 +441,7 @@ class ExternalJobService:
             return False
         job_id = _job_id(payload)
         if not job_id:
+            await self.import_shop(shop)
             return True
         request = await self.s.scalar(
             select(ServiceRequest).where(
@@ -297,6 +450,8 @@ class ExternalJobService:
         )
         if request is not None and request.status in SYNCED_VALUES:
             await self.sync(request, shop)
+        elif request is None:
+            await self.import_shop(shop)  # a job created or changed in Housecall Pro
         return True
 
 

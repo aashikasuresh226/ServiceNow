@@ -248,6 +248,8 @@ class FakeHousecallPro:
             "assigned_employees": [],
         }
         self.deleted = False
+        self.own_jobs: list[dict[str, Any]] = []  # created in Housecall Pro by the shop
+        self.customers: list[dict[str, Any]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content) if request.content else None
@@ -272,9 +274,11 @@ class FakeHousecallPro:
                 },
             )
         if path == "/jobs" and request.method == "GET":
-            return httpx.Response(200, json={"jobs": [], "total_pages": 1})
+            return httpx.Response(200, json={"jobs": self.own_jobs, "total_pages": 1})
         if path == "/customers" and request.method == "GET":
-            return httpx.Response(200, json={"customers": []})
+            if request.url.params.get("q"):
+                return httpx.Response(200, json={"customers": []})
+            return httpx.Response(200, json={"customers": self.customers, "total_pages": 1})
         if path == "/customers" and request.method == "POST":
             street = body["addresses"][0]["street"]
             return httpx.Response(

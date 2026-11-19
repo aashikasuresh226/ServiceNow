@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
@@ -17,6 +17,18 @@ export default function Profile() {
   const [phone, setPhone] = useState('');
   const [sms, setSms] = useState(me?.sms_opt_in ?? true);
   const needsPhone = !me?.phone;
+  const [suggestedFrom, setSuggestedFrom] = useState<string | null>(null);
+  // A company this homeowner is already a customer of may have their address on file.
+  useEffect(() => {
+    if (me?.address) return;
+    api.suggestions().then((s) => {
+      if (s.name) setName((current) => current || s.name!);
+      if (s.address) {
+        setAddress((current) => current || s.address!);
+        setSuggestedFrom(s.companies[0] ?? null);
+      }
+    }).catch(() => undefined);
+  }, [me?.address]);
 
   const save = useAction(async () => {
     // The address is looked up for real; an address that can't be found is rejected.
@@ -45,7 +57,9 @@ export default function Profile() {
       <Field label="Home address" value={address} onChangeText={setAddress}
         placeholder="123 Main St, Atlanta, GA 30303" autoComplete="street-address"
         textContentType="fullStreetAddress" />
-      <Muted style={{ marginTop: -8 }}>Include the street number, city, state and ZIP.</Muted>
+      <Muted style={{ marginTop: -8 }}>
+        {suggestedFrom ? `Filled in from ${suggestedFrom}'s records. Change it if it's not right.` : 'Include the street number, city, state and ZIP.'}
+      </Muted>
       {needsPhone ? (
         <>
           <Field label="Mobile number" value={phone} onChangeText={setPhone}

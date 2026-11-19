@@ -12,7 +12,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '@/components/icons';
 import { Avatar } from '@/components/illustrations';
 import { colors } from '@/components/theme';
-import { Body, Button, Card, ErrorText, Loading, Muted, Row, Screen, Segmented, StepHeader, TextLink, Title } from '@/components/ui';
+import { Badge, Body, Button, Card, ErrorText, Loading, Muted, Row, Screen, Segmented, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { takeChoice, type PendingChoice } from '@/lib/choice';
@@ -108,7 +108,10 @@ export default function ChooseProvider() {
             label={`${s.name}, earliest ${visitTime(s.arrival_at)}`}>
             <View style={styles.shopMark}><Icon name="building" size={20} color={colors.primary} /></View>
             <View style={{ flex: 1, gap: 2 }}>
-              <Text style={styles.name}>{s.name}</Text>
+              <Row style={{ gap: 6 }}>
+                <Text style={styles.name}>{s.name}</Text>
+                {s.your_company ? <Badge label="Your company" tone="success" /> : null}
+              </Row>
               <Muted>{stars(s.rating, s.rating_count)} · {miles(s.distance_km)} · {s.technician_count} available</Muted>
               <Muted>Earliest: {visitTime(s.arrival_at)}</Muted>
             </View>

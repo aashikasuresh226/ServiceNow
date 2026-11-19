@@ -7,6 +7,7 @@ import { Layout } from './components/Layout';
 import { hasSession } from './lib/api';
 import { AuthPage } from './pages/Auth';
 import { AvailabilityPage } from './pages/Availability';
+import { CustomersPage } from './pages/Customers';
 import { DashboardPage } from './pages/Dashboard';
 import { IntegrationsPage } from './pages/Integrations';
 import { JobsPage } from './pages/Jobs';
@@ -30,6 +31,7 @@ createRoot(document.getElementById('root')!).render(
           <Route index element={<DashboardPage />} />
           <Route path="jobs" element={<JobsPage />} />
           <Route path="technicians" element={<TechniciansPage />} />
+          <Route path="customers" element={<CustomersPage />} />
           <Route path="availability" element={<AvailabilityPage />} />
           <Route path="integrations" element={<IntegrationsPage />} />
           <Route path="settings" element={<SettingsPage />} />

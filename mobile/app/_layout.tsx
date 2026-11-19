@@ -9,8 +9,8 @@ import { AuthProvider, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
 import { OptionsContext, useLoadOptions } from '@/lib/hooks';
 
-// 'p' = public company / technician pages opened from shared links.
-const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'p']);
+// 'p' = public company / technician pages opened from shared links; 'join' = a company's invite.
+const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'p', 'join']);
 // Technician screens anyone can open: sign-in and the emailed invite.
 const PUBLIC_TECH_ROUTES = new Set(['sign-in', 'join']);
 

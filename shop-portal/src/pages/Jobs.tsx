@@ -5,7 +5,7 @@ import { Avatar, Icon } from '../components/Icon';
 import { Button, Empty, ErrorAlert } from '../components/ui';
 import { api } from '../lib/api';
 import { countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal, visitTime } from '../lib/hooks';
-import type { Job, Message, TechOption } from '../lib/types';
+import type { Job, Message, OutsideJob, TechOption } from '../lib/types';
 
 /** +14045550199 -> (404) 555-0199 */
 function prettyPhone(e164: string): string {
@@ -285,6 +285,9 @@ export function JobsPage() {
   const offers = useLiveData(() => api.jobs(['offered']), 4000);
   const active = useLiveData(() => api.jobs(['dispatched', 'en_route', 'on_site', 'quoted', 'in_progress']), 4000);
   const done = useLiveData(() => api.jobs(['completed']), 10000);
+  const { me } = usePortal();
+  const hcp = me.shop.scheduling_provider === 'housecall_pro';
+  const outside = useLiveData(() => (hcp ? api.outsideJobs() : Promise.resolve([] as OutsideJob[])), 15000);
   const reloadAll = () => { void offers.reload(); void active.reload(); void done.reload(); };
 
   return (
@@ -295,6 +298,18 @@ export function JobsPage() {
       <h2>Active</h2>
       {active.data?.length ? active.data.map((j) => <ActiveJobCard key={j.id} job={j} onChanged={reloadAll} />)
         : <div className="card"><Empty icon="jobs">No active jobs. New offers appear here automatically.</Empty></div>}
+      {hcp ? (
+        <>
+          <h2>In Housecall Pro</h2>
+          <p className="muted small" style={{ marginTop: -12 }}>
+            Jobs your office booked in Housecall Pro, copied every minute. Assigned technicians see them in the technician app.
+          </p>
+          <ErrorAlert message={outside.error} />
+          {outside.data?.length ? <OutsideTable jobs={outside.data} /> : (
+            <div className="card"><Empty icon="calendar">No Housecall Pro jobs from yesterday through the next week.</Empty></div>
+          )}
+        </>
+      ) : null}
       <h2>Completed</h2>
       {done.data?.length ? (
         <div className="card table-wrap">
@@ -326,5 +341,30 @@ export function JobsPage() {
         </div>
       ) : <p className="muted">No completed jobs yet.</p>}
     </>
+  );
+}
+
+function OutsideTable({ jobs }: { jobs: OutsideJob[] }) {
+  return (
+    <div className="card table-wrap">
+      <table className="table">
+        <thead><tr><th>When</th><th>Customer</th><th>Job</th><th>Technician</th><th>Status</th></tr></thead>
+        <tbody>
+          {jobs.map((j) => (
+            <tr key={j.id}>
+              <td>{j.starts_at ? visitTime(j.starts_at) : <span className="muted">Not scheduled</span>}</td>
+              <td>
+                {j.customer_name ?? 'Customer'}
+                {j.customer_uses_app ? <span className="badge success small" style={{ marginLeft: 6 }}>Uses the app</span> : null}
+                {j.address ? <span className="muted small" style={{ display: 'block' }}>{j.address}</span> : null}
+              </td>
+              <td className="small">{j.invoice_number ? `#${j.invoice_number} · ` : ''}{j.description ?? '—'}</td>
+              <td>{j.technician_name ?? <span className="muted">Unassigned</span>}</td>
+              <td className="small" style={{ textTransform: 'capitalize' }}>{j.work_status || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

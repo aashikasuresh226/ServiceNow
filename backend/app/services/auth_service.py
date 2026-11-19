@@ -42,6 +42,7 @@ from app.core.security import (
 )
 from app.integrations.google_auth import GoogleIdentity
 from app.models import AuthNonce, Homeowner, PhoneOtp, RefreshToken, Shop, ShopUser, Technician
+from app.services.customer_service import CustomerService
 from app.services.email_check import check_email
 from app.services.email_proof import EmailLink, EmailProofService
 from app.services.phone import normalize_phone
@@ -265,6 +266,7 @@ class AuthService:
             homeowner = Homeowner(phone=phone)
             self.s.add(homeowner)
             await self.s.flush()
+        await CustomerService(self.s, self.c).link_homeowner(homeowner)
         tokens = await self.issue_session(
             TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
         )
@@ -284,6 +286,7 @@ class AuthService:
         await self._check_phone_code(phone, code)
         homeowner.phone = phone
         await self.s.flush()
+        await CustomerService(self.s, self.c).link_homeowner(homeowner)
         return homeowner
 
     async def _ensure_phone_free(self, homeowner: Homeowner, phone: str) -> None:
@@ -349,6 +352,7 @@ class AuthService:
         if not homeowner.name and identity.name:
             homeowner.name = identity.name
         await self.s.flush()
+        await CustomerService(self.s, self.c).link_homeowner(homeowner)
         tokens = await self.issue_session(
             TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
         )

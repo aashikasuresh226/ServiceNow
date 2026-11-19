@@ -53,6 +53,10 @@ class Shop(IdMixin, TimestampMixin, Base):
     instant_book: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     instant_book_daily_limit: Mapped[int] = mapped_column(default=3, nullable=False)
 
+    # Shop-wide invite link /join/<code> (posters, QR codes, emails to all customers).
+    invite_code: Mapped[str | None] = mapped_column(String(16), unique=True)
+    customers_imported_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
     # Homeowners rate the company separately from the technician.
     rating_sum: Mapped[int] = mapped_column(default=0, nullable=False)
     rating_count: Mapped[int] = mapped_column(default=0, nullable=False)

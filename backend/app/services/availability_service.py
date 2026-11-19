@@ -25,6 +25,7 @@ from app.domain.enums import (
 )
 from app.domain.geo import LatLng, travel_minutes
 from app.domain.matching import TechCandidate
+from app.integrations.scheduling.base import ExternalBlock
 from app.models import AvailabilityBlock, ServiceRequest, Shop, Technician
 
 log = logging.getLogger(__name__)
@@ -194,6 +195,11 @@ class AvailabilityService:
         provider = SchedulingProvider(shop.scheduling_provider)
         if provider == SchedulingProvider.NONE or not shop.scheduling_credentials_encrypted:
             return 0
+        if provider == SchedulingProvider.HOUSECALL_PRO:
+            # One read of the jobs gives busy time, the jobs themselves and new customers.
+            from app.services.external_jobs import ExternalJobService  # avoid import cycle
+
+            return await ExternalJobService(self.s, self.c).import_shop(shop)
         credentials = json.loads(self.c.encryptor.decrypt(shop.scheduling_credentials_encrypted))
         client = self.c.scheduling(provider, credentials)
         now = self.c.clock.now()
@@ -205,6 +211,21 @@ class AvailabilityService:
             log.warning("Sync failed for shop %s: %s", shop.id, exc.message)
             return 0
 
+        stored = await self.store_blocks(shop, provider, external, start, end)
+        shop.scheduling_last_synced_at = now
+        shop.scheduling_last_error = None
+        await self.s.flush()
+        return stored
+
+    async def store_blocks(
+        self,
+        shop: Shop,
+        provider: SchedulingProvider,
+        external: list[ExternalBlock],
+        start: datetime,
+        end: datetime,
+    ) -> int:
+        """Replace this provider's busy/shift blocks in [start, end) with `external`."""
         techs = list(
             await self.s.scalars(
                 select(Technician).where(
@@ -237,9 +258,6 @@ class AvailabilityService:
                 )
             )
             stored += 1
-        shop.scheduling_last_synced_at = now
-        shop.scheduling_last_error = None
-        await self.s.flush()
         return stored
 
 

@@ -136,7 +136,11 @@ class MatchingService:
             .order_by(ServiceRequest.completed_at.desc())
             .limit(5)
         )
-        return [r for r in dict.fromkeys(rows) if r is not None]
+        # Then the companies they're already a customer of (e.g. imported from Housecall Pro).
+        from app.services.customer_service import CustomerService  # avoid import cycle
+
+        home = await CustomerService(self.s, self.c).home_shops(request.homeowner_id)
+        return [r for r in dict.fromkeys([*rows, *home]) if r is not None]
 
     async def _instant_book_open(self, shop: Shop, now: datetime) -> bool:
         if not shop.instant_book or not shop.is_live:

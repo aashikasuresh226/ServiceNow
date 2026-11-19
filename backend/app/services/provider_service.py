@@ -79,8 +79,12 @@ class ProviderService:
                     "arrival_at": o.arrival_at,
                 }
             )
+        from app.services.customer_service import CustomerService  # avoid import cycle
+
+        home = set(await CustomerService(self.s, self.c).home_shops(request.homeowner_id))
         shop_rows = [
             {
+                "your_company": shop.id in home,
                 "id": shop.id,
                 "name": shop.name,
                 "rating": shop.rating,
@@ -92,7 +96,8 @@ class ProviderService:
             for shop in shops.values()
             if by_shop[shop.id]
         ]
-        shop_rows.sort(key=lambda r: (r["arrival_at"], r["distance_km"]))
+        # The homeowner's own company first, then soonest.
+        shop_rows.sort(key=lambda r: (not r["your_company"], r["arrival_at"], r["distance_km"]))
         return {"shops": shop_rows, "technicians": tech_rows}
 
     async def set_choice(

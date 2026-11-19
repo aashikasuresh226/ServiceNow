@@ -113,7 +113,9 @@ export function IntegrationsPage() {
           {hcp ? (
             <>
               <p className="small muted">
-                Your employees and scheduled jobs are read every few minutes to know who's busy. When you accept a job,
+                Every minute we copy your Housecall Pro jobs (including new customers): assigned technicians see them in
+                the technician app, they show under <Link to="/jobs">Jobs</Link>, and your customers appear under{' '}
+                <Link to="/customers">Customers</Link> to invite. When you accept a job from us,
                 it's created in Housecall Pro{shop.dispatch_mode === 'software' ? ' for your dispatcher to assign' : ''}.
                 Link each technician to their Housecall Pro employee on <Link to="/technicians">Technicians</Link> (matched
                 by name automatically).

@@ -159,6 +159,21 @@ class HomeownerOut(Model):
     payment_method_label: str | None
 
 
+class ProfileSuggestionsOut(Model):
+    name: str | None
+    address: str | None
+    companies: list[str]
+
+
+class CustomerInviteIn(Model):
+    code: str = Field(min_length=4, max_length=16)
+
+
+class InviteOut(Model):
+    shop_name: str
+    shop_phone: str | None
+
+
 class HomeownerUpdateIn(Model):
     name: str | None = Field(None, max_length=120)
     address: str | None = Field(None, max_length=300)  # looked up with the geocoder
@@ -555,11 +570,31 @@ class TechJobOut(Model):
     completed_at: datetime | None
 
 
+class OutsideJobOut(Model):
+    """A job from the shop's own software (Housecall Pro), read-only in our apps."""
+
+    id: uuid.UUID
+    provider: str
+    invoice_number: str | None
+    work_status: str
+    description: str | None
+    customer_name: str | None
+    customer_phone: str | None  # technicians: only with "contact customers" permission
+    address: str | None
+    starts_at: datetime | None
+    ends_at: datetime | None
+    technician_id: uuid.UUID | None
+    technician_name: str | None
+    customer_uses_app: bool
+
+
 class TechBoardOut(Model):
     offers: list[TechJobOut]
     jobs: list[TechJobOut]
     hidden_jobs: int
     recent: list[TechJobOut]
+    # From the shop's software; merged into the day by time in the app.
+    outside_jobs: list[OutsideJobOut] = []
 
 
 class DeclineIn(Model):
@@ -570,3 +605,28 @@ class LocationIn(Model):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
     accuracy_m: float | None = Field(None, ge=0, le=100000)
+
+
+class CustomerOut(Model):
+    id: uuid.UUID
+    provider: str  # housecall_pro | app
+    name: str | None
+    phone: str | None
+    email: str | None
+    address: str | None
+    status: str  # joined | invited | not_invited
+    invited_at: datetime | None
+    joined_at: datetime | None
+    last_job_at: datetime | None
+    invite_url: str
+    invite_message: str
+
+
+class CustomerListOut(Model):
+    customers: list[CustomerOut]
+    total: int
+    joined: int
+    invited: int
+    imported_at: datetime | None
+    shop_invite_url: str
+    shop_invite_message: str
