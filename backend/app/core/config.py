@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # may be used by Google to improve its products; only photos + the description are sent.
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-flash-lite-latest"  # check AI Studio for free-tier models
+    # Tried in order when the main model is overloaded (503) or unavailable (comma-separated).
+    gemini_fallback_models: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash"]
+    )
     ai_max_concurrency: int = 8  # simultaneous Claude calls per API process
     ai_analyses_per_hour: int = 15  # per homeowner, caps cost from abuse
 
@@ -130,7 +134,9 @@ class Settings(BaseSettings):
     scheduling_sync_interval_seconds: int = 300
     worker_tick_seconds: int = 5
 
-    @field_validator("google_client_ids", "sms_allowed_country_codes", mode="before")
+    @field_validator(
+        "google_client_ids", "sms_allowed_country_codes", "gemini_fallback_models", mode="before"
+    )
     @classmethod
     def _split_commas(cls, value: Any) -> Any:
         if isinstance(value, str):

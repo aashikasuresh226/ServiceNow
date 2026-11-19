@@ -129,7 +129,7 @@ async def _test_ai(settings: Settings, photo: str | None) -> None:
     except AppError as exc:
         raise SystemExit(f"FAILED: {exc.message}. See the log lines above for details.") from exc
     unit = asdict(result.unit)
-    print("OK, Claude answered. Unit:")
+    print("OK, the AI answered. Unit:")
     for key, value in unit.items():
         if value not in (None, [], {}):
             print(f"  {key}: {value}")

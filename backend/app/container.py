@@ -77,6 +77,7 @@ def _build_analyzer(settings: Settings) -> UnitAnalyzer | None:
         return GeminiUnitAnalyzer(
             _secret(settings.gemini_api_key),
             settings.gemini_model,
+            fallback_models=settings.gemini_fallback_models,
             max_concurrency=settings.ai_max_concurrency,
         )
     from app.integrations.ai.anthropic_analyzer import AnthropicUnitAnalyzer

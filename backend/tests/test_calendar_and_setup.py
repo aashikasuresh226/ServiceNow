@@ -529,6 +529,45 @@ async def test_gemini_analyzer_request_and_errors() -> None:
     except AnalysisFailed as exc:
         assert "free Gemini limit" in exc.reason
 
+    # Main model overloaded (503 on every retry) -> the next model answers.
+    calls: list[str] = []
+
+    def busy(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if "flash-lite-latest" in request.url.path:
+            return httpx.Response(
+                503, json={"error": {"code": 503, "status": "UNAVAILABLE", "message": "overloaded"}}
+            )
+        reply = json.dumps(_plate_response())
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": reply}]}}]})
+
+    analyzer = GeminiUnitAnalyzer(
+        "AIza-test",
+        "gemini-flash-lite-latest",
+        fallback_models=["gemini-flash-latest"],
+        retry_delay_seconds=0,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(busy)),
+    )
+    result = await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
+    assert result.unit.brand == "Carrier"
+    assert calls.count("/v1beta/models/gemini-flash-lite-latest:generateContent") == 3
+    assert calls[-1] == "/v1beta/models/gemini-flash-latest:generateContent"
+
+    # Every model busy -> a clear message.
+    analyzer = GeminiUnitAnalyzer(
+        "AIza-test",
+        "gemini-flash-lite-latest",
+        retry_delay_seconds=0,
+        http=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(503, json={}))
+        ),
+    )
+    try:
+        await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
+        raise AssertionError("expected a failure")
+    except AnalysisFailed as exc:
+        assert "busy" in exc.reason
+
 
 def test_auto_provider_prefers_claude_then_gemini() -> None:
     from pydantic import SecretStr
