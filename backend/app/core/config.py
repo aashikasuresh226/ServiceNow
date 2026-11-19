@@ -70,10 +70,15 @@ class Settings(BaseSettings):
     google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Claude reads the unit photo.
-    ai_provider: str = "auto"  # auto (on when a key is set) | anthropic | off | fake (tests)
+    # auto: Claude if an Anthropic key is set, else Gemini if a Gemini key is set, else off.
+    ai_provider: str = "auto"  # auto | anthropic | gemini | off | fake (tests)
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5-5"
     anthropic_effort: str = "low"  # low | medium | high: how hard Claude thinks
+    # Google Gemini (has a free tier: https://aistudio.google.com/apikey). Free-tier prompts
+    # may be used by Google to improve its products; only photos + the description are sent.
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-flash-lite-latest"  # check AI Studio for free-tier models
     ai_max_concurrency: int = 8  # simultaneous Claude calls per API process
     ai_analyses_per_hour: int = 15  # per homeowner, caps cost from abuse
 
@@ -157,6 +162,8 @@ class Settings(BaseSettings):
             problems.append("Twilio must be configured in prod")
         if self.ai_provider == "anthropic" and not self.anthropic_api_key:
             problems.append("HVAC_ANTHROPIC_API_KEY is required for HVAC_AI_PROVIDER=anthropic")
+        if self.ai_provider == "gemini" and not self.gemini_api_key:
+            problems.append("HVAC_GEMINI_API_KEY is required for HVAC_AI_PROVIDER=gemini")
         if self.payments_provider == "stripe" and not self.stripe_secret_key:
             problems.append("HVAC_STRIPE_SECRET_KEY is required for HVAC_PAYMENTS_PROVIDER=stripe")
         stripe_on = self.payments_enabled and self.payments_provider != "fake"
@@ -190,9 +197,19 @@ class Settings(BaseSettings):
     # --- Resolved feature switches ---------------------------------------------------
     @property
     def ai_enabled(self) -> bool:
+        return self.resolved_ai_provider != "off"
+
+    @property
+    def resolved_ai_provider(self) -> str:
         if self.ai_provider == "auto":
-            return self.anthropic_api_key is not None
-        return self.ai_provider in ("anthropic", "fake")
+            if self.anthropic_api_key is not None:
+                return "anthropic"
+            return "gemini" if self.gemini_api_key is not None else "off"
+        return self.ai_provider
+
+    @property
+    def ai_model(self) -> str:
+        return self.gemini_model if self.resolved_ai_provider == "gemini" else self.anthropic_model
 
     @property
     def payments_enabled(self) -> bool:

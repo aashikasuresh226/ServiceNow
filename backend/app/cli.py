@@ -78,7 +78,13 @@ def check(settings: Settings) -> None:
         twilio and bool(settings.twilio_from_number or settings.twilio_messaging_service_sid),
         "needs HVAC_TWILIO_FROM_NUMBER or HVAC_TWILIO_MESSAGING_SERVICE_SID",
     )
-    line("Photo analysis (Claude)", settings.ai_enabled, "HVAC_ANTHROPIC_API_KEY")
+    line(
+        "Photo analysis",
+        settings.ai_enabled,
+        f"{settings.resolved_ai_provider} ({settings.ai_model})"
+        if settings.ai_enabled
+        else "HVAC_GEMINI_API_KEY (free) or HVAC_ANTHROPIC_API_KEY",
+    )
     line("Payments (Stripe)", settings.payments_enabled, "HVAC_STRIPE_SECRET_KEY + publishable key")
     line("Address lookup", True, settings.geocoding_provider)
     line(
@@ -97,7 +103,10 @@ async def _test_ai(settings: Settings, photo: str | None) -> None:
 
     analyzer = _build_analyzer(settings)
     if analyzer is None:
-        raise SystemExit("Photo analysis is OFF: set HVAC_ANTHROPIC_API_KEY in backend/.env")
+        raise SystemExit(
+            "Photo analysis is OFF: set HVAC_GEMINI_API_KEY (free) or HVAC_ANTHROPIC_API_KEY "
+            "in backend/.env"
+        )
     if photo:
         data = await asyncio.to_thread(Path(photo).read_bytes)
     else:
@@ -109,7 +118,7 @@ async def _test_ai(settings: Settings, photo: str | None) -> None:
         Image.new("RGB", (64, 64), "white").save(buffer, format="JPEG")
         data = buffer.getvalue()
     what = "your photo" if photo else "a blank test image"
-    print(f"Sending {what} to {settings.anthropic_model}...")
+    print(f"Sending {what} to {settings.resolved_ai_provider} ({settings.ai_model})...")
     try:
         result = await analyzer.analyze(
             symptoms=["no_cooling"],

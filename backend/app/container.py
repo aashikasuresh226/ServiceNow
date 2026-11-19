@@ -71,6 +71,14 @@ def _build_analyzer(settings: Settings) -> UnitAnalyzer | None:
         from app.integrations.ai.fake import FakeUnitAnalyzer
 
         return FakeUnitAnalyzer()
+    if settings.resolved_ai_provider == "gemini":
+        from app.integrations.ai.gemini_analyzer import GeminiUnitAnalyzer
+
+        return GeminiUnitAnalyzer(
+            _secret(settings.gemini_api_key),
+            settings.gemini_model,
+            max_concurrency=settings.ai_max_concurrency,
+        )
     from app.integrations.ai.anthropic_analyzer import AnthropicUnitAnalyzer
 
     return AnthropicUnitAnalyzer(

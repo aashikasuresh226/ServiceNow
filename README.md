@@ -110,7 +110,7 @@ All settings live in `backend/.env`. Run `.venv\Scripts\python.exe -m app.cli ch
 | **Google** (free) | "Continue with Google" for homeowners and shops | Only phone (homeowners) and email + password (shops) | `HVAC_GOOGLE_CLIENT_IDS` |
 | **Twilio Verify** | Texted sign-in codes | Development only: the code is shown on screen | `HVAC_TWILIO_ACCOUNT_SID`, `HVAC_TWILIO_AUTH_TOKEN`, `HVAC_TWILIO_VERIFY_SERVICE_SID` |
 | **Twilio Messaging** | Job-update texts (matched, on the way, done) | Updates show in the app only | `HVAC_TWILIO_FROM_NUMBER` or `HVAC_TWILIO_MESSAGING_SERVICE_SID` |
-| **Anthropic** | "Snap your unit": Claude reads the label and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_ANTHROPIC_API_KEY` |
+| **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` or `HVAC_ANTHROPIC_API_KEY` |
 | **Stripe** | Card on file, hold at booking, charge at completion, shop payouts (Connect) | No card needed; the homeowner pays the shop directly | `HVAC_STRIPE_SECRET_KEY`, `HVAC_STRIPE_PUBLISHABLE_KEY`, `HVAC_STRIPE_WEBHOOK_SECRET` |
 
 **Google:** Google Cloud Console → *APIs & Services* → *OAuth consent screen* (External,
@@ -123,6 +123,14 @@ JavaScript origins* (add your real domains later). Copy the client ID.
 numbers can request codes (blocks SMS-pumping fraud; change with
 `HVAC_SMS_ALLOWED_COUNTRY_CODES`). Sending job-update texts from a US number requires A2P 10DLC
 registration in Twilio.
+
+**Gemini (free):** sign in at https://aistudio.google.com/apikey with a Google account,
+create a key, then run `powershell -ExecutionPolicy Bypass -File scripts\windows\set-gemini-key.ps1`
+and paste it. It uses the same instructions, schema and checks as Claude. The free tier has
+daily request limits (shown in AI Studio) and Google may use free-tier prompts to improve its
+products; only the photos, symptoms and description are sent. If the default model
+(`gemini-flash-lite-latest`) isn't offered, set `HVAC_GEMINI_MODEL` to a free model from AI
+Studio. When both keys are set, Claude is used.
 
 **Anthropic:** console.anthropic.com → *API keys* (add credits under *Billing*). Then run
 `powershell -ExecutionPolicy Bypass -File scripts\windows\set-anthropic-key.ps1` and paste

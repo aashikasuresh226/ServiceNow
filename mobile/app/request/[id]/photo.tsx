@@ -105,7 +105,7 @@ export default function Photo() {
       </Row>
       <Muted>Indoor or outdoor unit both work. Up to 5 photos.</Muted>
       {aiOn ? (
-        <Muted>Claude reads the label (brand, model, serial, age, refrigerant) and looks for visible problems.</Muted>
+        <Muted>AI reads the label (brand, model, serial, age, refrigerant) and looks for visible problems.</Muted>
       ) : (
         <Muted>Photo analysis isn't switched on yet. Your photos are shared with your technician.</Muted>
       )}

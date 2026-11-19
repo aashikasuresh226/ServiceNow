@@ -469,3 +469,76 @@ async def test_failed_analysis_still_lets_the_homeowner_book(
         assert "key was rejected" in req["diagnosis"]["ai_error"]
         r = await client.post(f"/requests/{req['id']}/match", headers=home)
         assert r.json()["status"] == "proposed"
+
+
+async def test_gemini_analyzer_request_and_errors() -> None:
+    from app.integrations.ai.gemini_analyzer import GeminiUnitAnalyzer
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = json.loads(request.content)
+        if "responseJsonSchema" in body["generationConfig"]:
+            return httpx.Response(
+                400, json={"error": {"code": 400, "message": "Unknown field responseJsonSchema"}}
+            )
+        reply = "```json\n" + json.dumps(_plate_response()) + "\n```"
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": reply}], "role": "model"}}],
+                "usageMetadata": {"promptTokenCount": 900, "candidatesTokenCount": 300},
+            },
+        )
+
+    analyzer = GeminiUnitAnalyzer(
+        "AIza-test",
+        "gemini-flash-lite-latest",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    buffer = io.BytesIO()
+    Image.new("RGB", (800, 600), "white").save(buffer, format="JPEG")
+    result = await analyzer.analyze(
+        symptoms=["no_cooling"],
+        description="warm air",
+        photos=[PhotoInput(buffer.getvalue(), "image/jpeg")],
+        current_year=2026,
+    )
+    assert result.unit.brand == "Carrier" and result.unit.approx_age_years == 19
+    first = seen[0]
+    assert first.url.path == "/v1beta/models/gemini-flash-lite-latest:generateContent"
+    assert first.headers["x-goog-api-key"] == "AIza-test"
+    parts = json.loads(first.content)["contents"][0]["parts"]
+    assert parts[1]["inline_data"]["mime_type"] == "image/jpeg"
+    assert len(seen) == 2  # schema rejected → plain JSON retry
+
+    def quota(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429, json={"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota"}}
+        )
+
+    analyzer = GeminiUnitAnalyzer(
+        "AIza-test",
+        "gemini-flash-lite-latest",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(quota)),
+    )
+    try:
+        await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
+        raise AssertionError("expected a failure")
+    except AnalysisFailed as exc:
+        assert "free Gemini limit" in exc.reason
+
+
+def test_auto_provider_prefers_claude_then_gemini() -> None:
+    from pydantic import SecretStr
+
+    from app.core.config import Settings
+
+    assert Settings(ai_provider="auto").resolved_ai_provider == "off"
+    gemini = Settings(ai_provider="auto", gemini_api_key=SecretStr("AIza"))
+    assert gemini.resolved_ai_provider == "gemini" and gemini.ai_enabled
+    both = Settings(
+        ai_provider="auto", gemini_api_key=SecretStr("AIza"), anthropic_api_key=SecretStr("sk")
+    )
+    assert both.resolved_ai_provider == "anthropic"
