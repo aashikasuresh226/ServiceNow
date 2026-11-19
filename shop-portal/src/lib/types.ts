@@ -6,7 +6,6 @@ export type Options = {
   symptoms: Option[];
   equipment_types: Option[];
   certifications: Option[];
-  soft_skills: Option[];
   features: Features;
 };
 
@@ -53,7 +52,6 @@ export type Technician = {
   external_id: string | null;
   equipment_types: string[];
   certifications: string[];
-  soft_skills: string[];
   service_radius_km: number;
   working_hours: WorkingHours;
   is_active: boolean;
@@ -96,10 +94,17 @@ export type JobStatus =
   | 'in_progress'
   | 'completed';
 
+export type Readiness = {
+  ready: boolean;
+  checks: { ok: boolean; label: string; detail: string }[];
+  technicians: { id: string; name: string; next_opening: string | null; next_opening_label: string; problems: string[] }[];
+};
+
 export type Job = {
   id: string;
   status: JobStatus;
   created_at: string;
+  arrival_at: string | null;
   customer_first_name: string | null;
   customer_phone: string | null;
   address: string | null;
@@ -128,7 +133,6 @@ export type Job = {
     ai_used?: boolean;
   } | null;
   estimate: { diagnostic_fee_cents: number | null; low_cents: number | null };
-  soft_skills: string[];
   technician_id: string | null;
   technician_name: string | null;
   offer_expires_at: string | null;

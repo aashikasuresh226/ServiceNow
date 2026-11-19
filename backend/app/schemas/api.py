@@ -144,11 +144,6 @@ class UnitUpdateIn(Model):
     approx_age_years: int | None = None
 
 
-class PreferencesIn(Model):
-    soft_skills: list[str] = Field(default_factory=list, max_length=10)
-    require_all: bool = False
-
-
 class RatingIn(Model):
     rating: int = Field(ge=1, le=5)
 
@@ -166,11 +161,11 @@ class TechnicianSummary(Model):
     rating: float | None
     rating_count: int
     certifications: list[str]
-    soft_skills_matched: list[str]
     shop_name: str
     shop_phone: str | None
     distance_km: float | None
     eta_minutes: int | None
+    arrival_at: datetime | None  # when the tech is expected (now-ish, or e.g. tomorrow 8:15)
     location: dict[str, float] | None
 
 
@@ -178,6 +173,7 @@ class WaitlistInfo(Model):
     position: int | None
     eta_minutes: int | None
     since: datetime | None
+    reason: str | None = None  # why nobody could be matched, in plain language
 
 
 class EstimateInfo(Model):
@@ -209,8 +205,6 @@ class RequestOut(Model):
     unit: dict[str, Any] | None
     diagnosis: dict[str, Any] | None
     estimate: EstimateInfo
-    soft_skills: list[str]
-    require_all_skills: bool
     technician: TechnicianSummary | None
     proposal_expires_at: datetime | None
     offer_expires_at: datetime | None
@@ -281,7 +275,6 @@ class TechnicianIn(Model):
     photo_url: str | None = Field(None, max_length=500)
     equipment_types: list[str] | None = None
     certifications: list[str] | None = None
-    soft_skills: list[str] | None = None
     service_radius_km: float | None = None
     working_hours: dict[str, list[list[str]]] | None = None
     is_active: bool | None = None
@@ -295,7 +288,6 @@ class TechnicianOut(Model):
     external_id: str | None
     equipment_types: list[str]
     certifications: list[str]
-    soft_skills: list[str]
     service_radius_km: float
     working_hours: dict[str, Any]
     is_active: bool
@@ -349,6 +341,7 @@ class ShopJobOut(Model):
     id: uuid.UUID
     status: str
     created_at: datetime
+    arrival_at: datetime | None  # when the technician is due at the home
     customer_first_name: str | None
     customer_phone: str | None  # only after dispatch
     address: str | None  # only after dispatch
@@ -360,7 +353,6 @@ class ShopJobOut(Model):
     unit: dict[str, Any] | None
     diagnosis: dict[str, Any] | None
     estimate: EstimateInfo
-    soft_skills: list[str]
     technician_id: uuid.UUID | None
     technician_name: str | None
     offer_expires_at: datetime | None

@@ -15,7 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, InvalidState, NotFound
-from app.domain.availability import Block, is_free_at, validate_working_hours
+from app.domain.availability import (
+    Block,
+    earliest_window,
+    is_free_at,
+    validate_working_hours,
+)
 from app.domain.enums import (
     ACTIVE_JOB_STATUSES,
     AvailabilityKind,
@@ -23,7 +28,6 @@ from app.domain.enums import (
     EquipmentType,
     RequestStatus,
     SchedulingProvider,
-    SoftSkill,
 )
 from app.integrations.payments.base import PaymentGateway
 from app.models import AvailabilityBlock, ServiceRequest, Shop, ShopUser, Technician
@@ -213,7 +217,6 @@ class ShopService:
         for field, enum_cls in (
             ("equipment_types", EquipmentType),
             ("certifications", Certification),
-            ("soft_skills", SoftSkill),
         ):
             if data.get(field) is not None:
                 setattr(
@@ -270,7 +273,13 @@ class ShopService:
         now = self.c.clock.now()
         techs = await self.list_technicians(shop)
         service = AvailabilityService(self.s, self.c)
-        blocks = await service.load_tech_blocks(techs, {shop.id: shop}, now)
+        all_blocks = await service.load_tech_blocks(techs, {shop.id: shop}, now)
+        # The board shows calendar entries; "request" blocks are the same bookings
+        # computed from requests, so they're used for "free now" but not drawn.
+        blocks = {
+            tech_id: [b for b in tech_blocks if b.source != "request"]
+            for tech_id, tech_blocks in all_blocks.items()
+        }
         busy = await service.busy_technician_ids()
         tz = ZoneInfo(shop.timezone)
         day = day or now.astimezone(tz).date()
@@ -287,11 +296,77 @@ class ShopService:
                     ),
                     key=lambda b: b.starts_at,
                 ),
-                free_now=t.is_active and t.id not in busy and is_free_at(blocks.get(t.id, []), now),
+                free_now=t.is_active
+                and t.id not in busy
+                and is_free_at(all_blocks.get(t.id, []), now),
                 on_job=t.id in busy,
             )
             for t in techs
         ]
+
+    async def readiness(self, shop: Shop) -> dict[str, Any]:
+        """Everything that decides whether homeowners can be matched to this shop."""
+        now = self.c.clock.now()
+        techs = [t for t in await self.list_technicians(shop) if t.is_active]
+        service = AvailabilityService(self.s, self.c)
+        blocks = await service.load_tech_blocks(techs, {shop.id: shop}, now)
+        duration = timedelta(minutes=self.c.settings.default_job_duration_minutes)
+        horizon = timedelta(days=self.c.settings.match_horizon_days)
+        tz = ZoneInfo(shop.timezone)
+
+        tech_rows = []
+        for t in techs:
+            problems: list[str] = []
+            if not t.equipment_types:
+                problems.append("Not qualified for any equipment type")
+            if not t.working_hours and shop.scheduling_provider == "none":
+                problems.append("No working hours set")
+            opening = earliest_window(
+                blocks.get(t.id, []), earliest=now, need=duration, latest_start=now + horizon
+            )
+            if opening is None and not problems:
+                problems.append("No opening in the next 7 days")
+            tech_rows.append(
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "next_opening": opening,
+                    "next_opening_label": _opening_label(opening, now, tz),
+                    "problems": problems,
+                }
+            )
+        checks = [
+            {
+                "ok": shop.is_live,
+                "label": "Accepting requests",
+                "detail": "Turn on 'Accept on-demand requests' at the top right.",
+            },
+            {
+                "ok": shop.lat is not None,
+                "label": "Shop address found on the map",
+                "detail": "Add your full street address under Shop & payouts.",
+            },
+            {
+                "ok": bool(techs),
+                "label": "At least one active technician",
+                "detail": "Add a technician on the Technicians page.",
+            },
+            {
+                "ok": any(not row["problems"] for row in tech_rows),
+                "label": "A technician has an opening in the next 7 days",
+                "detail": "Check working hours and equipment types on the Technicians page.",
+            },
+        ]
+        if self.c.payments is not None:
+            checks.insert(
+                2,
+                {
+                    "ok": shop.payouts_enabled,
+                    "label": "Payouts set up",
+                    "detail": "Finish Stripe payouts under Shop & payouts.",
+                },
+            )
+        return {"ready": all(c["ok"] for c in checks), "checks": checks, "technicians": tech_rows}
 
     async def dashboard(self, shop: Shop) -> dict[str, int]:
         board = await self.availability_board(shop)
@@ -325,3 +400,19 @@ class ShopService:
             "active_jobs": active_jobs or 0,
             "waitlisted_nearby": waitlisted or 0,
         }
+
+
+def _opening_label(opening: datetime | None, now: datetime, tz: ZoneInfo) -> str:
+    if opening is None:
+        return "No opening in the next 7 days"
+    if opening <= now + timedelta(minutes=1):
+        return "Free now"
+    local = opening.astimezone(tz)
+    today = now.astimezone(tz).date()
+    if local.date() == today:
+        day = "Today"
+    elif local.date() == today + timedelta(days=1):
+        day = "Tomorrow"
+    else:
+        day = local.strftime("%a")
+    return f"{day} {local.strftime('%I:%M %p').lstrip('0')}"

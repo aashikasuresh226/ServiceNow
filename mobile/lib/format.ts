@@ -24,6 +24,22 @@ export function clockTime(minutesFromNow: number): string {
   return t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+/** "Today 3:40 PM", "Tomorrow 8:15 AM" or "Thu 8:15 AM". */
+export function visitTime(iso: string): string {
+  const t = new Date(iso);
+  const time = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day(t) - day(new Date())) / 86_400_000);
+  if (diff <= 0) return `Today ${time}`;
+  if (diff === 1) return `Tomorrow ${time}`;
+  return `${t.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+}
+
+/** True when the visit is a later booking rather than "on the way now". */
+export function isScheduled(iso: string | null | undefined): boolean {
+  return Boolean(iso) && new Date(iso as string).getTime() - Date.now() > 2 * 60 * 60_000;
+}
+
 export function countdown(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;

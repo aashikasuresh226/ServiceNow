@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     ai_provider: str = "auto"  # auto (on when a key is set) | anthropic | off | fake (tests)
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5-5"
+    anthropic_effort: str = "medium"  # low | medium | high: how hard Claude thinks
+    ai_max_concurrency: int = 8  # simultaneous Claude calls per API process
+    ai_analyses_per_hour: int = 15  # per homeowner, caps cost from abuse
 
     # Stripe: cards for homeowners, Connect payouts for shops.
     payments_provider: str = "auto"  # auto | stripe | off | fake (tests)
@@ -115,7 +118,7 @@ class Settings(BaseSettings):
     # --- Matching / marketplace tuning -----------------------------------------
     proposal_ttl_seconds: int = 180  # homeowner has this long to confirm a proposed tech
     offer_ttl_seconds: int = 120  # shop has this long to accept a job offer
-    skill_preference_max_extra_km: float = 10.0
+    match_horizon_days: int = 7  # how far ahead to look for a technician's next opening
     average_travel_speed_kmh: float = 40.0
     default_job_duration_minutes: int = 90
     scheduling_sync_interval_seconds: int = 300

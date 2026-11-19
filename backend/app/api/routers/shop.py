@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, status
@@ -207,6 +208,12 @@ async def calendar_link(
         webcal_url=webcal,
         google_url=f"https://calendar.google.com/calendar/r?cid={quote(webcal, safe='')}",
     )
+
+
+@router.get("/readiness")
+async def readiness(principal: ShopDep, session: SessionDep, c: ContainerDep) -> dict[str, Any]:
+    """Can homeowners be matched to this shop right now? If not, why."""
+    return await ShopService(session, c).readiness(principal.shop)
 
 
 # --- Availability + dashboard -------------------------------------------------------------------

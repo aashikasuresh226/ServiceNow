@@ -62,11 +62,11 @@ def _technician_summary(
         rating=tech.rating,
         rating_count=tech.rating_count,
         certifications=tech.certifications,
-        soft_skills_matched=[s for s in request.soft_skills if s in tech.soft_skills],
         shop_name=shop.name,
         shop_phone=shop.phone if request.status in DISPATCHED_OR_LATER else None,
         distance_km=request.distance_km,
         eta_minutes=eta,
+        arrival_at=request.eta_at,
         location=location,
     )
 
@@ -84,6 +84,7 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
             position=request.waitlist_position,
             eta_minutes=request.waitlist_eta_minutes,
             since=request.waitlisted_at,
+            reason=request.waitlist_reason,
         )
     return RequestOut(
         id=request.id,
@@ -101,8 +102,6 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
         estimate=EstimateInfo(
             diagnostic_fee_cents=request.diagnostic_fee_cents, low_cents=request.estimate_low_cents
         ),
-        soft_skills=request.soft_skills,
-        require_all_skills=request.require_all_skills,
         technician=_technician_summary(container, request, request.technician),
         proposal_expires_at=request.proposal_expires_at,
         offer_expires_at=request.offer_expires_at,
@@ -133,6 +132,7 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
         id=request.id,
         status=request.status,
         created_at=request.created_at,
+        arrival_at=request.eta_at,
         customer_first_name=first_name,
         customer_phone=homeowner.phone if revealed and homeowner else None,
         address=request.address if revealed else None,
@@ -146,7 +146,6 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
         estimate=EstimateInfo(
             diagnostic_fee_cents=request.diagnostic_fee_cents, low_cents=request.estimate_low_cents
         ),
-        soft_skills=request.soft_skills,
         technician_id=request.technician_id,
         technician_name=request.technician.name if request.technician else None,
         offer_expires_at=request.offer_expires_at,

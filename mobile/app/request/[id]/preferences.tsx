@@ -1,47 +1,35 @@
+/**
+ * Last step before matching: confirm where the technician should go.
+ * Matching picks the qualified technician who can arrive soonest (see backend
+ * domain/matching.py): closest + available + qualified for this unit.
+ */
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
 import { View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
-import { OPTION_ICONS } from '@/components/icons';
+import { decorative } from '@/components/a11y';
+import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
-import { Body, Button, Card, Checkbox, ErrorText, Loading, Muted, Row, Screen, StepHeader, TextLink, Title, Tile } from '@/components/ui';
+import { Body, Button, Card, ErrorText, Muted, Row, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAction, useOptions } from '@/lib/hooks';
-import { decorative } from '@/components/a11y';
 
-export default function Preferences() {
+export default function ConfirmAddress() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const options = useOptions();
   const { me } = useAuth();
-  const [skills, setSkills] = useState<string[]>([]);
-  const [requireAll, setRequireAll] = useState(false);
 
   const find = useAction(async () => {
-    await api.setPreferences(id, skills, requireAll);
     await api.match(id);
     router.replace(`/request/${id}`);
   });
-
-  if (!options) return <Loading />;
-  const toggle = (v: string) => setSkills((s) => (s.includes(v) ? s.filter((x) => x !== v) : [...s, v]));
 
   return (
     <Screen footer={<Button label="Find a technician" icon="sparkle" busy={find.busy}
       onPress={() => find.run()} />}>
       <StepHeader step={4} />
-      <Title sub="Optional. We'll favor technicians who match.">Your ideal tech</Title>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {options.soft_skills.map((o) => (
-          <Tile key={o.value} label={o.label} icon={OPTION_ICONS[o.value] ?? 'star'}
-            selected={skills.includes(o.value)} onPress={() => toggle(o.value)} />
-        ))}
-      </View>
-      {skills.length ? (
-        <Checkbox label="Must match all my picks" checked={requireAll} onChange={setRequireAll}
-          hint="Off: closest qualified tech, your picks break ties" />
-      ) : null}
+      <Title sub="We'll send the qualified technician who can get to you soonest.">Where should they go?</Title>
       <Card style={{ flexDirection: 'row', alignItems: 'center', padding: 0, overflow: 'hidden', gap: 0 }}>
         <Svg width={72} height={64} viewBox="0 0 64 56" {...decorative}>
           <Rect width={64} height={56} fill="#E9ECF0" />
@@ -57,6 +45,18 @@ export default function Preferences() {
         <View style={{ paddingRight: 12 }}>
           <TextLink label="Change" onPress={() => router.push('/profile')} />
         </View>
+      </Card>
+      <Card tone="muted" style={{ gap: 8 }}>
+        {[
+          ['shield', 'Qualified for your unit (and EPA 608 certified for refrigerant work)'],
+          ['mapPin', 'Closest to your home'],
+          ['clock', "Free now, or the earliest opening on their calendar if everyone's busy"],
+        ].map(([icon, text]) => (
+          <Row key={text} style={{ alignItems: 'flex-start' }}>
+            <Icon name={icon as 'shield'} size={16} color={colors.primary} />
+            <Muted style={{ flex: 1 }}>{text}</Muted>
+          </Row>
+        ))}
       </Card>
       {options?.features.payments && !me?.payment_method_label ? (
         <Row>

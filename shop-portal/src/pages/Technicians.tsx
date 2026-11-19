@@ -11,11 +11,11 @@ const DEFAULT_HOURS: WorkingHours = Object.fromEntries(
   DAYS.slice(0, 5).map(([d]) => [d, [['08:00', '17:00']]]),
 );
 
-type Draft = Pick<Technician, 'name' | 'phone' | 'equipment_types' | 'certifications' | 'soft_skills' |
+type Draft = Pick<Technician, 'name' | 'phone' | 'equipment_types' | 'certifications' |
   'service_radius_km' | 'working_hours' | 'is_active'>;
 
 const emptyDraft = (): Draft => ({
-  name: '', phone: '', equipment_types: [], certifications: [], soft_skills: [],
+  name: '', phone: '', equipment_types: [], certifications: [],
   service_radius_km: 25, working_hours: DEFAULT_HOURS, is_active: true,
 });
 
@@ -48,7 +48,7 @@ export function TechniciansPage() {
       <div className="card table-wrap">
         {techs.data?.length ? (
           <table className="table">
-            <thead><tr><th>Name</th><th>Qualified for</th><th>Certifications</th><th>Soft skills</th><th>Active</th><th /></tr></thead>
+            <thead><tr><th>Name</th><th>Qualified for</th><th>Certifications</th><th>Hours</th><th>Active</th><th /></tr></thead>
             <tbody>
               {techs.data.map((t) => (
                 <tr key={t.id}>
@@ -56,7 +56,7 @@ export function TechniciansPage() {
                     {t.rating ? <span className="small muted"> · ★ {t.rating.toFixed(1)}</span> : null}</span></span></td>
                   <td className="small">{t.equipment_types.map((e) => label(options, 'equipment_types', e)).join(', ') || '—'}</td>
                   <td className="small">{t.certifications.map((c) => label(options, 'certifications', c)).join(', ') || '—'}</td>
-                  <td className="small">{t.soft_skills.map((s) => label(options, 'soft_skills', s)).join(', ') || '—'}</td>
+                  <td className="small">{hoursSummary(t.working_hours)}</td>
                   <td><Switch checked={t.is_active} label={`${t.name} active`} onChange={() => toggle.run(t)} /></td>
                   <td><Button size="small" onClick={() => setEditing(t)}>Edit</Button></td>
                 </tr>
@@ -110,12 +110,6 @@ function TechnicianForm({ tech, onDone }: { tech: Technician | null; onDone: () 
           value={draft.certifications} onChange={(v) => set('certifications', v)} />
         <span className="small muted">EPA 608 is required for jobs likely to involve refrigerant.</span>
       </div>
-      <div className="field">
-        <span className="label">Soft skills</span>
-        <ChipGroup label="Soft skills" tone="blue" options={options?.soft_skills ?? []}
-          value={draft.soft_skills} onChange={(v) => set('soft_skills', v)} />
-        <span className="small muted">Homeowner reviews confirm these over time.</span>
-      </div>
       <div className="field" style={{ maxWidth: 260 }}>
         <label htmlFor="tech-radius">Service radius (km)</label>
         <input id="tech-radius" className="input" type="number" min={1} max={100} value={draft.service_radius_km}
@@ -155,3 +149,17 @@ function TechnicianForm({ tech, onDone }: { tech: Technician | null; onDone: () 
     </form>
   );
 }
+
+const DAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+/** "Mon–Fri 8:00–17:00", or "No hours" when nothing is set (the tech can't be matched). */
+function hoursSummary(hours: WorkingHours | null | undefined): string {
+  const days = DAY_ORDER.filter((d) => hours?.[d]?.length);
+  const first = days.length ? hours?.[days[0]!]?.[0] : undefined;
+  if (!first) return 'No hours set';
+  const same = days.every((d) => hours?.[d]?.[0]?.[0] === first[0] && hours?.[d]?.[0]?.[1] === first[1]);
+  const span = days.length === 7 ? 'Every day' : `${cap(days[0]!)}–${cap(days[days.length - 1]!)}`;
+  return same ? `${span} ${first[0]}–${first[1]}` : `${days.length} days a week`;
+}
+
+const cap = (d: string) => d.charAt(0).toUpperCase() + d.slice(1);

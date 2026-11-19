@@ -157,7 +157,6 @@ async def shops(container: Container) -> dict[str, SeededShop]:
                 "name": "Nina Near",
                 "equipment_types": ["central_ac"],
                 "certifications": ["epa_608"],
-                "soft_skills": ["punctual"],
             },
         ],
     )
@@ -171,7 +170,6 @@ async def shops(container: Container) -> dict[str, SeededShop]:
                 "name": "Fred Far",
                 "equipment_types": ["central_ac", "furnace"],
                 "certifications": ["epa_608"],
-                "soft_skills": ["punctual", "explains_clearly"],
             },
         ],
     )

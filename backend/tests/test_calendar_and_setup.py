@@ -4,16 +4,24 @@ the photo-analysis parser."""
 from __future__ import annotations
 
 import io
+import json
 from dataclasses import replace
 
+import anthropic
 import httpx
+import httpx2  # the HTTP library the Anthropic SDK uses
 import pyotp
 from PIL import Image
 
 from app.container import Container
 from app.core.clock import FrozenClock
 from app.domain.enums import EquipmentType
-from app.integrations.ai.anthropic_analyzer import parse_tool_input, prepare_image
+from app.integrations.ai.anthropic_analyzer import (
+    SPEC_FIELDS,
+    AnthropicUnitAnalyzer,
+    parse_analysis,
+    prepare_image,
+)
 from app.integrations.ai.base import PhotoInput
 from app.integrations.geocoding import CensusGeocoder, format_census_address
 from app.main import create_app
@@ -205,51 +213,118 @@ async def test_census_geocoder() -> None:
     assert format_census_address("1 MAIN ST, DECATUR, GA, 30030") == "1 Main St, Decatur, GA 30030"
 
 
-def test_analysis_parser_uses_label_year_for_age() -> None:
-    result = parse_tool_input(
+def _plate_response(**overrides: object) -> dict[str, object]:
+    specs = dict.fromkeys(SPEC_FIELDS)
+    specs.update(
         {
-            "photos_show_hvac_equipment": True,
-            "brand": "Carrier",
-            "model_number": "24ACC636A003",
-            "serial_number": "1217E12345",
-            "equipment_type": "central_ac",
-            "manufacture_year": 2017,
-            "approx_age_years": 3,  # ignored: the year wins
-            "tonnage": 3,
-            "refrigerant": "R-410A",
-            "seer_rating": 13,
-            "fuel": "electric",
-            "visible_issues": ["Oil stain at the base of the service valve"],
-            "primary_issue": "refrigerant_leak",
-            "alternatives": ["capacitor", "not_a_category"],
-            "confidence": "medium",
-            "summary": "Your AC may be low on refrigerant.",
-        },
-        current_year=2026,
+            "cooling_capacity": "36,000 BTU/h",
+            "voltage": "208/230 V",
+            "phase": "1",
+            "min_circuit_ampacity": "18.6",
+            "max_overcurrent_protection": "30",
+            "refrigerant": "R-22",
+            "factory_charge": "7 lb 4 oz",
+            "seer2": "SEER2 14.3",
+        }
     )
-    assert result.unit.approx_age_years == 9
-    assert result.unit.refrigerant == "R-410A" and result.unit.tonnage == 3.0
-    assert result.unit.equipment_type == EquipmentType.CENTRAL_AC
+    data: dict[str, object] = {
+        "photos_show_hvac_equipment": True,
+        "brand": "Carrier",
+        "model_number": "24ACC636A003",
+        "serial_number": "0807E12345",
+        "equipment_type": "central_ac",
+        "manufacture_year": 2007,
+        "tonnage": 3,
+        "fuel": "electric",
+        "specs": specs,
+        "visible_issues": ["Oil stain at the base of the service valve"],
+        "primary_issue": "refrigerant_leak",
+        "alternatives": ["capacitor", "not_a_category"],
+        "confidence": "medium",
+        "summary": "Your AC may be low on refrigerant.",
+        "safety_warning": None,
+        "photo_feedback": None,
+    }
+    data.update(overrides)
+    return data
+
+
+def test_analysis_parser_reads_the_whole_plate() -> None:
+    result = parse_analysis(_plate_response(), current_year=2026)
+    unit = result.unit
+    assert unit.approx_age_years == 19 and unit.manufacture_year == 2007
+    assert unit.refrigerant == "R-22" and unit.tonnage == 3.0 and unit.seer_rating == 14.3
+    assert unit.voltage == "208/230 V"
+    assert unit.specs["Min. circuit ampacity (MCA)"] == "18.6"
+    assert unit.specs["Factory charge"] == "7 lb 4 oz"
+    assert "Manufactured" not in unit.specs  # nulls are dropped
+    assert any("lifespan" in note for note in unit.insights)
+    assert any("R-22" in note for note in unit.insights)
+    assert unit.equipment_type == EquipmentType.CENTRAL_AC
     assert [a.value for a in result.diagnosis.alternatives] == ["capacitor"]
     assert result.diagnosis.visible_issues == ["Oil stain at the base of the service valve"]
 
-    junk = parse_tool_input(
-        {
-            "photos_show_hvac_equipment": False,
-            "equipment_type": "spaceship",
-            "manufacture_year": 2099,
-            "tonnage": 500,
-            "fuel": "plutonium",
-            "primary_issue": "?",
-            "confidence": "?",
-            "summary": "",
-        },
+    junk = parse_analysis(
+        _plate_response(
+            photos_show_hvac_equipment=False,
+            equipment_type="spaceship",
+            manufacture_year=2099,
+            tonnage=500,
+            fuel="plutonium",
+            specs="not an object",
+            primary_issue="?",
+            confidence="?",
+            summary="",
+        ),
         current_year=2026,
     )
     assert junk.unit.equipment_type == EquipmentType.UNKNOWN
     assert junk.unit.manufacture_year is None and junk.unit.tonnage is None
-    assert junk.unit.fuel is None
+    assert junk.unit.fuel is None and junk.unit.specs == {}
     assert junk.unit.photo_feedback  # tells the homeowner to retake the photo
+
+
+async def test_analyzer_sends_structured_output_request() -> None:
+    """The request shape Sonnet 5.5 accepts: JSON-schema output, no forced tool call."""
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        captured.update(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-5-5",
+                "content": [{"type": "text", "text": json.dumps(_plate_response())}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1500, "output_tokens": 300},
+            },
+        )
+
+    analyzer = AnthropicUnitAnalyzer("sk-ant-test", "claude-sonnet-5-5")
+    analyzer._client = anthropic.AsyncAnthropic(
+        api_key="sk-ant-test",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    buffer = io.BytesIO()
+    Image.new("RGB", (800, 600), "white").save(buffer, format="JPEG")
+    result = await analyzer.analyze(
+        symptoms=["no_cooling"],
+        description="warm air",
+        photos=[PhotoInput(buffer.getvalue(), "image/jpeg")],
+        current_year=2026,
+    )
+    assert result.unit.brand == "Carrier"
+    assert "tool_choice" not in captured and "tools" not in captured
+    output_config = captured["output_config"]
+    assert isinstance(output_config, dict)
+    assert output_config["format"]["type"] == "json_schema"
+    assert output_config["effort"] == "medium"
+    content = captured["messages"][0]["content"]  # type: ignore[index]
+    assert [c["type"] for c in content] == ["text", "image", "text"]
 
 
 def test_photos_are_downscaled_for_claude() -> None:
@@ -261,3 +336,24 @@ def test_photos_are_downscaled_for_claude() -> None:
     assert media_type == "image/jpeg"
     assert max(Image.open(io.BytesIO(data)).size) == 1568
     assert prepare_image(PhotoInput(b"garbage", "image/jpeg")) is None
+
+
+async def test_shop_readiness_explains_problems(
+    client: httpx.AsyncClient, shops: dict[str, SeededShop], clock: FrozenClock
+) -> None:
+    shop = await shop_login(client, shops["near"], clock)
+    body = (await client.get("/shop/readiness", headers=shop)).json()
+    assert body["ready"] is True
+    assert body["technicians"][0]["next_opening_label"] == "Free now"
+
+    await client.put("/shop/live", headers=shop, json={"is_live": False})
+    await client.patch(
+        f"/shop/technicians/{shops['near'].tech_ids[0]}",
+        headers=shop,
+        json={"equipment_types": []},
+    )
+    body = (await client.get("/shop/readiness", headers=shop)).json()
+    assert body["ready"] is False
+    failing = {c["label"] for c in body["checks"] if not c["ok"]}
+    assert "Accepting requests" in failing
+    assert body["technicians"][0]["problems"] == ["Not qualified for any equipment type"]

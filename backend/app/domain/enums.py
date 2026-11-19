@@ -37,15 +37,6 @@ class Certification(StrEnum):
     STATE_LICENSE = "state_license"
 
 
-class SoftSkill(StrEnum):
-    EXPLAINS_CLEARLY = "explains_clearly"
-    PUNCTUAL = "punctual"
-    PATIENT = "patient"
-    TIDY = "tidy"
-    SPANISH_SPEAKING = "spanish_speaking"
-    SHOWS_WORK = "shows_work"
-
-
 class IssueCategory(StrEnum):
     """Diagnosis buckets. Each maps to a price-book entry (see domain.pricing)."""
 

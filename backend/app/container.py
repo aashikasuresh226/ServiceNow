@@ -73,7 +73,12 @@ def _build_analyzer(settings: Settings) -> UnitAnalyzer | None:
         return FakeUnitAnalyzer()
     from app.integrations.ai.anthropic_analyzer import AnthropicUnitAnalyzer
 
-    return AnthropicUnitAnalyzer(_secret(settings.anthropic_api_key), settings.anthropic_model)
+    return AnthropicUnitAnalyzer(
+        _secret(settings.anthropic_api_key),
+        settings.anthropic_model,
+        effort=settings.anthropic_effort,
+        max_concurrency=settings.ai_max_concurrency,
+    )
 
 
 def _build_payments(settings: Settings) -> PaymentGateway | None:

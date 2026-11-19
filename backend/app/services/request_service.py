@@ -15,7 +15,6 @@ from app.domain.enums import (
     EquipmentType,
     IssueCategory,
     RequestStatus,
-    SoftSkill,
     Symptom,
     Urgency,
 )
@@ -114,6 +113,14 @@ class RequestService:
     async def analyze(self, request: ServiceRequest) -> ServiceRequest:
         if request.status not in EDITABLE_STATUSES:
             raise InvalidState("This request has already been analyzed and matched")
+        if self.c.analyzer is not None:
+            # Each analysis costs money: cap how many one homeowner can run per hour.
+            self.c.rate_limiter.check(
+                "ai",
+                str(request.homeowner_id),
+                limit=self.c.settings.ai_analyses_per_hour,
+                window_seconds=3600,
+            )
         result = await self._run_analysis(request)
         estimate = estimate_for(result.diagnosis.primary_issue)
         price_entry = PRICE_BOOK[result.diagnosis.primary_issue]
@@ -192,13 +199,4 @@ class RequestService:
             info["approx_age_years"] = approx_age_years
         info["edited_by_homeowner"] = True
         request.unit_info = info
-        return request
-
-    async def set_preferences(
-        self, request: ServiceRequest, *, soft_skills: list[str], require_all: bool
-    ) -> ServiceRequest:
-        if request.status != S.ANALYZED.value:
-            raise InvalidState("Preferences can only be set before matching")
-        request.soft_skills = validate_options(soft_skills, SoftSkill, "soft skill")
-        request.require_all_skills = require_all and bool(request.soft_skills)
         return request

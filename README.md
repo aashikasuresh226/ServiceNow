@@ -3,10 +3,9 @@
 ![Shop portal and homeowner app](docs/screenshots/overview.png)
 
 On-demand HVAC service, like Uber for HVAC. Homeowners describe the problem and snap a
-photo of their unit. AI identifies the unit and the likely issue, shows a starting price,
-and matches them with the closest qualified technician who is free right now, preferring
-the soft skills they asked for. If nobody is free, the homeowner joins a live waitlist with
-an estimated wait. HVAC shops manage technicians and availability (from ServiceTitan or
+photo of their unit. Claude reads the data plate and the likely issue, the app shows a
+starting price, and books the qualified technician who can arrive soonest: free now, or at
+their next opening (e.g. tomorrow 8 AM) if everyone is busy or off shift. HVAC shops manage technicians and availability (from ServiceTitan or
 Housecall Pro later), accept jobs that land on each technician's calendar, and get paid
 through Stripe.
 
@@ -88,8 +87,11 @@ Twilio.
 - **"Can't reach the server"**: the API window must be running; check it for errors.
 - **"We couldn't find that address"**: include the house number, street, city, state and
   ZIP, e.g. `191 Peachtree St NE, Atlanta, GA 30303`.
-- **"No technician available" right away**: the shop must be live, the tech active and
-  on shift now (working hours), and the home inside the tech's service radius.
+- **"No technician available" / waitlisted**: open the shop portal's **Dashboard**. The
+  *Ready for jobs* panel lists what's missing (shop not live, address not found, no working
+  hours, not qualified for any equipment type) and each tech's next opening. Also check the
+  home is inside the tech's service radius (25 km by default). The homeowner's waitlist
+  screen says which of these applies.
 - **Google button doesn't appear**: `HVAC_GOOGLE_CLIENT_IDS` isn't set, or the origin
   (`http://localhost:8081` / `http://localhost:5173`) isn't in the OAuth client's
   *Authorized JavaScript origins*.
@@ -122,8 +124,13 @@ numbers can request codes (blocks SMS-pumping fraud; change with
 `HVAC_SMS_ALLOWED_COUNTRY_CODES`). Sending job-update texts from a US number requires A2P 10DLC
 registration in Twilio.
 
-**Anthropic:** console.anthropic.com → *API keys*. The model is set with
-`HVAC_ANTHROPIC_MODEL` (default `claude-sonnet-5-5`).
+**Anthropic:** console.anthropic.com → *API keys* (add credits under *Billing*). Then run
+`powershell -ExecutionPolicy Bypass -File scripts\windows\set-anthropic-key.ps1` and paste
+the key: it saves it in `backend\.env` (never uploaded to GitHub) and sends a test image to
+Claude to prove it works. To check a real data plate photo yourself:
+`.venv\Scripts\python.exe -m app.cli test-ai C:\path\to\plate.jpg` in `backend\`. The model
+is `HVAC_ANTHROPIC_MODEL` (default `claude-sonnet-5-5`; `claude-haiku-5-5` is ~20× cheaper
+and faster but reads worn labels less reliably).
 
 **Stripe:** dashboard.stripe.com → *Developers* → *API keys* (start with test keys) and turn
 on **Connect** (shops get Express accounts). For webhooks locally:
@@ -146,17 +153,17 @@ portal on the left and the homeowner app on the right.
    a real unit's label → **Analyze my unit**. With the Anthropic key set, Claude reads the
    brand, model, serial, manufacture year (age), refrigerant and tonnage, and lists anything
    visibly wrong. Show the low-end estimate, labeled as an estimate.
-2. **Matching (right):** pick a soft skill → **Find a technician** → the closest qualified,
-   available tech is reserved for 3 minutes → **Confirm booking**.
+2. **Matching (right):** **Continue** → **Find a technician** → the qualified tech who can
+   arrive soonest is reserved for 3 minutes (after hours, it's their first opening the next
+   morning) → **Confirm booking**.
 3. **Shop (left):** the offer appears with a countdown. **Availability** already shows the job
    on the tech's calendar as *Pending*. **Accept & dispatch**: the calendar entry fills in
    with the customer's name and address, and the tech can subscribe to it from their phone
    (**Calendar link**).
 4. **Job (both):** **Mark en route** → **Arrived on site** → enter a price → the homeowner
    approves → **Mark complete**. The homeowner rates the tech.
-5. **Live waitlist (both):** mark every tech **Busy 45m**, start another request → the
-   homeowner joins the live waitlist with an estimated wait → click **Free now** on a tech →
-   they're matched within seconds.
+5. **Busy techs (both):** mark the closest tech **Busy 45m** and start another request: the
+   app books whoever can arrive first, even if they're farther away.
 
 ---
 
@@ -175,23 +182,35 @@ dispatched ─► en_route ─► on_site ─► quoted ─► in_progress ─�
 Every status change goes through one function (`services/lifecycle.py`), which checks it
 against the allowed transitions (`domain/state_machine.py`) and writes an audit event.
 
-### Matching rules (`backend/app/domain/matching.py`)
+### Matching (`backend/app/domain/matching.py`)
 
-1. **Hard filters:** technician active; shop live (with payouts enabled when Stripe is on); homeowner within the
-   tech's service radius; qualified for the identified equipment; EPA 608 certified if
-   refrigerant work is likely; hasn't already declined this job.
-2. **Free right now:** on shift (the tech's working hours), not marked busy, and not on
-   another job in the app.
-3. **Soft skills:** if the homeowner requires all of them, techs missing any are dropped.
-   Otherwise the closest tech with all requested skills wins, unless they're more than
-   10 km farther than the closest tech overall. Ties go to more skills matched, then rating.
-4. **Nobody free → live waitlist.** A background worker re-matches the queue in arrival
-   order every 5 seconds. The wait estimate (`domain/waitlist.py`) merges each eligible
-   tech's next free time, drive time and the people ahead in line.
+**One request: earliest arrival.**
+1. **Hard filters:** technician active; shop live (with payouts when Stripe is on); home
+   inside the tech's service radius; qualified for the identified equipment type; EPA 608
+   certified when refrigerant work is likely; hasn't declined this job.
+2. **Availability:** for each remaining tech, find the earliest moment *t* they can leave so
+   that the drive + a 90-minute job fit inside their shift without overlapping anything on
+   their calendar (booked jobs, 3-minute reservations, time marked busy). Only "now", shift
+   starts and ends of busy blocks can be the answer, so each tech takes O(B log B) for B
+   calendar blocks (`domain/availability.py: earliest_window`).
+3. **Pick** the minimum arrival time *t + drive time*. Ties: closer, then fewer jobs today
+   (spreads work), then higher rating.
 
-Two homeowners can't grab the same technician: the tech's row is locked during
-reservation (on Postgres), and requests use optimistic version checks so the API and the
-worker can't overwrite each other.
+Every feasible tech is evaluated, so the arrival time is the earliest possible given
+existing bookings. Off-hours requests are booked into the next shift (the shop then has
+until an hour before the visit to accept), so homeowners are only waitlisted when no
+qualified tech has an opening in the next 7 days; the waitlist screen says why.
+
+**A backlog: the Hungarian algorithm.** The worker places waitlisted requests every few
+seconds as a minimum-cost assignment (`domain/assignment.py`, O(n³)): rows are requests,
+columns are techs, cost = minutes until arrival − minutes already waited. It serves as many
+requests as possible with the least total waiting, favoring whoever waited longest, instead
+of letting the first request in line take the tech a later request needed more. It's checked
+against brute force in the tests.
+
+Two homeowners can't book the same slot: the tech's row is locked during reservation (on
+Postgres) and the slot is re-planned with fresh data before it's confirmed; requests use
+optimistic version checks so the API and the worker can't overwrite each other.
 
 ### Technician calendars
 
@@ -210,13 +229,19 @@ is granted (`HVAC_SCHEDULING_INTEGRATIONS_ENABLED`). The adapters are in
 
 ### Snap your unit (Claude)
 
-Photos are auto-rotated and resized to 1568 px before being sent. A forced tool call makes
-Claude answer in a strict JSON schema: brand, model and serial (only if legible),
-manufacture year (from a printed date or a serial-number format it recognizes), equipment
-type, tonnage, refrigerant, SEER, voltage, fuel, visible problems, the likely issue category
-with confidence, a safety warning, and retake advice if the label can't be read. The server
-validates every field and computes age from the year. **Prices never come from the model**:
-they come from the price book in `domain/pricing.py`.
+Photos are auto-rotated and resized to 1568 px. Claude answers in a strict JSON schema
+(structured outputs) with everything on the data plate: brand, model and serial (only if
+legible), manufacture date and year, equipment type, tonnage, cooling/heating capacity,
+voltage, phase, Hz, MCA, MOCP, compressor RLA/LRA, fan FLA, refrigerant and factory charge,
+design pressure, SEER/SEER2/EER/HSPF/AFUE, gas type, plus visible problems, the likely issue
+with confidence, a safety warning, and retake advice for unreadable labels. The server
+validates every field, computes age from the year and adds plain notes (e.g. past typical
+lifespan, R-22 phased out). **Prices never come from the model** (`domain/pricing.py`).
+
+**Scaling:** each API process allows `HVAC_AI_MAX_CONCURRENCY` (8) Claude calls at once;
+the SDK retries rate-limit/overload errors with backoff; the instructions are prompt-cached;
+each homeowner can run `HVAC_AI_ANALYSES_PER_HOUR` (15) analyses. Token usage is logged per
+call.
 
 ### Payments (Uber-style, Stripe Connect)
 
@@ -275,7 +300,7 @@ shop-portal/src/ pages/, components/, lib/
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"   # test + lint tools (once)
-.\.venv\Scripts\python.exe -m pytest -q          # 58 tests: rules, sign-in, calendars, full flows
+.\.venv\Scripts\python.exe -m pytest -q          # 64 tests: matching, sign-in, calendars, full flows
 .\.venv\Scripts\python.exe -m ruff check app tests
 .\.venv\Scripts\python.exe -m mypy app
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload   # API docs at http://localhost:8000/docs
@@ -312,8 +337,8 @@ host the portal's `dist/` and the Expo web build on a CDN.
 - **Google sign-in on the iOS/Android apps** needs native Google Sign-In with iOS and
   Android client IDs; until then the phone apps offer phone sign-in. Push notifications
   aren't built yet; updates reach homeowners through live screen refresh and texts.
-- **Scheduled (not ASAP) bookings** still match to whoever is free now; picking a time slot
-  for "this week" requests isn't built yet.
+- **Homeowners can't pick a time slot** yet: they get the earliest opening. Drive times are
+  straight-line distance at 40 km/h; a routing API would make arrival times more accurate.
 - **Maps are illustrative.** There's no live GPS tracking of technicians, and distances are
   straight-line. Add a technician app (or the shop's GPS feed) and a routing API next.
 - **Not yet built:** tips, refunds and disputes, an internal admin console, and message

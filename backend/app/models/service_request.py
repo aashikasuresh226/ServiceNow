@@ -43,8 +43,6 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     estimate_low_cents: Mapped[int | None] = mapped_column(Integer)
 
     # Matching preferences
-    soft_skills: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    require_all_skills: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Assignment
     technician_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -64,6 +62,8 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     waitlisted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     waitlist_eta_minutes: Mapped[int | None] = mapped_column(Integer)
     waitlist_position: Mapped[int | None] = mapped_column(Integer)
+    # Why nobody could be matched, in plain language (shown to the homeowner).
+    waitlist_reason: Mapped[str | None] = mapped_column(String(300))
 
     # Quote and payment (amounts in cents)
     final_price_cents: Mapped[int | None] = mapped_column(Integer)

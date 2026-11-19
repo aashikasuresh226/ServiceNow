@@ -7,20 +7,13 @@ import { useLiveData, usePortal } from '../lib/hooks';
 import { OfferCard } from './Jobs';
 
 export function DashboardPage() {
-  const { me, options } = usePortal();
-  const shop = me.shop;
+  const { options } = usePortal();
   const paymentsOn = options?.features.payments ?? false;
   const stats = useLiveData(() => api.dashboard(), 4000);
   const offers = useLiveData(() => api.jobs(['offered']), 4000);
-  const techs = useLiveData(() => api.technicians());
 
-  const steps = [
-    ...(paymentsOn ? [{ done: shop.payouts_enabled, label: 'Set up payouts with Stripe', to: '/settings' }] : []),
-    { done: !!shop.address, label: 'Add your shop address', to: '/settings' },
-    { done: (techs.data ?? []).some((t) => t.is_active), label: 'Add technicians with working hours, qualifications & soft skills', to: '/technicians' },
-    { done: shop.is_live, label: 'Go live with the switch at the top right', to: '/' },
-  ];
-  const setupDone = steps.every((s) => s.done);
+  const readiness = useLiveData(() => api.readiness(), 15000);
+  const r = readiness.data;
 
   return (
     <>
@@ -29,28 +22,50 @@ export function DashboardPage() {
         <span className="small muted">Updates live</span>
       </div>
 
-      {offers.data?.map((job) => <OfferCard key={job.id} job={job} onChanged={() => { void offers.reload(); void stats.reload(); }} />)}
+      {offers.data?.map((job) => <OfferCard key={job.id} job={job} onChanged={() => { void offers.reload(); void stats.reload(); void readiness.reload(); }} />)}
 
-      {!setupDone ? (
-        <section className="card soft" aria-labelledby="setup-title">
-          <h2 id="setup-title">Finish setting up to receive jobs</h2>
-          <ol className="stack" style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
-            {steps.map((s, i) => (
-              <li key={s.label} className="row">
-                <span className="stat-icon" style={{ width: 24, height: 24, borderRadius: 12,
-                  background: s.done ? 'var(--primary)' : '#fff', color: s.done ? '#fff' : 'var(--muted)',
-                  border: s.done ? 0 : '1.5px solid var(--muted)', fontSize: 12, fontWeight: 700 }}>
-                  {s.done ? <Icon name="check" size={14} /> : i + 1}
+      {r ? (
+        <section className={`card ${r.ready ? '' : 'soft'}`} aria-labelledby="ready-title">
+          <div className="row between">
+            <h2 id="ready-title">{r.ready ? 'Ready for jobs' : 'Not receiving jobs yet'}</h2>
+            <span className={`badge ${r.ready ? 'success' : 'amber'}`}>{r.ready ? 'Ready' : 'Action needed'}</span>
+          </div>
+          <ul className="stack" style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+            {r.checks.map((c) => (
+              <li key={c.label} className="row" style={{ alignItems: 'flex-start' }}>
+                <span aria-hidden="true" className="stat-icon" style={{ width: 22, height: 22, borderRadius: 11, flexShrink: 0,
+                  background: c.ok ? 'var(--primary)' : '#fff', color: c.ok ? '#fff' : 'var(--danger, #b42318)',
+                  border: c.ok ? 0 : '1.5px solid currentColor', fontSize: 12, fontWeight: 700 }}>
+                  {c.ok ? <Icon name="check" size={13} /> : '!'}
                 </span>
-                {s.done ? <span className="muted">{s.label}</span> : <Link to={s.to}>{s.label}</Link>}
+                <span>
+                  <span className={c.ok ? 'muted' : ''}>{c.label}</span>
+                  {!c.ok ? <span className="small muted" style={{ display: 'block' }}>{c.detail}</span> : null}
+                </span>
               </li>
             ))}
-          </ol>
-          {!paymentsOn ? (
-            <p className="small muted">
-              In-app payments aren't switched on yet (no Stripe keys), so customers pay you directly.
-            </p>
+          </ul>
+          {r.technicians.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Technician</th><th>Next opening</th><th>Problems</th></tr></thead>
+                <tbody>
+                  {r.technicians.map((t) => (
+                    <tr key={t.id}>
+                      <td>{t.name}</td>
+                      <td>{t.next_opening_label}</td>
+                      <td className="small">{t.problems.length ? <Link to="/technicians">{t.problems.join('; ')}</Link> : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : null}
+          <p className="small muted">
+            Homeowners are matched to the qualified technician who can arrive soonest: closest,
+            within their service radius, and free now or at their next opening.
+            {!paymentsOn ? ' In-app payments are off (no Stripe keys), so customers pay you directly.' : ''}
+          </p>
         </section>
       ) : null}
 

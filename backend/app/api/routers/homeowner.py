@@ -17,7 +17,6 @@ from app.schemas.api import (
     OtpStartOut,
     PhoneStartIn,
     PhoneVerifyIn,
-    PreferencesIn,
     RatingIn,
     RequestCreateIn,
     RequestOut,
@@ -166,23 +165,6 @@ async def update_unit(
     return await _present(session, c, request)
 
 
-@router.put("/requests/{request_id}/preferences", response_model=RequestOut)
-async def set_preferences(
-    request_id: uuid.UUID,
-    body: PreferencesIn,
-    me: HomeownerDep,
-    session: SessionDep,
-    c: ContainerDep,
-) -> RequestOut:
-    service = RequestService(session, c)
-    request = await service.set_preferences(
-        await service.get_for_homeowner(request_id, me),
-        soft_skills=body.soft_skills,
-        require_all=body.require_all,
-    )
-    return await _present(session, c, request)
-
-
 @router.post("/requests/{request_id}/match", response_model=RequestOut)
 async def find_technician(
     request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
@@ -198,15 +180,6 @@ async def confirm_booking(
 ) -> RequestOut:
     request = await RequestService(session, c).get_for_homeowner(request_id, me)
     await MatchingService(session, c).confirm_booking(request, me)
-    return await _present(session, c, request)
-
-
-@router.post("/requests/{request_id}/widen", response_model=RequestOut)
-async def widen_search(
-    request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
-) -> RequestOut:
-    request = await RequestService(session, c).get_for_homeowner(request_id, me)
-    await MatchingService(session, c).widen_search(request)
     return await _present(session, c, request)
 
 

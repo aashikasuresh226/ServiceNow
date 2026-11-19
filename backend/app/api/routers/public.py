@@ -64,7 +64,6 @@ async def options(c: ContainerDep) -> dict[str, object]:
         "urgency": _options(enums.Urgency),
         "equipment_types": _options(enums.EquipmentType),
         "certifications": _options(enums.Certification),
-        "soft_skills": _options(enums.SoftSkill),
         "diagnostic_fee_cents": DIAGNOSTIC_FEE_CENTS,
         # What's switched on, so the apps only show features that work.
         "features": {

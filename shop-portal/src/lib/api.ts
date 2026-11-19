@@ -2,6 +2,7 @@
 import type {
   CalendarLink,
   Dashboard,
+  Readiness,
   Job,
   LoginStep,
   Options,
@@ -161,7 +162,9 @@ export const api = {
   calendarLink: (id: string, rotate = false) =>
     request<CalendarLink>('GET', `/shop/technicians/${id}/calendar${rotate ? '?rotate=true' : ''}`),
 
-  availability: () => request<TechDay[]>('GET', '/shop/availability'),
+  availability: (day?: string) =>
+    request<TechDay[]>('GET', `/shop/availability${day ? `?day=${day}` : ''}`),
+  readiness: () => request<Readiness>('GET', '/shop/readiness'),
   dashboard: () => request<Dashboard>('GET', '/shop/dashboard'),
 
   jobs: (status?: string[]) =>

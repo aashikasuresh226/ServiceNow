@@ -28,6 +28,11 @@ class UnitInfo:
     seer_rating: float | None = None
     voltage: str | None = None
     photo_feedback: str | None = None  # e.g. "Label is blurry: retake closer"
+    # Everything else printed on the data plate, as printed (with units), e.g.
+    # {"Cooling capacity": "36,000 BTU/h", "Min. circuit ampacity": "18.6 A"}.
+    specs: dict[str, str] = field(default_factory=dict)
+    # Plain-language notes derived from the label (age, phased-out refrigerant...).
+    insights: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

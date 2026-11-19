@@ -54,6 +54,45 @@ def next_free_at(blocks: Sequence[Block], now: datetime, horizon: timedelta) -> 
     return None
 
 
+def merged_shifts(blocks: Iterable[Block]) -> list[tuple[datetime, datetime]]:
+    """Shift time as sorted, non-overlapping ranges (back-to-back shifts are joined, so
+    an overnight 24/7 schedule is one long range)."""
+    ranges = sorted((b.starts_at, b.ends_at) for b in blocks if b.kind == AvailabilityKind.SHIFT)
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def earliest_window(
+    blocks: Sequence[Block], *, earliest: datetime, need: timedelta, latest_start: datetime
+) -> datetime | None:
+    """Earliest start t in [earliest, latest_start] such that [t, t + need) lies inside
+    shift time and overlaps no busy time. None if there's no such window.
+
+    The answer is always `earliest`, a shift start, or the end of a busy block, so only
+    those instants need checking: O(B log B) for B blocks.
+    """
+    shifts = merged_shifts(blocks)
+    busy = sorted((b.starts_at, b.ends_at) for b in blocks if b.kind == AvailabilityKind.BUSY)
+    candidates = {earliest}
+    candidates.update(start for start, _ in shifts if start > earliest)
+    candidates.update(end for _, end in busy if end > earliest)
+    for t in sorted(candidates):
+        if t > latest_start:
+            return None
+        finish = t + need
+        if not any(start <= t and finish <= end for start, end in shifts):
+            continue
+        if any(b_start < finish and b_end > t for b_start, b_end in busy):
+            continue
+        return t
+    return None
+
+
 def shifts_from_working_hours(
     hours: dict[str, list[list[str]]], tz_name: str, start_day: date, days: int
 ) -> list[Block]:

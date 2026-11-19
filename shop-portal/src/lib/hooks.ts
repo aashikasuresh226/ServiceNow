@@ -81,8 +81,19 @@ export function useOptions(): Options | null {
 }
 
 export function label(options: Options | null, group: 'symptoms' | 'equipment_types' |
-  'certifications' | 'soft_skills', value: string): string {
+  'certifications', value: string): string {
   return options?.[group].find((o) => o.value === value)?.label ?? value;
+}
+
+/** "Today 3:40 PM", "Tomorrow 8:15 AM" or "Thu 8:15 AM". */
+export function visitTime(iso: string): string {
+  const t = new Date(iso);
+  const time = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day(t) - day(new Date())) / 86_400_000);
+  if (diff <= 0) return `Today ${time}`;
+  if (diff === 1) return `Tomorrow ${time}`;
+  return `${t.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
 }
 
 export const money = (cents: number | null | undefined) =>

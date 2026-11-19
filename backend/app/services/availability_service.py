@@ -11,31 +11,42 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError
-from app.domain.availability import Block, is_free_at, next_free_at, shifts_from_working_hours
-from app.domain.enums import ACTIVE_JOB_STATUSES, AvailabilityKind, SchedulingProvider
-from app.domain.geo import LatLng
+from app.domain.availability import Block, shifts_from_working_hours
+from app.domain.enums import (
+    ACTIVE_JOB_STATUSES,
+    AvailabilityKind,
+    RequestStatus,
+    SchedulingProvider,
+)
+from app.domain.geo import LatLng, travel_minutes
 from app.domain.matching import TechCandidate
 from app.models import AvailabilityBlock, ServiceRequest, Shop, Technician
 
 log = logging.getLogger(__name__)
 
-PLANNING_HORIZON = timedelta(hours=24)
 SYNC_WINDOW_BEFORE = timedelta(hours=12)
 SYNC_WINDOW_AFTER = timedelta(hours=48)
 # Coarse bounding box before exact distance checks (≈ 1 degree latitude = 111 km).
 MAX_SERVICE_RADIUS_KM = 100.0
+# Statuses where the tech is physically working on the job right now.
+WORKING_STATUSES = {
+    RequestStatus.EN_ROUTE.value,
+    RequestStatus.ON_SITE.value,
+    RequestStatus.QUOTED.value,
+    RequestStatus.IN_PROGRESS.value,
+}
+OVERRUN = timedelta(minutes=30)  # a job still in progress keeps the tech busy at least this long
 
 
 @dataclass(frozen=True, slots=True)
 class TechAvailability:
     candidate: TechCandidate
     blocks: tuple[Block, ...]
-    next_free_at: datetime | None
 
 
 class AvailabilityService:
@@ -43,11 +54,15 @@ class AvailabilityService:
         self.s = session
         self.c = container
 
+    @property
+    def horizon(self) -> timedelta:
+        return timedelta(days=self.c.settings.match_horizon_days)
+
     async def busy_technician_ids(self) -> set[uuid.UUID]:
-        """Techs occupied by an active marketplace job."""
+        """Techs working on a job right now (for the dashboard)."""
         rows = await self.s.scalars(
             select(ServiceRequest.technician_id).where(
-                ServiceRequest.status.in_([s.value for s in ACTIVE_JOB_STATUSES]),
+                ServiceRequest.status.in_(WORKING_STATUSES),
                 ServiceRequest.technician_id.is_not(None),
             )
         )
@@ -56,36 +71,80 @@ class AvailabilityService:
     async def load_tech_blocks(
         self, technicians: list[Technician], shops: dict[uuid.UUID, Shop], now: datetime
     ) -> dict[uuid.UUID, list[Block]]:
-        """Synced blocks, plus SHIFT blocks from working hours where the shop's
-        provider doesn't supply shifts."""
+        """Everything on each tech's calendar from now to the planning horizon:
+        stored blocks (jobs, manual busy, synced), shifts from working hours, and
+        bookings/reservations from requests assigned to them."""
         tech_ids = [t.id for t in technicians]
         blocks: dict[uuid.UUID, list[Block]] = defaultdict(list)
         if not tech_ids:
             return blocks
+        until = now + self.horizon + timedelta(days=1)
         rows = await self.s.scalars(
             select(AvailabilityBlock).where(
                 AvailabilityBlock.technician_id.in_(tech_ids),
                 AvailabilityBlock.ends_at > now - timedelta(hours=1),
-                AvailabilityBlock.starts_at < now + PLANNING_HORIZON,
+                AvailabilityBlock.starts_at < until,
             )
         )
         for row in rows:
             blocks[row.technician_id].append(
                 Block(AvailabilityKind(row.kind), row.starts_at, row.ends_at, row.label, row.source)
             )
+        days = self.c.settings.match_horizon_days + 3
         for tech in technicians:
             shop = shops[tech.shop_id]
             if not _provider_supplies_shifts(shop) and tech.working_hours:
                 local_today = now.astimezone(_tz(shop)).date()
                 blocks[tech.id].extend(
                     shifts_from_working_hours(
-                        tech.working_hours, shop.timezone, local_today - timedelta(days=1), 3
+                        tech.working_hours, shop.timezone, local_today - timedelta(days=1), days
                     )
                 )
+        for tech_id, start, end in await self._booked_intervals(tech_ids, now):
+            blocks[tech_id].append(Block(AvailabilityKind.BUSY, start, end, None, "request"))
         return blocks
 
+    async def _booked_intervals(
+        self, tech_ids: list[uuid.UUID], now: datetime
+    ) -> list[tuple[uuid.UUID, datetime, datetime]]:
+        """Time each tech is committed to requests: travel + job, from the arrival time.
+        Includes 3-minute reservations (proposed), so two homeowners can't book the
+        same slot."""
+        settings = self.c.settings
+        duration = timedelta(minutes=settings.default_job_duration_minutes)
+        rows = await self.s.scalars(
+            select(ServiceRequest).where(
+                ServiceRequest.technician_id.in_(tech_ids),
+                ServiceRequest.status.in_([st.value for st in ACTIVE_JOB_STATUSES]),
+            )
+        )
+        intervals = []
+        for r in rows:
+            assert r.technician_id is not None
+            arrival = r.eta_at or now
+            drive = timedelta(
+                minutes=travel_minutes(r.distance_km or 0.0, settings.average_travel_speed_kmh)
+            )
+            start, end = arrival - drive, arrival + duration
+            if r.status in WORKING_STATUSES:
+                start, end = min(start, now), max(end, now + OVERRUN)
+            intervals.append((r.technician_id, start, end))
+        return intervals
+
+    async def jobs_today(self, tech_ids: list[uuid.UUID], now: datetime) -> dict[uuid.UUID, int]:
+        rows = await self.s.execute(
+            select(ServiceRequest.technician_id, func.count())
+            .where(
+                ServiceRequest.technician_id.in_(tech_ids),
+                ServiceRequest.eta_at.between(now - timedelta(hours=12), now + timedelta(hours=12)),
+                ServiceRequest.status != RequestStatus.CANCELED.value,
+            )
+            .group_by(ServiceRequest.technician_id)
+        )
+        return {tech_id: count for tech_id, count in rows.all() if tech_id}
+
     async def load_candidates(self, *, near: LatLng, now: datetime) -> list[TechAvailability]:
-        """All active techs of job-ready shops near a location, with availability."""
+        """All active techs of live shops near a location, with their calendars."""
         dlat = MAX_SERVICE_RADIUS_KM / 111.0
         dlng = dlat * 2  # generous for US latitudes
         query = select(Shop).where(
@@ -105,13 +164,12 @@ class AvailabilityService:
             )
         )
         blocks = await self.load_tech_blocks(techs, shop_by_id, now)
-        busy = await self.busy_technician_ids()
+        load = await self.jobs_today([t.id for t in techs], now)
 
         result: list[TechAvailability] = []
         for tech in techs:
             shop = shop_by_id[tech.shop_id]
             tech_blocks = tuple(blocks.get(tech.id, ()))
-            occupied = tech.id in busy
             location = LatLng(
                 tech.base_lat if tech.base_lat is not None else shop.lat or 0.0,
                 tech.base_lng if tech.base_lng is not None else shop.lng or 0.0,
@@ -123,21 +181,11 @@ class AvailabilityService:
                 service_radius_km=tech.service_radius_km,
                 equipment_types=frozenset(tech.equipment_types),
                 certifications=frozenset(tech.certifications),
-                soft_skills=frozenset(tech.soft_skills),
-                is_free_now=not occupied and is_free_at(tech_blocks, now),
+                blocks=tech_blocks,
+                jobs_today=load.get(tech.id, 0),
                 rating=tech.rating,
             )
-            # An occupied tech frees up roughly one average job from now.
-            earliest = (
-                now + timedelta(minutes=self.c.settings.default_job_duration_minutes)
-                if occupied
-                else now
-            )
-            result.append(
-                TechAvailability(
-                    candidate, tech_blocks, next_free_at(tech_blocks, earliest, PLANNING_HORIZON)
-                )
-            )
+            result.append(TechAvailability(candidate, tech_blocks))
         return result
 
     # --- Sync with ServiceTitan / Housecall Pro -------------------------------------

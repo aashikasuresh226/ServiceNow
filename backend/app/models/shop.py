@@ -58,7 +58,6 @@ class Technician(IdMixin, TimestampMixin, Base):
 
     equipment_types: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     certifications: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    soft_skills: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
 
     service_radius_km: Mapped[float] = mapped_column(Float, default=25.0, nullable=False)
     # Where the tech starts from; falls back to the shop's location when unset.

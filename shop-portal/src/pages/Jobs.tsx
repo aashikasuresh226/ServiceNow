@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Avatar, Icon } from '../components/Icon';
 import { Button, Empty, ErrorAlert } from '../components/ui';
 import { api } from '../lib/api';
-import { countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal } from '../lib/hooks';
+import { countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal, visitTime } from '../lib/hooks';
 import type { Job } from '../lib/types';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -70,11 +70,9 @@ export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void 
         <span className="badge amber">Respond in {seconds != null ? countdownLabel(seconds) : '—'}</span>
       </div>
       <JobSummary job={job} />
-      {job.soft_skills.length ? (
-        <div className="row small">
-          <span className="muted">Wants:</span>
-          {job.soft_skills.map((s) => <span key={s} className="badge primary">{label(options, 'soft_skills', s)}</span>)}
-        </div>
+      {job.arrival_at && new Date(job.arrival_at).getTime() - Date.now() > 2 * 3600_000 ? (
+        <p className="notice small">Scheduled visit: <strong>{visitTime(job.arrival_at)}</strong> (the
+          technician's earliest opening). It's already on their calendar.</p>
       ) : null}
       <div className="row" style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12 }}>
         <Avatar name={job.technician_name ?? ''} />

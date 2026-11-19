@@ -3,7 +3,7 @@
  * customer once the shop accepts), and manual busy time. Each tech also has a
  * private calendar link to subscribe to from their phone.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Avatar } from '../components/Icon';
 import { Button, ErrorAlert } from '../components/ui';
@@ -15,29 +15,48 @@ const START_HOUR = 6;
 const END_HOUR = 22;
 const SPAN_MS = (END_HOUR - START_HOUR) * 3_600_000;
 
-function dayStart(): number {
+function dayStart(offset: number): number {
   const d = new Date();
+  d.setDate(d.getDate() + offset);
   d.setHours(START_HOUR, 0, 0, 0);
   return d.getTime();
 }
 
-function position(iso: string): number {
-  return Math.min(100, Math.max(0, ((new Date(iso).getTime() - dayStart()) / SPAN_MS) * 100));
+function isoDay(offset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function dayName(offset: number): string {
+  if (offset === 0) return 'Today';
+  if (offset === 1) return 'Tomorrow';
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
 export function AvailabilityPage() {
   const { me } = usePortal();
-  const board = useLiveData(() => api.availability(), 5000);
+  const [offset, setOffset] = useState(0);
+  const board = useLiveData(() => api.availability(offset ? isoDay(offset) : undefined), 5000);
+  useEffect(() => { void board.reload(); }, [offset]); // eslint-disable-line react-hooks/exhaustive-deps
+  const position = (iso: string) =>
+    Math.min(100, Math.max(0, ((new Date(iso).getTime() - dayStart(offset)) / SPAN_MS) * 100));
   const busy = useAction(async (id: string, minutes: number) => { await api.markBusy(id, minutes); await board.reload(); });
   const free = useAction(async (id: string) => { await api.clearBusy(id); await board.reload(); });
-  const nowPct = position(new Date().toISOString());
+  const nowPct = offset === 0 ? position(new Date().toISOString()) : -1;
   const hours = Array.from({ length: (END_HOUR - START_HOUR) / 2 + 1 }, (_, i) => START_HOUR + i * 2);
   const synced = me.shop.scheduling_last_synced_at;
 
   return (
     <>
       <div className="row between">
-        <h1>Live availability · Today</h1>
+        <div className="row" style={{ gap: 8 }}>
+          <h1>Availability · {dayName(offset)}</h1>
+          <Button size="small" disabled={offset === 0} onClick={() => setOffset((o) => o - 1)} aria-label="Previous day">‹</Button>
+          <Button size="small" disabled={offset >= 6} onClick={() => setOffset((o) => o + 1)} aria-label="Next day">›</Button>
+        </div>
         <span className="badge primary">
           {me.shop.scheduling_provider === 'none' ? 'From working hours'
             : synced ? `Synced ${clock(synced)}` : 'Waiting for first sync'}
@@ -79,7 +98,7 @@ export function AvailabilityPage() {
                     {b.source === 'job' ? b.label ?? 'Job' : 'Busy'}
                   </div>
                 ))}
-                <div className="now" style={{ left: `${nowPct}%` }} aria-hidden="true" />
+                {nowPct >= 0 ? <div className="now" style={{ left: `${nowPct}%` }} aria-hidden="true" /> : null}
               </div>
               <div className="row" style={{ flexWrap: 'nowrap', gap: 6 }}>
                 <Button size="small" onClick={() => busy.run(d.technician.id, 45)} disabled={!d.technician.is_active}>Busy 45m</Button>

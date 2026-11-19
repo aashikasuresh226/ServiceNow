@@ -14,7 +14,7 @@ import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, Checkbox, ErrorText, KeyValue, Loading, Muted, Row, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { POLL_INTERVAL_MS } from '@/lib/config';
-import { clockTime, countdown, miles, minutesLabel, money } from '@/lib/format';
+import { clockTime, countdown, isScheduled, miles, minutesLabel, money, visitTime } from '@/lib/format';
 import { labelFor, useAction, useCountdown, useOptions, usePolling } from '@/lib/hooks';
 import type { ServiceRequest } from '@/lib/types';
 import { decorative } from '@/components/a11y';
@@ -86,7 +86,12 @@ function TechCard({ request, showEta = true }: { request: ServiceRequest; showEt
               {t.rating ? ` · ★ ${t.rating.toFixed(1)}` : ''}
             </Muted>
           </View>
-          {showEta && t.eta_minutes != null ? (
+          {showEta && t.arrival_at && isScheduled(t.arrival_at) ? (
+            <View style={{ alignItems: 'flex-end', maxWidth: 110 }}>
+              <Muted style={{ fontSize: 11 }}>Arrives</Muted>
+              <Text style={[styles.eta, { fontSize: 16, textAlign: 'right' }]}>{visitTime(t.arrival_at)}</Text>
+            </View>
+          ) : showEta && t.eta_minutes != null ? (
             <View style={{ alignItems: 'center' }}>
               <Text style={styles.eta}>~{t.eta_minutes}</Text>
               <Muted style={{ fontSize: 11 }}>min</Muted>
@@ -96,9 +101,6 @@ function TechCard({ request, showEta = true }: { request: ServiceRequest; showEt
         <Row style={{ flexWrap: 'wrap', gap: 6 }}>
           {t.certifications.map((c) => (
             <Chip key={c} icon="shield" label={labelFor(options, 'certifications', c)} />
-          ))}
-          {t.soft_skills_matched.map((s) => (
-            <Chip key={s} icon="check" label={labelFor(options, 'soft_skills', s)} tone="primary" />
           ))}
         </Row>
       </View>
@@ -141,6 +143,13 @@ function Proposed({ request, onChange }: Props) {
         <Title>You're matched</Title>
       </Row>
       <TechCard request={request} />
+      {request.technician?.arrival_at && isScheduled(request.technician.arrival_at) ? (
+        <Card tone="soft">
+          <Body>No one is free right now, so this is the earliest opening:{' '}
+            <Text style={{ fontWeight: '700' }}>{visitTime(request.technician.arrival_at)}</Text>.
+            It goes on {request.technician.first_name}'s calendar when you confirm.</Body>
+        </Card>
+      ) : null}
       <Card tone="muted">
         <KeyValue k="Estimate" v={`from ${money(request.estimate.low_cents)}`} />
         <Muted>{payments
@@ -163,10 +172,8 @@ function Proposed({ request, onChange }: Props) {
 
 function Waitlisted({ request, onChange }: Props) {
   const [notify, setNotify] = useState(true);
-  const widen = useAction(async () => onChange(await api.widen(request.id)));
   const cancel = useAction(async () => onChange(await api.cancel(request.id)));
   const wl = request.waitlist;
-  const eta = wl?.eta_minutes;
   const position = wl?.position ?? 1;
   const ahead = Math.max(0, position - 1);
   return (
@@ -177,10 +184,6 @@ function Waitlisted({ request, onChange }: Props) {
         <Title>On the waitlist</Title>
         <Badge label="● LIVE" tone="amber" />
       </Row>
-      <View style={{ alignItems: 'center' }}>
-        <Ring fraction={eta ? Math.max(0.08, 1 - eta / 120) : 0.08}
-          big={eta ? `~${eta}` : '…'} small={eta ? 'min to a tech' : 'checking techs'} />
-      </View>
       <Card tone="muted" style={styles.queue}>
         <View style={{ alignItems: 'center', gap: 4 }}>
           <View style={styles.queueTech}><Icon name="wrench" size={14} color="#FFF" /></View>
@@ -193,16 +196,13 @@ function Waitlisted({ request, onChange }: Props) {
           <Text style={{ fontSize: 10, fontWeight: '700', color: colors.amberInk }}>You · #{position}</Text>
         </View>
       </Card>
-      <Body style={{ textAlign: 'center', color: colors.body }}>
-        No qualified tech is free nearby yet. We'll match you the moment one is
-        {eta ? `, around ${clockTime(eta)}` : ''}.
+      <Body style={{ color: colors.body }}>
+        {wl?.reason ?? 'No technician has an opening for this job yet.'}
       </Body>
+      <Muted>We check again every few seconds and match you automatically as soon as a
+        qualified technician has an opening.</Muted>
       <Checkbox label="Text me when I'm matched" checked={notify} onChange={setNotify} />
-      {request.soft_skills.length ? (
-        <Button label="Ignore my soft-skill picks to go faster" variant="secondary"
-          busy={widen.busy} onPress={() => widen.run()} />
-      ) : null}
-      <ErrorText message={widen.error ?? cancel.error} />
+      <ErrorText message={cancel.error} />
     </Screen>
   );
 }
@@ -230,7 +230,8 @@ function Offered({ request, onChange }: Props) {
         <Icon name="clock" size={20} color={colors.primary} />
         <Body style={{ flex: 1 }}>
           Waiting for {request.technician?.shop_name} to accept
-          {seconds ? ` · ${countdown(seconds)}` : ''}
+          {seconds && seconds < 3600 ? ` · ${countdown(seconds)}`
+            : request.offer_expires_at ? ` by ${visitTime(request.offer_expires_at)}` : ''}
         </Body>
       </Card>
       <Muted>If they don't respond in time, we'll automatically send it to the next best tech.</Muted>
@@ -298,6 +299,7 @@ function Tracking({ request, onChange }: Props) {
           <Body style={{ fontWeight: '700' }}>{t?.name}</Body>
           <Muted>
             {request.status === 'on_site' ? 'Diagnosing your unit'
+              : t?.arrival_at && isScheduled(t.arrival_at) ? `Visit ${visitTime(t.arrival_at)}`
               : t?.eta_minutes != null ? `Arriving ~${clockTime(t.eta_minutes)}` : t?.shop_name}
           </Muted>
         </View>

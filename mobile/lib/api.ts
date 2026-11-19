@@ -162,14 +162,8 @@ export const api = {
   analyze: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/analyze`),
   updateUnit: (id: string, data: Partial<UnitUpdate>) =>
     request<ServiceRequest>('PATCH', `/requests/${id}/unit`, data),
-  setPreferences: (id: string, softSkills: string[], requireAll: boolean) =>
-    request<ServiceRequest>('PUT', `/requests/${id}/preferences`, {
-      soft_skills: softSkills,
-      require_all: requireAll,
-    }),
   match: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/match`),
   confirm: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/confirm`),
-  widen: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/widen`),
   approveQuote: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/approve-quote`),
   cancel: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/cancel`),
   rate: (id: string, rating: number) =>

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import httpx
 import pytest
 
@@ -31,17 +34,10 @@ async def test_full_job_lifecycle(
     assert req["diagnosis"]["primary_issue"] == "capacitor"
     assert req["estimate"]["low_cents"] == 89_00 + 150_00
 
-    r = await client.put(
-        f"/requests/{rid}/preferences",
-        headers=home,
-        json={"soft_skills": ["punctual"], "require_all": False},
-    )
-    assert r.status_code == 200
-
     r = await client.post(f"/requests/{rid}/match", headers=home)
     body = r.json()
     assert body["status"] == "proposed"
-    assert body["technician"]["name"] == "Nina Near"  # closest qualified + has the skill
+    assert body["technician"]["name"] == "Nina Near"  # closest qualified, free now
     assert body["technician"]["shop_phone"] is None  # hidden until dispatch
 
     r = await client.post(f"/requests/{rid}/confirm", headers=home)
@@ -86,33 +82,56 @@ async def test_full_job_lifecycle(
     assert any(i.status == "canceled" for i in gateway.intents.values())  # old hold released
 
 
-async def test_waitlist_then_match_when_tech_frees_up(
+async def test_busy_techs_book_the_earliest_opening(
+    client: httpx.AsyncClient,
+    clock: FrozenClock,
+    shops: dict[str, SeededShop],
+) -> None:
+    """Nobody free right now: book whoever can arrive first after their current work."""
+    near_shop = await shop_login(client, shops["near"], clock)
+    far_shop = await shop_login(client, shops["far"], clock)
+    await client.post(
+        f"/shop/technicians/{shops['near'].tech_ids[0]}/busy",
+        headers=near_shop,
+        json={"minutes": 120},
+    )
+    await client.post(
+        f"/shop/technicians/{shops['far'].tech_ids[0]}/busy",
+        headers=far_shop,
+        json={"minutes": 45},
+    )
+    home = await homeowner_login(client)
+    rid = (await analyzed_request(client, home))["id"]
+    body = (await client.post(f"/requests/{rid}/match", headers=home)).json()
+    assert body["status"] == "proposed"
+    # Fred is farther but free in 45 minutes; Nina is busy for 2 hours.
+    assert body["technician"]["name"] == "Fred Far"
+    assert 45 < body["technician"]["eta_minutes"] <= 65
+
+
+async def test_waitlist_explains_then_matches_when_a_tech_qualifies(
     client: httpx.AsyncClient,
     container: Container,
     clock: FrozenClock,
     shops: dict[str, SeededShop],
 ) -> None:
-    near_shop = await shop_login(client, shops["near"], clock)
-    far_shop = await shop_login(client, shops["far"], clock)
-    for headers, seeded in ((near_shop, shops["near"]), (far_shop, shops["far"])):
-        for tid in seeded.tech_ids:
-            r = await client.post(
-                f"/shop/technicians/{tid}/busy", headers=headers, json={"minutes": 45}
-            )
-            assert r.status_code == 200, r.text
-
     home = await homeowner_login(client)
     rid = (await analyzed_request(client, home))["id"]
+    # Nobody nearby works on boilers.
+    await client.patch(f"/requests/{rid}/unit", headers=home, json={"equipment_type": "boiler"})
     body = (await client.post(f"/requests/{rid}/match", headers=home)).json()
     assert body["status"] == "waitlisted"
     assert body["waitlist"]["position"] == 1
-    assert 45 <= body["waitlist"]["eta_minutes"] <= 60  # busy 45 min + short drive
+    assert "qualified" in body["waitlist"]["reason"]
 
-    # The near tech frees up; the background worker matches the waitlist.
-    r = await client.delete(
-        f"/shop/technicians/{shops['near'].tech_ids[0]}/busy", headers=near_shop
+    # The near shop adds boilers to Nina's skills; the worker's batch places the request.
+    near_shop = await shop_login(client, shops["near"], clock)
+    r = await client.patch(
+        f"/shop/technicians/{shops['near'].tech_ids[0]}",
+        headers=near_shop,
+        json={"equipment_types": ["central_ac", "boiler"]},
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     async with container.session_factory() as s:
         assert await MatchingService(s, container).process_waitlist() == 1
         await s.commit()
@@ -121,6 +140,34 @@ async def test_waitlist_then_match_when_tech_frees_up(
     assert body["status"] == "proposed"
     assert body["technician"]["name"] == "Nina Near"
     assert any("technician is available" in m for _, m in container.sms.outbox)  # type: ignore[attr-defined]
+
+
+async def test_after_hours_request_books_next_morning(
+    client: httpx.AsyncClient, clock: FrozenClock, shops: dict[str, SeededShop]
+) -> None:
+    """Both techs work 8:00-17:00 only; at 9 PM the homeowner gets tomorrow 8 AM, and the
+    shop has until an hour before the visit to accept."""
+    hours = {d: [["08:00", "17:00"]] for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    for key in ("near", "far"):
+        shop = await shop_login(client, shops[key], clock)
+        r = await client.patch(
+            f"/shop/technicians/{shops[key].tech_ids[0]}",
+            headers=shop,
+            json={"working_hours": hours},
+        )
+        assert r.status_code == 200, r.text
+    clock.set(datetime(2026, 7, 16, 1, 0, tzinfo=UTC))  # 9:00 PM in Atlanta (EDT)
+    home = await homeowner_login(client, "4045550111")
+    rid = (await analyzed_request(client, home))["id"]
+    body = (await client.post(f"/requests/{rid}/match", headers=home)).json()
+    assert body["status"] == "proposed", body
+    assert body["technician"]["name"] == "Nina Near"
+    arrival = datetime.fromisoformat(body["technician"]["arrival_at"])
+    local = arrival.astimezone(ZoneInfo("America/New_York"))
+    assert (local.day, local.hour) == (16, 8)  # tomorrow, first thing
+    body = (await client.post(f"/requests/{rid}/confirm", headers=home)).json()
+    offer_deadline = datetime.fromisoformat(body["offer_expires_at"])
+    assert arrival - offer_deadline == timedelta(hours=1)
 
 
 async def test_decline_offers_job_to_next_tech(

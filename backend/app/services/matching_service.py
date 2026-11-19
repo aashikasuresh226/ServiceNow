@@ -1,5 +1,8 @@
 """Orchestrates matching: propose → confirm (hold) → offer to shop → dispatch,
-plus the live waitlist and expiry/re-matching handled by the background worker."""
+plus the waitlist and expiry/re-matching handled by the background worker.
+
+The algorithm itself is in domain/matching.py (earliest arrival per request, the
+Hungarian algorithm for a backlog)."""
 
 from __future__ import annotations
 
@@ -12,10 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, Forbidden, InvalidState
-from app.domain.enums import ACTIVE_JOB_STATUSES, Actor, EquipmentType, RequestStatus
-from app.domain.geo import LatLng, haversine_km, travel_minutes
-from app.domain.matching import MatchCriteria, RankedCandidate, eligible_candidates, pick_best
-from app.domain.waitlist import TechSlot, estimate_wait_minutes
+from app.domain.enums import Actor, EquipmentType, RequestStatus
+from app.domain.geo import LatLng, haversine_km
+from app.domain.matching import (
+    MatchCriteria,
+    NoMatchReport,
+    Option,
+    PlanSettings,
+    assign_batch,
+    plan_option,
+    plan_options,
+)
 from app.models import Homeowner, ServiceRequest, Shop, Technician
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
@@ -26,6 +36,9 @@ from app.services.payment_service import PaymentService
 log = logging.getLogger(__name__)
 S = RequestStatus
 MAX_RESERVE_ATTEMPTS = 3
+# Bookings this far ahead give the shop until shortly before the visit to accept.
+SCHEDULED_AFTER = timedelta(hours=2)
+SCHEDULED_ACCEPT_LEAD = timedelta(hours=1)
 
 
 class MatchingService:
@@ -45,64 +58,92 @@ class MatchingService:
             location=LatLng(request.lat, request.lng),
             equipment_type=unit,
             requires_refrigerant_work=request.requires_refrigerant_work,
-            soft_skills=frozenset(request.soft_skills or []),
-            require_all_skills=request.require_all_skills,
             excluded_technician_ids=frozenset(
                 uuid.UUID(t) for t in (request.declined_technician_ids or [])
             ),
         )
 
+    @property
+    def plan_settings(self) -> PlanSettings:
+        return PlanSettings(
+            job_duration=timedelta(minutes=self.settings.default_job_duration_minutes),
+            speed_kmh=self.settings.average_travel_speed_kmh,
+            horizon=timedelta(days=self.settings.match_horizon_days),
+        )
+
     async def _pick_and_reserve(
         self, request: ServiceRequest, now: datetime
-    ) -> RankedCandidate | None:
-        """Pick the best free tech and lock them so two requests can't grab the same one."""
+    ) -> tuple[Option | None, NoMatchReport]:
+        """Pick the tech who can arrive soonest and lock them, re-checking that nobody
+        booked the same time meanwhile."""
         criteria = self.criteria_for(request)
-        excluded: set[uuid.UUID] = set()
+        report = NoMatchReport()
         for _ in range(MAX_RESERVE_ATTEMPTS):
             pool = await self.availability.load_candidates(near=criteria.location, now=now)
-            candidates = [a.candidate for a in pool if a.candidate.technician_id not in excluded]
-            best = pick_best(
-                candidates,
-                criteria,
-                skill_preference_max_extra_km=self.settings.skill_preference_max_extra_km,
+            options, report = plan_options(
+                [a.candidate for a in pool], criteria, now, self.plan_settings
             )
-            if best is None:
-                return None
-            # Row lock (Postgres) then re-check that nobody claimed the tech meanwhile.
-            await self.s.scalar(
-                select(Technician.id)
-                .where(Technician.id == best.candidate.technician_id)
-                .with_for_update()
-            )
-            taken = await self.s.scalar(
-                select(ServiceRequest.id).where(
-                    ServiceRequest.technician_id == best.candidate.technician_id,
-                    ServiceRequest.status.in_([st.value for st in ACTIVE_JOB_STATUSES]),
-                    ServiceRequest.id != request.id,
-                )
-            )
-            if taken is None:
-                return best
-            excluded.add(best.candidate.technician_id)
-        return None
+            if not options:
+                return None, report
+            best = options[0]
+            if await self._still_free(best, criteria, now):
+                return best, report
+        return None, report
 
-    def _assign(self, request: ServiceRequest, best: RankedCandidate, now: datetime) -> None:
-        request.technician_id = best.candidate.technician_id
-        request.shop_id = best.candidate.shop_id
-        request.distance_km = round(best.distance_km, 1)
-        request.eta_at = now + timedelta(
-            minutes=travel_minutes(best.distance_km, self.settings.average_travel_speed_kmh)
+    async def _still_free(self, option: Option, criteria: MatchCriteria, now: datetime) -> bool:
+        # Row lock (Postgres) so concurrent bookings for this tech queue up, then
+        # re-plan with fresh data: the same slot must still be open.
+        await self.s.scalar(
+            select(Technician.id)
+            .where(Technician.id == option.candidate.technician_id)
+            .with_for_update()
         )
+        pool = await self.availability.load_candidates(near=criteria.location, now=now)
+        fresh = next(
+            (
+                a.candidate
+                for a in pool
+                if a.candidate.technician_id == option.candidate.technician_id
+            ),
+            None,
+        )
+        if fresh is None:
+            return False
+        again = plan_option(fresh, criteria, now, self.plan_settings)
+        return again is not None and again.start_at == option.start_at
+
+    def _assign(self, request: ServiceRequest, option: Option, now: datetime) -> None:
+        request.technician_id = option.candidate.technician_id
+        request.shop_id = option.candidate.shop_id
+        request.distance_km = round(option.distance_km, 1)
+        request.eta_at = option.arrival_at
         request.waitlisted_at = None
         request.waitlist_eta_minutes = None
         request.waitlist_position = None
+        request.waitlist_reason = None
+
+    def _offer_deadline(self, request: ServiceRequest, now: datetime) -> datetime:
+        """Shops get a couple of minutes for jobs happening now; for a visit booked for
+        later (e.g. tomorrow morning) they have until an hour before it."""
+        quick = now + timedelta(seconds=self.settings.offer_ttl_seconds)
+        if request.eta_at and request.eta_at - now > SCHEDULED_AFTER:
+            return max(quick, request.eta_at - SCHEDULED_ACCEPT_LEAD)
+        return quick
+
+    async def _waitlist(
+        self, request: ServiceRequest, now: datetime, report: NoMatchReport, note: str
+    ) -> None:
+        request.waitlist_reason = report.message()
+        if request.status != S.WAITLISTED.value:
+            request.waitlisted_at = now
+            transition(self.s, request, S.WAITLISTED, Actor.SYSTEM, note=note)
 
     # --- Homeowner actions --------------------------------------------------------
     async def find_technician(self, request: ServiceRequest) -> None:
         if request.status not in (S.ANALYZED.value, S.WAITLISTED.value):
             raise InvalidState("This request isn't ready for matching")
         now = self.c.clock.now()
-        best = await self._pick_and_reserve(request, now)
+        best, report = await self._pick_and_reserve(request, now)
         if best:
             self._assign(request, best, now)
             request.proposal_expires_at = now + timedelta(
@@ -113,12 +154,13 @@ class MatchingService:
                 request,
                 S.PROPOSED,
                 Actor.HOMEOWNER,
-                data={"technician_id": str(best.candidate.technician_id)},
+                data={
+                    "technician_id": str(best.candidate.technician_id),
+                    "arrival_at": best.arrival_at.isoformat(),
+                },
             )
         else:
-            if request.status != S.WAITLISTED.value:
-                request.waitlisted_at = now
-                transition(self.s, request, S.WAITLISTED, Actor.SYSTEM, note="No tech free")
+            await self._waitlist(request, now, report, "No technician available")
             await self.s.flush()
             await self.refresh_waitlist_estimates(now)
 
@@ -134,19 +176,9 @@ class MatchingService:
         await self.payments.place_hold(request, homeowner, shop, request.estimate_low_cents or 0)
         request.confirmed_at = now
         request.proposal_expires_at = None
-        request.offer_expires_at = now + timedelta(seconds=self.settings.offer_ttl_seconds)
+        request.offer_expires_at = self._offer_deadline(request, now)
         transition(self.s, request, S.OFFERED, Actor.HOMEOWNER)
         await self.calendar.book(request)
-
-    async def widen_search(self, request: ServiceRequest) -> None:
-        """Drop soft-skill preferences to get matched faster."""
-        if request.status != S.WAITLISTED.value:
-            raise InvalidState("Only waitlisted requests can widen their search")
-        request.soft_skills = []
-        request.require_all_skills = False
-        await self._rematch_waitlisted(request, self.c.clock.now())
-        if request.status == S.WAITLISTED.value:
-            await self.refresh_waitlist_estimates(self.c.clock.now())
 
     async def cancel(self, request: ServiceRequest, actor: Actor, reason: str) -> None:
         await self.payments.release_hold(request)
@@ -191,22 +223,28 @@ class MatchingService:
     async def _reassign_within_shop(
         self, request: ServiceRequest, shop: Shop, technician_id: uuid.UUID, now: datetime
     ) -> None:
+        old_tech = request.technician_id
+        # Free the current tech's slot so it doesn't block the new plan.
+        request.technician_id = None
+        await self.s.flush()
         pool = await self.availability.load_candidates(
             near=LatLng(request.lat, request.lng), now=now
         )
         match = next(
             (a.candidate for a in pool if a.candidate.technician_id == technician_id), None
         )
-        if match is None or match.shop_id != shop.id:
-            raise AppError("That technician can't take this job", code="invalid_technician")
-        criteria = self.criteria_for(request)
-        best = pick_best([match], criteria, skill_preference_max_extra_km=0)
-        if best is None:
+        option = (
+            plan_option(match, self.criteria_for(request), now, self.plan_settings)
+            if match is not None and match.shop_id == shop.id
+            else None
+        )
+        if option is None:
+            request.technician_id = old_tech
             raise AppError(
-                "That technician isn't free or qualified for this job",
+                "That technician isn't qualified or has no opening for this job",
                 code="technician_unavailable",
             )
-        self._assign(request, best, now)
+        self._assign(request, option, now)
 
     async def _offer_to_next(self, request: ServiceRequest, *, reason: str) -> None:
         """After a decline/expiry: offer to the next best tech or put back on the waitlist."""
@@ -218,15 +256,14 @@ class MatchingService:
         await self.payments.release_hold(request)
         await self.calendar.release(request)
         clear_assignment(request)
-        best = await self._pick_and_reserve(request, now)
+        best, report = await self._pick_and_reserve(request, now)
         if best:
             await self._offer_confirmed(request, best, now, note=reason)
         else:
-            request.waitlisted_at = now
-            transition(self.s, request, S.WAITLISTED, Actor.SYSTEM, note=reason)
+            await self._waitlist(request, now, report, reason)
 
     async def _offer_confirmed(
-        self, request: ServiceRequest, best: RankedCandidate, now: datetime, note: str
+        self, request: ServiceRequest, best: Option, now: datetime, note: str
     ) -> None:
         """Offer an already-confirmed request to a new tech (new hold for the new shop)."""
         self._assign(request, best, now)
@@ -234,7 +271,7 @@ class MatchingService:
         homeowner = await self.s.get(Homeowner, request.homeowner_id)
         assert shop and homeowner
         await self.payments.place_hold(request, homeowner, shop, request.estimate_low_cents or 0)
-        request.offer_expires_at = now + timedelta(seconds=self.settings.offer_ttl_seconds)
+        request.offer_expires_at = self._offer_deadline(request, now)
         transition(self.s, request, S.OFFERED, Actor.SYSTEM, note=note)
         await self.calendar.book(request)
 
@@ -269,7 +306,9 @@ class MatchingService:
         return len(rows)
 
     async def process_waitlist(self) -> int:
-        """Match waitlisted homeowners in arrival order. Returns how many were matched."""
+        """Place waiting homeowners, all at once: the Hungarian algorithm assigns techs to
+        requests minimizing total arrival time, favoring those who waited longest.
+        Returns how many were matched."""
         now = self.c.clock.now()
         queue = list(
             await self.s.scalars(
@@ -278,43 +317,61 @@ class MatchingService:
                 .order_by(ServiceRequest.waitlisted_at)
             )
         )
+        if not queue:
+            return 0
+        candidates = {
+            a.candidate.technician_id: a.candidate
+            for request in queue
+            for a in await self.availability.load_candidates(
+                near=LatLng(request.lat, request.lng), now=now
+            )
+        }
+        batch = [
+            (
+                self.criteria_for(r),
+                (now - r.waitlisted_at).total_seconds() / 60 if r.waitlisted_at else 0.0,
+            )
+            for r in queue
+        ]
+        assigned = assign_batch(batch, list(candidates.values()), now, self.plan_settings)
         matched = 0
-        for request in queue:
+        for index, option in assigned.items():
+            request = queue[index]
             try:
-                if await self._rematch_waitlisted(request, now):
-                    matched += 1
+                if not await self._still_free(option, self.criteria_for(request), now):
+                    continue  # picked up again on the next tick
+                await self._place_from_waitlist(request, option, now)
+                matched += 1
             except AppError as exc:
                 # e.g. card declined on re-hold: keep them waitlisted, unassigned.
                 clear_assignment(request)
                 log.warning("Waitlist match failed for %s: %s", request.id, exc.message)
-        await self.s.flush()
+            await self.s.flush()
         await self.refresh_waitlist_estimates(now)
         return matched
 
-    async def _rematch_waitlisted(self, request: ServiceRequest, now: datetime) -> bool:
-        best = await self._pick_and_reserve(request, now)
-        if best is None:
-            return False
+    async def _place_from_waitlist(
+        self, request: ServiceRequest, option: Option, now: datetime
+    ) -> None:
         homeowner = await self.s.get(Homeowner, request.homeowner_id)
         assert homeowner
         if request.confirmed_at:
-            await self._offer_confirmed(request, best, now, note="Matched from waitlist")
+            await self._offer_confirmed(request, option, now, note="Matched from waitlist")
         else:
-            self._assign(request, best, now)
+            self._assign(request, option, now)
             request.proposal_expires_at = now + timedelta(
                 seconds=self.settings.proposal_ttl_seconds
             )
             transition(self.s, request, S.PROPOSED, Actor.SYSTEM, note="Matched from waitlist")
-        await self.s.flush()
         await notify_homeowner(
             self.c,
             homeowner,
             "Good news: a technician is available for your HVAC request. Open the app to confirm.",
         )
-        return True
 
     async def refresh_waitlist_estimates(self, now: datetime) -> None:
-        """Recompute each waitlisted request's queue position and ETA."""
+        """Queue position among waiting homeowners in the same area. (No time estimate:
+        a waitlisted request has no technician with an opening in the planning window.)"""
         queue = list(
             await self.s.scalars(
                 select(ServiceRequest)
@@ -322,28 +379,7 @@ class MatchingService:
                 .order_by(ServiceRequest.waitlisted_at)
             )
         )
-        duration = timedelta(minutes=self.settings.default_job_duration_minutes)
         for request in queue:
-            criteria = self.criteria_for(request)
-            pool = await self.availability.load_candidates(near=criteria.location, now=now)
-            eligible = {
-                r.candidate.technician_id: r
-                for r in eligible_candidates(
-                    [a.candidate for a in pool], criteria, require_free_now=False
-                )
-            }
-            slots = [
-                TechSlot(
-                    a.next_free_at,
-                    travel_minutes(
-                        eligible[a.candidate.technician_id].distance_km,
-                        self.settings.average_travel_speed_kmh,
-                    ),
-                )
-                for a in pool
-                if a.candidate.technician_id in eligible and a.next_free_at is not None
-            ]
-            # Position: people ahead of you who could be served by the same techs.
             ahead = sum(
                 1
                 for other in queue
@@ -353,9 +389,7 @@ class MatchingService:
                 and _overlaps(other, request)
             )
             request.waitlist_position = ahead + 1
-            request.waitlist_eta_minutes = estimate_wait_minutes(
-                slots, position=ahead + 1, now=now, job_duration=duration
-            )
+            request.waitlist_eta_minutes = None
 
 
 def _overlaps(a: ServiceRequest, b: ServiceRequest, radius_km: float = 40.0) -> bool:

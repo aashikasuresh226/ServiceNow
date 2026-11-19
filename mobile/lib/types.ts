@@ -7,7 +7,6 @@ export type Options = {
   urgency: Option[];
   equipment_types: Option[];
   certifications: Option[];
-  soft_skills: Option[];
   diagnostic_fee_cents: number;
   features: Features;
 };
@@ -87,11 +86,12 @@ export type TechnicianSummary = {
   rating: number | null;
   rating_count: number;
   certifications: string[];
-  soft_skills_matched: string[];
   shop_name: string;
   shop_phone: string | null;
   distance_km: number | null;
   eta_minutes: number | null;
+  /** When the tech is expected: soon, or a later opening (e.g. tomorrow 8:15 AM). */
+  arrival_at: string | null;
   location: { lat: number; lng: number } | null;
 };
 
@@ -109,12 +109,17 @@ export type ServiceRequest = {
   unit: UnitInfo | null;
   diagnosis: Diagnosis | null;
   estimate: { diagnostic_fee_cents: number | null; low_cents: number | null };
-  soft_skills: string[];
   require_all_skills: boolean;
   technician: TechnicianSummary | null;
   proposal_expires_at: string | null;
   offer_expires_at: string | null;
-  waitlist: { position: number | null; eta_minutes: number | null; since: string | null } | null;
+  waitlist: {
+    position: number | null;
+    eta_minutes: number | null;
+    since: string | null;
+    /** Why nobody could be matched yet, in plain language. */
+    reason: string | null;
+  } | null;
   quote: { final_price_cents: number; notes: string | null } | null;
   payment: { authorized_cents: number | null; captured_cents: number | null };
   rating: number | null;
