@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 import pyotp
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.container import Container, build_container
@@ -63,6 +64,9 @@ def clock() -> FrozenClock:
     return FrozenClock(datetime(2026, 7, 15, 16, 0, tzinfo=UTC))
 
 
+ADMIN_KEY = "test-admin-key-0123456789"
+
+
 @pytest.fixture
 async def container(tmp_path: Path, clock: FrozenClock) -> AsyncIterator[Container]:
     settings = Settings(
@@ -77,6 +81,7 @@ async def container(tmp_path: Path, clock: FrozenClock) -> AsyncIterator[Contain
         ),
         storage_dir=str(tmp_path / "uploads"),
         run_worker_in_process=False,
+        admin_token=SecretStr(ADMIN_KEY),
     )
     built = build_container(settings)
     built = replace(built, clock=clock, sms=ConsoleSmsSender(), geocoder=PinnedGeocoder())

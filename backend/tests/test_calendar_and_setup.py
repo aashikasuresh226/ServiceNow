@@ -565,6 +565,36 @@ async def test_gemini_analyzer_request_and_errors() -> None:
         assert "busy" in exc.reason
 
 
+async def test_gemini_rotates_keys_and_skips_exhausted_ones() -> None:
+    from app.integrations.ai.gemini_analyzer import GeminiUnitAnalyzer
+
+    used: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        key = request.headers["x-goog-api-key"]
+        used.append(key)
+        if key == "key-b":  # this project's free quota is used up
+            return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
+        reply = json.dumps(_plate_response())
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": reply}]}}]})
+
+    analyzer = GeminiUnitAnalyzer(
+        " key-a, key-b ,key-c",
+        "gemini-flash-lite-latest",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    async def once() -> None:
+        await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
+
+    await once()  # starts with key-a
+    await once()  # key-b is over quota -> key-c answers
+    await once()  # key-c's turn
+    await once()  # key-a's turn
+    await once()  # key-b is resting: skipped to the end, key-c answers first
+    assert used == ["key-a", "key-b", "key-c", "key-c", "key-a", "key-c"]
+
+
 def test_auto_provider_prefers_claude_then_gemini() -> None:
     from pydantic import SecretStr
 

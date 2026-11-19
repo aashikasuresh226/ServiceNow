@@ -232,14 +232,6 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
           <p className="small"><strong>Done · {money(job.quote?.final_price_cents)}</strong> · collect payment directly</p>
         )
       ) : null}
-      {job.technician_rating || job.shop_rating ? (
-        <p className="small">
-          Rated {job.technician_rating ? <>technician <strong>★ {job.technician_rating}</strong></> : null}
-          {job.technician_rating && job.shop_rating ? ' · ' : null}
-          {job.shop_rating ? <>company <strong>★ {job.shop_rating}</strong></> : null}
-          {job.review ? <span className="muted"> · “{job.review}”</span> : null}
-        </p>
-      ) : null}
       <ErrorAlert message={act.error} />
     </section>
   );
@@ -314,7 +306,7 @@ export function JobsPage() {
       {done.data?.length ? (
         <div className="card table-wrap">
           <table className="table">
-            <thead><tr><th>Date</th><th>Technician</th><th>Work</th><th>Price</th><th>Your payout</th><th>Ratings</th></tr></thead>
+            <thead><tr><th>Date</th><th>Technician</th><th>Work</th><th>Price</th><th>Your payout</th></tr></thead>
             <tbody>
               {done.data.map((j) => (
                 <tr key={j.id}>
@@ -326,14 +318,6 @@ export function JobsPage() {
                   <td>{j.diagnosis?.primary_issue_label ?? 'Service'}</td>
                   <td>{money(j.payment.captured_cents ?? j.quote?.final_price_cents)}</td>
                   <td><strong>{j.payment.captured_cents != null ? money(j.payout_cents) : 'Collect directly'}</strong></td>
-                  <td className="small">
-                    {j.technician_rating || j.shop_rating ? (
-                      <span title={j.review ?? undefined}>
-                        Tech {j.technician_rating ? `★ ${j.technician_rating}` : '—'} · Company {j.shop_rating ? `★ ${j.shop_rating}` : '—'}
-                        {j.review ? <span className="muted" style={{ display: 'block' }}>“{j.review}”</span> : null}
-                      </span>
-                    ) : <span className="muted">Not rated yet</span>}
-                  </td>
                 </tr>
               ))}
             </tbody>

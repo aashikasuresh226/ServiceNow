@@ -78,6 +78,8 @@ def ensure_secrets() -> None:
     added = []
     if "HVAC_JWT_SECRET" not in present:
         added.append(f"HVAC_JWT_SECRET={pysecrets.token_urlsafe(48)}")
+    if "HVAC_ADMIN_TOKEN" not in present:
+        added.append(f"HVAC_ADMIN_TOKEN={pysecrets.token_urlsafe(32)}")
     if "HVAC_ENCRYPTION_KEY" not in present:
         if _database_has_rows():
             print(
@@ -91,6 +93,10 @@ def ensure_secrets() -> None:
         newline = "" if not text or text.endswith("\n") else "\n"
         ENV_FILE.write_text(text + newline + block + "\n".join(added) + "\n", encoding="utf-8")
         print(f"Created {', '.join(a.split('=')[0] for a in added)} in backend/.env")
+        if any(a.startswith("HVAC_ADMIN_TOKEN=") for a in added):
+            print(
+                "Your admin key (for /admin in the shop portal) is HVAC_ADMIN_TOKEN in backend/.env"
+            )
     else:
         print("Secrets are set.")
 
@@ -142,7 +148,7 @@ def check(settings: Settings) -> None:
     line(
         "Photo analysis",
         settings.ai_enabled,
-        f"{settings.resolved_ai_provider} ({settings.ai_model})"
+        f"{settings.resolved_ai_provider} ({settings.ai_model}{_key_count(settings)})"
         if settings.ai_enabled
         else "HVAC_GEMINI_API_KEY (free) or HVAC_ANTHROPIC_API_KEY",
     )
@@ -172,6 +178,13 @@ def check(settings: Settings) -> None:
     )
 
 
+def _key_count(settings: Settings) -> str:
+    if settings.resolved_ai_provider != "gemini" or not settings.gemini_api_key:
+        return ""
+    count = len([k for k in settings.gemini_api_key.get_secret_value().split(",") if k.strip()])
+    return f", {count} keys" if count > 1 else ""
+
+
 async def _test_ai(settings: Settings, photo: str | None) -> None:
     from dataclasses import asdict
 
@@ -179,6 +192,24 @@ async def _test_ai(settings: Settings, photo: str | None) -> None:
     from app.core.errors import AppError
     from app.integrations.ai.base import PhotoInput
 
+    if settings.resolved_ai_provider == "gemini" and settings.gemini_api_key:
+        keys = [k.strip() for k in settings.gemini_api_key.get_secret_value().split(",")]
+        keys = [k for k in keys if k]
+        if len(keys) > 1:
+            from pydantic import SecretStr
+
+            failed = 0
+            for number, key in enumerate(keys, 1):
+                print(f"\nKey {number} of {len(keys)} (...{key[-4:]}):")
+                one = settings.model_copy(update={"gemini_api_key": SecretStr(key)})
+                try:
+                    await _test_ai(one, photo)
+                except SystemExit as exc:
+                    failed += 1
+                    print(exc)
+            if failed:
+                raise SystemExit(f"{failed} of {len(keys)} keys failed (see above).")
+            return
     analyzer = _build_analyzer(settings)
     if analyzer is None:
         raise SystemExit(

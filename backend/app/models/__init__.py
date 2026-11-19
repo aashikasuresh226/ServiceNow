@@ -10,6 +10,7 @@ from app.models.identity import (
     ShopUser,
 )
 from app.models.service_request import (
+    Complaint,
     JobOffer,
     Message,
     ProcessedWebhook,
@@ -23,6 +24,7 @@ from app.models.shop import AvailabilityBlock, Shop, Technician
 __all__ = [
     "AuthNonce",
     "AvailabilityBlock",
+    "Complaint",
     "EmailChallenge",
     "ExternalJob",
     "Homeowner",

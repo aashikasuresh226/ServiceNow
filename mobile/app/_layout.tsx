@@ -8,6 +8,7 @@ import { Loading } from '@/components/ui';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
 import { OptionsContext, useLoadOptions } from '@/lib/hooks';
+import { UnreadProvider } from '@/lib/unread';
 
 // 'p' = public company / technician pages opened from shared links; 'join' = a company's invite.
 const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'p', 'join']);
@@ -47,7 +48,9 @@ export default function RootLayout() {
       <OptionsContext.Provider value={options}>
         <AuthProvider>
           <StatusBar style="dark" />
-          <AuthGate />
+          <UnreadProvider>
+            <AuthGate />
+          </UnreadProvider>
         </AuthProvider>
       </OptionsContext.Provider>
     </SafeAreaProvider>

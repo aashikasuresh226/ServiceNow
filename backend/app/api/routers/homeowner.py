@@ -9,10 +9,13 @@ from fastapi import APIRouter, File, Request, UploadFile, status
 
 from app.api.deps import ContainerDep, HomeownerDep, SessionDep, client_ip
 from app.api.presenters import message_out, request_out
-from app.models import ServiceRequest
+from app.models import Complaint, ServiceRequest
 from app.schemas.api import (
     CardSetupFinishIn,
     CardSetupOut,
+    ComplaintIn,
+    ComplaintOut,
+    ComplaintStateOut,
     CustomerInviteIn,
     HomeownerOut,
     HomeownerUpdateIn,
@@ -20,6 +23,7 @@ from app.schemas.api import (
     MatchIn,
     MessageIn,
     MessageOut,
+    NotificationsOut,
     OtpStartOut,
     PhoneStartIn,
     PhoneVerifyIn,
@@ -28,9 +32,11 @@ from app.schemas.api import (
     RequestCreateIn,
     RequestOut,
     UnitUpdateIn,
+    UnreadChat,
 )
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
+from app.services.complaint_service import CATEGORIES, ComplaintService, can_complain
 from app.services.customer_service import CustomerService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
@@ -283,7 +289,74 @@ async def list_messages(
     request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
 ) -> list[MessageOut]:
     request = await RequestService(session, c).get_for_homeowner(request_id, me)
-    return [message_out(m) for m in await MessageService(session, c).list(request)]
+    messages = MessageService(session, c)
+    await messages.mark_read_by_homeowner(request)  # opening the chat reads it
+    return [message_out(m) for m in await messages.list(request)]
+
+
+@router.get("/me/notifications", response_model=NotificationsOut)
+async def notifications(me: HomeownerDep, session: SessionDep, c: ContainerDep) -> NotificationsOut:
+    """New messages from companies and technicians (the app polls this to alert you)."""
+    unread = await MessageService(session, c).unread_for_homeowner(me.id)
+    return NotificationsOut(
+        unread_messages=[
+            UnreadChat(
+                request_id=u.request_id,
+                count=u.count,
+                sender_name=u.sender_name,
+                preview=u.preview,
+                last_at=u.last_at,
+            )
+            for u in unread
+        ],
+        total_unread=sum(u.count for u in unread),
+    )
+
+
+# --- Report a problem with the technician -------------------------------------------------
+def _complaint_out(complaint: Complaint) -> ComplaintOut:
+    return ComplaintOut(
+        id=complaint.id,
+        category=complaint.category,
+        category_label=CATEGORIES.get(complaint.category, complaint.category),
+        details=complaint.details,
+        status=complaint.status,
+        shop_response=complaint.shop_response,
+        created_at=complaint.created_at,
+    )
+
+
+@router.get("/requests/{request_id}/complaint", response_model=ComplaintStateOut)
+async def complaint_state(
+    request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> ComplaintStateOut:
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    existing = await ComplaintService(session, c).for_request(request.id)
+    return ComplaintStateOut(
+        can_file=existing is None and can_complain(request, c.clock.now()),
+        categories=CATEGORIES,
+        complaint=_complaint_out(existing) if existing else None,
+    )
+
+
+@router.post(
+    "/requests/{request_id}/complaint",
+    response_model=ComplaintOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def file_complaint(
+    request_id: uuid.UUID,
+    body: ComplaintIn,
+    me: HomeownerDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> ComplaintOut:
+    """Goes to the company and the platform admin; the technician doesn't see it."""
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    complaint = await ComplaintService(session, c).file(
+        request, category=body.category, details=body.details
+    )
+    return _complaint_out(complaint)
 
 
 @router.post(

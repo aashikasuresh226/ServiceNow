@@ -48,6 +48,10 @@ class Settings(BaseSettings):
 
     # --- Security -------------------------------------------------------------
     jwt_secret: SecretStr = SecretStr("dev-only-change-me-dev-only-change-me")
+    # Platform admin (you): opens /admin in the shop portal to read complaints and reviews.
+    # Created by `python -m app.cli secrets`. Unset = the admin page is switched off.
+    admin_token: SecretStr | None = None
+    admin_phone: str = ""  # optional: texted when a complaint arrives (needs Twilio)
     jwt_issuer: str = "hvac-connect"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30

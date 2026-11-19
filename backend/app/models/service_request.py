@@ -75,6 +75,8 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     captured_cents: Mapped[int | None] = mapped_column(Integer)
     platform_fee_cents: Mapped[int | None] = mapped_column(Integer)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # When the homeowner last opened the chat: later messages from the shop are "new".
+    homeowner_read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     canceled_reason: Mapped[str | None] = mapped_column(String(200))
     rating: Mapped[int | None] = mapped_column(Integer)  # the technician, 1-5
     shop_rating: Mapped[int | None] = mapped_column(Integer)  # the company, 1-5
@@ -180,6 +182,32 @@ class Message(IdMixin, TimestampMixin, Base):
     sender: Mapped[str] = mapped_column(String(12), nullable=False)  # homeowner|technician|shop
     sender_name: Mapped[str | None] = mapped_column(String(120))
     body: Mapped[str] = mapped_column(EncryptedText, nullable=False)
+
+
+class Complaint(IdMixin, TimestampMixin, Base):
+    """A homeowner's complaint about the technician on a job. Seen by the company and the
+    platform admin, never by the technician. Text is encrypted."""
+
+    __tablename__ = "complaints"
+
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    homeowner_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    shop_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    technician_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("technicians.id", ondelete="SET NULL"), index=True
+    )
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    details: Mapped[str] = mapped_column(EncryptedText, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")  # |resolved
+    shop_response: Mapped[str | None] = mapped_column(EncryptedText)
+    shop_responded_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    admin_note: Mapped[str | None] = mapped_column(EncryptedText)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    resolved_by: Mapped[str | None] = mapped_column(String(8))  # shop | admin
 
 
 class TechLocation(IdMixin, TimestampMixin, Base):

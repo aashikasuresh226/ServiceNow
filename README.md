@@ -128,7 +128,7 @@ All settings live in `backend/.env`. Run `.venv\Scripts\python.exe -m app.cli ch
 | **Google** (free) | "Continue with Google" for homeowners and shops | Only phone (homeowners) and email + password (shops) | `HVAC_GOOGLE_CLIENT_IDS` |
 | **Twilio Verify** | Texted sign-in codes | Development only: the code is shown on screen | `HVAC_TWILIO_ACCOUNT_SID`, `HVAC_TWILIO_AUTH_TOKEN`, `HVAC_TWILIO_VERIFY_SERVICE_SID` |
 | **Twilio Messaging** | Job-update texts (matched, on the way, done) | Updates show in the app only | `HVAC_TWILIO_FROM_NUMBER` or `HVAC_TWILIO_MESSAGING_SERVICE_SID` |
-| **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` or `HVAC_ANTHROPIC_API_KEY` |
+| **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` (several keys, comma-separated, take turns; make each in a different Google Cloud project) or `HVAC_ANTHROPIC_API_KEY` |
 | **Firebase** (free) | Emails that prove an address is real: shop sign-up and technician invites | Development only: the link is shown on screen | `HVAC_FIREBASE_API_KEY` |
 | **Housecall Pro** (per shop, MAX plan) | Accepted jobs go into the shop's Housecall Pro; its dispatcher assigns the tech | The shop runs on the portal and technician app | Entered by each shop in the portal (**How you take jobs**), stored encrypted |
 | **Neon** (free Postgres) | Hosted database with encrypted storage | A local SQLite file on your computer | `HVAC_DATABASE_URL` |
@@ -315,6 +315,22 @@ Pro**, and the technician's time is blocked for matching. Reassigned, reschedule
 jobs update at the next copy. With the webhook URL pasted into Housecall Pro, a new job
 arrives within seconds. (Housecall Pro can only reach the webhook on a public server, not
 on `localhost`; locally the one-minute copy is what you'll see.)
+
+**Private ratings, complaints and the admin page.** Homeowners rate the technician and the
+company privately: companies and technicians see only their averages, never individual
+ratings or comments. Homeowners can **Report a problem with your technician** on a job
+(once a technician is assigned, up to 30 days after): it goes to the company's
+**Complaints** page (they can reply, which the homeowner sees, and mark it resolved) and to
+you, the platform admin, at `/admin` in the shop portal (sign in with `HVAC_ADMIN_TOKEN`
+from `backend/.env`, created automatically; set `HVAC_ADMIN_PHONE` to also get a text when
+Twilio is on). The technician never sees complaints. `/admin` also lists every rating and
+review.
+
+**Message alerts.** When the company or technician sends a message, the homeowner app shows
+a banner (tap to open the chat), a count on the job, and the count in the browser tab; on
+the web it can also show a system notification while the app is in the background (the
+chat screen offers "Alert me to new messages"). With Twilio set up, the homeowner also gets
+one text per burst of messages. Native push notifications need an app-store build (later).
 
 **Existing customers** (`services/customer_service.py`, portal **Customers**): the shop's
 whole Housecall Pro customer list is imported on connect and daily (or **Import from

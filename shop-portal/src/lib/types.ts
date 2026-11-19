@@ -202,9 +202,6 @@ export type Job = {
   payout_cents: number | null;
   /** The homeowner chose your company or technician (e.g. from a shared link). */
   picked_by_customer: boolean;
-  technician_rating: number | null;
-  shop_rating: number | null;
-  review: string | null;
   /** The technician said they can't make it: reassign or call the customer. */
   technician_flag: string | null;
   chat_open: boolean;
@@ -259,4 +256,35 @@ export type CustomerList = {
   imported_at: string | null;
   shop_invite_url: string;
   shop_invite_message: string;
+};
+
+export type ShopComplaint = {
+  id: string;
+  category: string;
+  category_label: string;
+  details: string;
+  status: 'open' | 'resolved';
+  shop_response: string | null;
+  created_at: string;
+  request_id: string;
+  technician_id: string | null;
+  technician_name: string | null;
+  customer_name: string | null;
+  job_date: string;
+  issue: string | null;
+  shop_responded_at: string | null;
+  resolved_at: string | null;
+  resolved_by: 'shop' | 'admin' | null;
+};
+
+export type AdminComplaint = ShopComplaint & { shop_id: string; shop_name: string; admin_note: string | null };
+
+export type AdminReview = {
+  request_id: string;
+  completed_at: string | null;
+  shop_name: string | null;
+  technician_name: string | null;
+  technician_rating: number | null;
+  shop_rating: number | null;
+  review: string | null;
 };

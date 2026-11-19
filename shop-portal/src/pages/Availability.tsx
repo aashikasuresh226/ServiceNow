@@ -69,15 +69,29 @@ export function AvailabilityPage() {
         <div className="card soft">No technicians yet. Add them on the Technicians page.</div>
       ) : null}
       <div className="card table-wrap">
-        <div style={{ minWidth: 720, display: 'grid', gap: 10 }}>
-          <div className="row" style={{ paddingLeft: 200, gap: 0 }}>
-            {hours.map((h) => (
-              <span key={h} className="small muted" style={{ flex: 1 }}>{h % 12 || 12}{h < 12 ? 'a' : 'p'}</span>
-            ))}
+        {/* One grid for the header and every row, so the hour labels sit exactly over the bars. */}
+        <div className="board-grid">
+          <span aria-hidden="true" />
+          <div className="hour-axis" aria-hidden="true">
+            {hours.map((h, i) => {
+              const left = ((h - START_HOUR) / (END_HOUR - START_HOUR)) * 100;
+              if (nowPct >= 0 && Math.abs(left - nowPct) < 5) return null; // the "now" time sits there
+              return (
+                <span key={h} className={`small muted${i === 0 ? ' first' : i === hours.length - 1 ? ' last' : ''}`} style={{ left: `${left}%` }}>
+                  {h % 12 || 12}{h < 12 ? 'a' : 'p'}
+                </span>
+              );
+            })}
+            {nowPct >= 0 ? (
+              <span className="now-label" style={{ left: `${nowPct}%` }}>
+                {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              </span>
+            ) : null}
           </div>
+          <span aria-hidden="true" />
           {board.data?.map((d) => (
-            <div key={d.technician.id} className="row" style={{ gap: 12, flexWrap: 'nowrap' }}>
-              <div className="row" style={{ width: 188, flexWrap: 'nowrap' }}>
+            <div key={d.technician.id} className="board-row">
+              <div className="row" style={{ flexWrap: 'nowrap', minWidth: 0 }}>
                 <Avatar name={d.technician.name} size={30} />
                 <div style={{ minWidth: 0 }}>
                   <strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.technician.name}</strong>
@@ -86,7 +100,7 @@ export function AvailabilityPage() {
                   </span>
                 </div>
               </div>
-              <div className="timeline" style={{ flex: 1 }} aria-label={`${d.technician.name}'s schedule today`}>
+              <div className="timeline" aria-label={`${d.technician.name}'s schedule today`}>
                 {d.blocks.filter((b) => b.kind === 'shift').map((b) => (
                   <div key={`s${b.starts_at}`} className="block shift"
                     style={{ left: `${position(b.starts_at)}%`, width: `${position(b.ends_at) - position(b.starts_at)}%` }}>Open</div>

@@ -203,9 +203,6 @@ def shop_job_out(
         payout_cents=payout,
         picked_by_customer=request.preferred_shop_id is not None
         and request.preferred_shop_id == request.shop_id,
-        technician_rating=request.rating,
-        shop_rating=request.shop_rating,
-        review=request.review,
         technician_flag=request.technician_flag,
         chat_open=chat_open(request, container.clock.now()),
         driving=request.status == S.EN_ROUTE.value and request.live_location is not None,

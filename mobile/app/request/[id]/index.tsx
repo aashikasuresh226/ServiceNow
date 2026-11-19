@@ -19,6 +19,7 @@ import { clockTime, countdown, estimateRange, isScheduled, miles, minutesLabel, 
 import { labelFor, useAction, useCountdown, useOptions, usePolling } from '@/lib/hooks';
 import { copyText, shareSheet, textMessage, whatsApp } from '@/lib/share';
 import type { ServiceRequest, ShareInfo } from '@/lib/types';
+import { useUnread } from '@/lib/unread';
 import { decorative } from '@/components/a11y';
 
 const LIVE = new Set(['proposed', 'waitlisted', 'offered', 'dispatched', 'en_route', 'on_site',
@@ -283,13 +284,15 @@ function Stages({ status }: { status: string }) {
 
 /** Message the shop (in the app) and call the shop, or the technician if their company allows. */
 function ContactBar({ request }: { request: ServiceRequest }) {
+  const { byRequest } = useUnread();
   const t = request.technician;
   if (!t) return null;
   const call = (phone: string) => Linking.openURL(`tel:${phone}`);
+  const unread = byRequest[request.id] ?? 0;
   return (
     <View style={{ gap: 8 }}>
       {request.chat_open ? (
-        <Button label="Message" variant="secondary" icon="chat"
+        <Button label={unread ? `Message · ${unread} new` : 'Message'} variant={unread ? 'primary' : 'secondary'} icon="chat"
           onPress={() => router.push(`/request/${request.id}/chat`)} />
       ) : null}
       <Row style={{ gap: 8 }}>
@@ -302,6 +305,18 @@ function ContactBar({ request }: { request: ServiceRequest }) {
             accessibilityLabel={`Call ${t.name}`} onPress={() => call(t.phone!)} />
         ) : null}
       </Row>
+      <ReportLink request={request} />
+    </View>
+  );
+}
+
+/** Report a problem with the technician: goes to the company and to us, not the technician. */
+function ReportLink({ request }: { request: ServiceRequest }) {
+  if (!request.technician) return null;
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <TextLink label="Report a problem with your technician" color={colors.muted}
+        onPress={() => router.push(`/request/${request.id}/report`)} />
     </View>
   );
 }
@@ -449,9 +464,14 @@ function Completed({ request, onChange }: Props) {
               onPress={() => rate.run()} />
           </>
         ) : null}
+        <Muted>
+          Your ratings and comments are private. {t?.shop_name ?? 'The company'} and {t?.first_name ?? 'the technician'} only
+          see their overall average, never your individual rating.
+        </Muted>
         <ErrorText message={rate.error} />
       </Card>
       <SharePanel request={request} />
+      <ReportLink request={request} />
     </Screen>
   );
 }

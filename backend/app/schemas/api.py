@@ -520,9 +520,8 @@ class ShopJobOut(Model):
     payment: PaymentInfo
     payout_cents: int | None  # what the shop receives after the platform fee
     picked_by_customer: bool = False  # the homeowner chose this company / technician
-    technician_rating: int | None = None
-    shop_rating: int | None = None
-    review: str | None = None
+    # No per-job ratings or review text: homeowners rate privately. The shop sees only the
+    # averages (ShopOut.rating, TechnicianOut.rating); reviews are read by the platform admin.
     technician_flag: str | None = None  # the technician said they can't make it
     chat_open: bool = False
     driving: bool = False  # the technician is sharing their location on the way
@@ -630,3 +629,77 @@ class CustomerListOut(Model):
     imported_at: datetime | None
     shop_invite_url: str
     shop_invite_message: str
+
+
+class UnreadChat(Model):
+    request_id: uuid.UUID
+    count: int
+    sender_name: str | None
+    preview: str  # the newest message, shortened
+    last_at: datetime
+
+
+class NotificationsOut(Model):
+    unread_messages: list[UnreadChat]
+    total_unread: int
+
+
+class ComplaintIn(Model):
+    category: str = Field(max_length=32)
+    details: str = Field(min_length=1, max_length=2000)
+
+
+class ComplaintOut(Model):
+    """What the homeowner sees about their own complaint."""
+
+    id: uuid.UUID
+    category: str
+    category_label: str
+    details: str
+    status: str  # open | resolved
+    shop_response: str | None
+    created_at: datetime
+
+
+class ComplaintStateOut(Model):
+    can_file: bool
+    categories: dict[str, str]
+    complaint: ComplaintOut | None
+
+
+class ShopComplaintOut(ComplaintOut):
+    request_id: uuid.UUID
+    technician_id: uuid.UUID | None
+    technician_name: str | None
+    customer_name: str | None  # first name
+    job_date: datetime
+    issue: str | None
+    shop_responded_at: datetime | None
+    resolved_at: datetime | None
+    resolved_by: str | None
+
+
+class AdminComplaintOut(ShopComplaintOut):
+    shop_id: uuid.UUID
+    shop_name: str
+    admin_note: str | None
+
+
+class ComplaintResponseIn(Model):
+    response: str = Field("", max_length=2000)
+    resolved: bool = False
+
+
+class AdminComplaintIn(Model):
+    note: str | None = Field(None, max_length=2000)
+    status: str | None = Field(None, pattern="^(open|resolved)$")
+
+
+class AdminReviewOut(Model):
+    request_id: uuid.UUID
+    completed_at: datetime | None
+    shop_name: str | None
+    technician_name: str | None
+    technician_rating: int | None
+    shop_rating: int | None
+    review: str | None

@@ -4,6 +4,9 @@ import type {
   Customer,
   CustomerList,
   OutsideJob,
+  ShopComplaint,
+  AdminComplaint,
+  AdminReview,
   Dashboard,
   Readiness,
   EmailLink,
@@ -128,6 +131,10 @@ async function request<T>(method: string, path: string, body?: unknown,
 export const api = {
   options: () => request<Options>('GET', '/meta/options'),
 
+  complaints: () => request<ShopComplaint[]>('GET', '/shop/complaints'),
+  respondComplaint: (id: string, response: string, resolved: boolean) =>
+    request<ShopComplaint>('POST', `/shop/complaints/${id}/response`, { response, resolved }),
+
   outsideJobs: () => request<OutsideJob[]>('GET', '/shop/outside-jobs'),
   customers: (q?: string, status?: string) => {
     const params = new URLSearchParams();
@@ -220,4 +227,47 @@ export const api = {
   messages: (id: string) => request<Message[]>('GET', `/shop/jobs/${id}/messages`),
   sendMessage: (id: string, body: string) =>
     request<Message>('POST', `/shop/jobs/${id}/messages`, { body }),
+};
+
+/** Platform admin (you): signed in with HVAC_ADMIN_TOKEN, kept for this browser tab only. */
+const ADMIN_KEY = 'hvac.admin.key';
+
+export function getAdminKey(): string | null {
+  try {
+    return window.sessionStorage.getItem(ADMIN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAdminKey(key: string | null): void {
+  try {
+    if (key) window.sessionStorage.setItem(ADMIN_KEY, key);
+    else window.sessionStorage.removeItem(ADMIN_KEY);
+  } catch {
+    // storage blocked: the page asks again
+  }
+}
+
+async function adminRequest<T>(method: string, path: string, body?: unknown, key = getAdminKey()): Promise<T> {
+  const r = await fetch(`${API_URL}/admin${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': key ?? '' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = r.status === 204 ? null : await r.json().catch(() => null);
+  if (!r.ok) {
+    const error = (data as { error?: { code?: string; message?: string } } | null)?.error;
+    throw new ApiError(r.status, error?.code ?? 'error', error?.message ?? `Request failed (${r.status})`);
+  }
+  return data as T;
+}
+
+export const adminApi = {
+  check: (key: string) => adminRequest<{ ok: boolean }>('GET', '/check', undefined, key),
+  complaints: (status?: string) =>
+    adminRequest<AdminComplaint[]>('GET', `/complaints${status ? `?status=${status}` : ''}`),
+  updateComplaint: (id: string, note: string | null, status?: 'open' | 'resolved') =>
+    adminRequest<AdminComplaint>('PATCH', `/complaints/${id}`, { note, status }),
+  reviews: () => adminRequest<AdminReview[]>('GET', '/reviews'),
 };

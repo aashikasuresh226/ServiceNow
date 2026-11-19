@@ -293,3 +293,27 @@ export type Estimate = {
   basis?: string | null;
   source?: 'ai' | 'past_jobs' | 'price_book' | null;
 };
+
+export type UnreadChat = {
+  request_id: string;
+  count: number;
+  sender_name: string | null;
+  preview: string;
+  last_at: string;
+};
+
+export type Complaint = {
+  id: string;
+  category: string;
+  category_label: string;
+  details: string;
+  status: 'open' | 'resolved';
+  shop_response: string | null;
+  created_at: string;
+};
+
+export type ComplaintState = {
+  can_file: boolean;
+  categories: Record<string, string>;
+  complaint: Complaint | null;
+};

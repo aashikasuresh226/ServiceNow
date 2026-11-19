@@ -12,6 +12,7 @@ const NAV = [
   { to: '/jobs', icon: 'jobs', label: 'Jobs' },
   { to: '/technicians', icon: 'users', label: 'Technicians' },
   { to: '/customers', icon: 'user', label: 'Customers' },
+  { to: '/complaints', icon: 'alert', label: 'Complaints' },
   { to: '/availability', icon: 'calendar', label: 'Availability' },
   { to: '/integrations', icon: 'plug', label: 'How you take jobs' },
   { to: '/settings', icon: 'settings', label: 'Shop & payouts' },
@@ -22,6 +23,8 @@ export function Layout() {
   const options = useOptions();
   const [me, setMe] = useState<ShopMe | null>(null);
   const { data: offers } = useLiveData(() => api.jobs(['offered']), 4000);
+  const { data: complaints } = useLiveData(() => api.complaints(), 30000);
+  const openComplaints = complaints?.filter((c) => c.status === 'open').length ?? 0;
 
   useEffect(() => {
     onSignOut(() => navigate('/login', { replace: true }));
@@ -46,6 +49,9 @@ export function Layout() {
               <Icon name={item.icon} />
               {item.label}
               {'optional' in item ? <span className="small muted" style={{ marginLeft: 'auto' }}>Optional</span> : null}
+              {item.to === '/complaints' && openComplaints ? (
+                <span className="nav-count" aria-label={`${openComplaints} open complaints`}>{openComplaints}</span>
+              ) : null}
               {item.to === '/jobs' && offers?.length ? (
                 <span className="nav-count" aria-label={`${offers.length} new offers`}>{offers.length}</span>
               ) : null}

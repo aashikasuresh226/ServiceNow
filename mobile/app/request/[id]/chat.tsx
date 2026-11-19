@@ -3,15 +3,23 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 
 import { ChatThread } from '@/components/ChatThread';
-import { Screen, StepHeader, Title } from '@/components/ui';
+import { Button, Screen, StepHeader, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { ServiceRequest } from '@/lib/types';
+import { askForWebAlerts, canAskForWebAlerts, useUnread } from '@/lib/unread';
 
 export default function RequestChat() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   useEffect(() => { api.getRequest(id).then(setRequest).catch(() => undefined); }, [id]);
-  const load = useCallback(() => api.messages(id), [id]);
+  const { refresh } = useUnread();
+  const [askAlerts, setAskAlerts] = useState(canAskForWebAlerts());
+  // Loading the thread marks it read; update the badges right after.
+  const load = useCallback(async () => {
+    const messages = await api.messages(id);
+    refresh();
+    return messages;
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const send = useCallback((body: string) => api.sendMessage(id, body), [id]);
   const t = request?.technician;
   const who = t ? (t.can_message ? `${t.first_name} and ${t.shop_name}` : t.shop_name) : 'your HVAC company';
@@ -19,6 +27,10 @@ export default function RequestChat() {
     <Screen scroll={false}>
       <StepHeader onBack={() => (router.canGoBack() ? router.back() : router.replace(`/request/${id}`))} />
       <Title sub={`Messages with ${who}`}>Messages</Title>
+      {askAlerts ? (
+        <Button label="Alert me to new messages" variant="secondary" icon="bell"
+          onPress={() => { void askForWebAlerts().then(() => setAskAlerts(false)); }} />
+      ) : null}
       <ChatThread load={load} send={send} me="homeowner" closed={request ? !request.chat_open : false}
         closedNote="Messages close 48 hours after the job." />
     </Screen>

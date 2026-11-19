@@ -20,6 +20,7 @@ from app.schemas.api import (
     BlockOut,
     BusyIn,
     CalendarLinkOut,
+    ComplaintResponseIn,
     CountOut,
     CustomerListOut,
     CustomerOut,
@@ -34,6 +35,7 @@ from app.schemas.api import (
     PayoutScheduleIn,
     QuoteIn,
     SchedulingConnectIn,
+    ShopComplaintOut,
     ShopJobOut,
     ShopMeOut,
     ShopOut,
@@ -49,6 +51,8 @@ from app.schemas.api import (
 )
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
+from app.services.complaint_service import ComplaintService
+from app.services.complaints_view import complaint_views
 from app.services.customer_service import CustomerService, status_of
 from app.services.external_jobs import ExternalJobService
 from app.services.job_service import JobService
@@ -231,6 +235,32 @@ async def import_customers(principal: ShopDep, session: SessionDep, c: Container
     if principal.shop.scheduling_provider != SchedulingProvider.HOUSECALL_PRO.value:
         raise InvalidState("Connect Housecall Pro first (How you take jobs)")
     return CountOut(count=await ExternalJobService(session, c).import_customers(principal.shop))
+
+
+# --- Complaints from homeowners -------------------------------------------------------------------
+@router.get("/complaints", response_model=list[ShopComplaintOut])
+async def list_complaints(
+    principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> list[ShopComplaintOut]:
+    """Homeowners' complaints about your technicians (the technician doesn't see them)."""
+    rows = await ComplaintService(session, c).for_shop(principal.shop.id)
+    return await complaint_views(session, rows)
+
+
+@router.post("/complaints/{complaint_id}/response", response_model=ShopComplaintOut)
+async def respond_to_complaint(
+    complaint_id: uuid.UUID,
+    body: ComplaintResponseIn,
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> ShopComplaintOut:
+    """Reply to the homeowner (they see it in the app) and/or mark it resolved."""
+    row = await ComplaintService(session, c).respond(
+        principal.shop.id, complaint_id, response=body.response, resolved=body.resolved
+    )
+    [view] = await complaint_views(session, [row])
+    return view
 
 
 # --- Technicians ---------------------------------------------------------------------------------

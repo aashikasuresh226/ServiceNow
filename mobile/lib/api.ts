@@ -13,6 +13,9 @@ import type {
   Options,
   OtpStarted,
   OutsideJob,
+  UnreadChat,
+  Complaint,
+  ComplaintState,
   Providers,
   PublicProvider,
   ShareInfo,
@@ -143,6 +146,11 @@ export const api = {
 
   // Profile + card
   me: () => request<Homeowner>('GET', '/me'),
+  notifications: () =>
+    request<{ unread_messages: UnreadChat[]; total_unread: number }>('GET', '/me/notifications'),
+  complaint: (id: string) => request<ComplaintState>('GET', `/requests/${id}/complaint`),
+  fileComplaint: (id: string, category: string, details: string) =>
+    request<Complaint>('POST', `/requests/${id}/complaint`, { category, details }),
   suggestions: () => request<{ name: string | null; address: string | null; companies: string[] }>('GET', '/me/suggestions'),
   inviteInfo: (code: string) =>
     request<{ shop_name: string; shop_phone: string | null }>('GET', `/invites/${encodeURIComponent(code)}`, undefined, { auth: false }),

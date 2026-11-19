@@ -13,7 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from app.api.routers import auth, calendar, homeowner, public, shop, technician
+from app.api.routers import admin, auth, calendar, homeowner, public, shop, technician
 from app.container import Container, build_container
 from app.core.config import Settings, get_settings
 from app.core.errors import register_error_handlers
@@ -57,7 +57,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         allow_origins=settings.cors_origins,
         allow_credentials=False,  # bearer tokens, not cookies
         allow_methods=["*"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Admin-Key"],
     )
     register_error_handlers(app)
 
@@ -81,6 +81,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         shop.router,
         technician.router,
         calendar.router,
+        admin.router,
     ):
         app.include_router(router, prefix=prefix)
     return app

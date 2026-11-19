@@ -132,6 +132,13 @@ textarea.input { min-height: 80px; resize: vertical; }
 .switch[aria-checked="true"] { background: var(--success); }
 .switch[aria-checked="true"]::after { transform: translateX(18px); }
 
+.board-grid { min-width: 760px; display: grid; grid-template-columns: 188px minmax(0, 1fr) max-content; column-gap: 12px; row-gap: 10px; align-items: center; }
+.board-row { display: contents; }
+.hour-axis { position: relative; height: 18px; }
+.hour-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.hour-axis .first { transform: none; }
+.hour-axis .last { transform: translateX(-100%); }
+.hour-axis .now-label { color: var(--danger); font-size: 11px; font-weight: 700; background: var(--surface); padding: 0 3px; z-index: 1; }
 .timeline { position: relative; height: 30px; border-radius: 6px; background: #f1f2f5; overflow: hidden; }
 .timeline .block { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; }
 .timeline .shift { background: var(--primary-tint); color: var(--primary); }

@@ -8,6 +8,7 @@ import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, Label, Muted, Row, Screen } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useUnread } from '@/lib/unread';
 import { labelFor, useOptions } from '@/lib/hooks';
 import type { ServiceRequest } from '@/lib/types';
 
@@ -40,7 +41,9 @@ export default function Home() {
     }, []),
   );
 
+  const { byRequest } = useUnread();
   const active = requests.find((r) => ACTIVE.has(r.status));
+  const newFor = (r: ServiceRequest) => byRequest[r.id] ?? 0;
   const firstName = me?.name?.split(' ')[0];
   const lastUnit = requests.find((r) => r.unit?.brand)?.unit;
 
@@ -76,6 +79,7 @@ export default function Home() {
                   : 'Tap to see live status'}
               </Muted>
             </View>
+            {newFor(active) ? <NewBadge count={newFor(active)} /> : null}
             <Icon name="chevronRight" size={20} color={colors.amberInk} />
           </Card>
         </Pressable>
@@ -110,6 +114,7 @@ export default function Home() {
               </Body>
               <Muted>{new Date(r.created_at).toLocaleDateString()}</Muted>
             </View>
+            {newFor(r) && r.id !== active?.id ? <NewBadge count={newFor(r)} /> : null}
             <Badge label={STATUS_LABEL[r.status] ?? r.status}
               tone={r.status === 'completed' ? 'success' : ACTIVE.has(r.status) ? 'amber' : 'neutral'} />
           </Row>
@@ -143,3 +148,14 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', justifyContent: 'space-around' },
   tab: { alignItems: 'center', gap: 2, minWidth: 64, minHeight: 44, justifyContent: 'center' },
 });
+
+function NewBadge({ count }: { count: number }) {
+  return (
+    <View accessibilityLabel={`${count} new message${count === 1 ? '' : 's'}`}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.primary,
+        borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+      <Icon name="chat" size={12} color="#fff" />
+      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{count}</Text>
+    </View>
+  );
+}
