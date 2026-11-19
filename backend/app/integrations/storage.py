@@ -1,4 +1,7 @@
-"""Photo storage. Local disk for dev/demo; swap for S3/GCS behind the same interface."""
+"""Photo storage. Local disk for dev/demo; swap for S3/GCS behind the same interface.
+
+Files are encrypted on disk with HVAC_ENCRYPTION_KEY (customer photos can show the
+home and its address), and decrypted only when served through a signed link."""
 
 from __future__ import annotations
 
@@ -7,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Protocol
 
+from app.core import fieldcrypt
 from app.core.errors import NotFound
 
 EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
@@ -31,14 +35,14 @@ class LocalFileStorage:
 
     async def save(self, data: bytes, content_type: str) -> str:
         key = f"{uuid.uuid4().hex}.{EXTENSIONS.get(content_type, 'bin')}"
-        await asyncio.to_thread(self._path(key).write_bytes, data)
+        await asyncio.to_thread(self._path(key).write_bytes, fieldcrypt.encrypt_bytes(data))
         return key
 
     async def read(self, key: str) -> bytes:
         path = self._path(key)
         if not path.is_file():
             raise NotFound("File not found")
-        return await asyncio.to_thread(path.read_bytes)
+        return fieldcrypt.decrypt_bytes(await asyncio.to_thread(path.read_bytes))
 
 
 def sniff_image_type(data: bytes) -> str | None:

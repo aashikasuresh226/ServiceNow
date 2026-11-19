@@ -76,6 +76,10 @@ async def options(c: ContainerDep) -> dict[str, object]:
             "photo_analysis": c.analyzer is not None,
             "texts": "twilio" if c.phone_verify is not None else "development",
             "scheduling_integrations": c.settings.scheduling_integrations_enabled,
+            # Email links (shop sign-up, technician invites): sent by Firebase, or shown
+            # on screen in development.
+            "email_links": "firebase" if c.firebase is not None else "development",
+            "firebase": c.settings.firebase_web_config,
         },
     }
 

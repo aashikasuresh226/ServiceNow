@@ -10,7 +10,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Query, status
 
 from app.api.deps import ContainerDep, SessionDep, ShopDep
-from app.api.presenters import shop_job_out
+from app.api.presenters import message_out, shop_job_out
 from app.core.errors import InvalidState, NotFound
 from app.models import ServiceRequest, Technician
 from app.schemas.api import (
@@ -20,8 +20,11 @@ from app.schemas.api import (
     CalendarLinkOut,
     CountOut,
     DashboardOut,
+    EmailLinkOut,
     LinkOut,
     LiveIn,
+    MessageIn,
+    MessageOut,
     PayoutScheduleIn,
     QuoteIn,
     SchedulingConnectIn,
@@ -30,6 +33,8 @@ from app.schemas.api import (
     ShopOut,
     ShopUpdateIn,
     TechDayOut,
+    TechInviteIn,
+    TechInviteOut,
     TechnicianIn,
     TechnicianOut,
 )
@@ -37,6 +42,7 @@ from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
+from app.services.message_service import MessageService
 from app.services.shop_service import ShopService
 
 router = APIRouter(prefix="/shop", tags=["shop"])
@@ -341,3 +347,64 @@ async def get_technician(
     if tech is None:
         raise NotFound("Technician not found")
     return _tech_out(tech)
+
+
+# --- Technician app access --------------------------------------------------------------------
+@router.post("/technicians/{technician_id}/invite", response_model=TechInviteOut)
+async def invite_technician(
+    technician_id: uuid.UUID,
+    body: TechInviteIn,
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> TechInviteOut:
+    """Email the technician an invite (the portal sends it through Firebase)."""
+    service = ShopService(session, c)
+    tech = await service.get_technician(principal.shop, technician_id)
+    link = await service.invite_technician(
+        principal.shop,
+        tech,
+        str(body.email),
+        body.model_dump(include={"can_respond_offers", "can_contact_customers", "schedule_view"}),
+    )
+    return TechInviteOut(
+        technician=_tech_out(tech),
+        email_link=EmailLinkOut(
+            email=link.email,
+            continue_url=link.continue_url,
+            delivery=link.delivery,
+            dev_link=link.dev_link,
+        ),
+    )
+
+
+@router.delete("/technicians/{technician_id}/app-access", response_model=TechnicianOut)
+async def remove_app_access(
+    technician_id: uuid.UUID, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> TechnicianOut:
+    service = ShopService(session, c)
+    tech = await service.get_technician(principal.shop, technician_id)
+    await service.remove_app_access(tech)
+    return _tech_out(tech)
+
+
+# --- Chat -----------------------------------------------------------------------------------
+@router.get("/jobs/{job_id}/messages", response_model=list[MessageOut])
+async def job_messages(
+    job_id: uuid.UUID, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> list[MessageOut]:
+    request = await _job(session, c, principal, job_id)
+    return [message_out(m) for m in await MessageService(session, c).list(request)]
+
+
+@router.post(
+    "/jobs/{job_id}/messages", response_model=MessageOut, status_code=status.HTTP_201_CREATED
+)
+async def send_job_message(
+    job_id: uuid.UUID, body: MessageIn, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> MessageOut:
+    request = await _job(session, c, principal, job_id)
+    message = await MessageService(session, c).post(
+        request, sender="shop", sender_name=principal.shop.name, body=body.body
+    )
+    return message_out(message)

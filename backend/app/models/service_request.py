@@ -10,6 +10,7 @@ from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String,
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, UTCDateTime
+from app.core.fieldcrypt import EncryptedFloat, EncryptedText
 from app.domain.enums import RequestStatus
 from app.models.base import IdMixin, TimestampMixin
 
@@ -28,9 +29,9 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
 
     # What the homeowner told us
     symptoms: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(EncryptedText)
     urgency: Mapped[str] = mapped_column(String(16), default="asap", nullable=False)
-    address: Mapped[str | None] = mapped_column(String(300))
+    address: Mapped[str | None] = mapped_column(EncryptedText)
     lat: Mapped[float] = mapped_column(Float, nullable=False)
     lng: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -77,6 +78,8 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     rating: Mapped[int | None] = mapped_column(Integer)  # the technician, 1-5
     shop_rating: Mapped[int | None] = mapped_column(Integer)  # the company, 1-5
     review: Mapped[str | None] = mapped_column(String(500))
+    # The assigned technician said they can't make it (shown to the office to reassign).
+    technician_flag: Mapped[str | None] = mapped_column(String(200))
 
     # Homeowner's choice when requesting: a company, a specific technician, or neither
     # (soonest qualified tech). Matching only considers that company / technician.
@@ -97,6 +100,9 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     technician = relationship("Technician", lazy="joined", foreign_keys=[technician_id])
     shop = relationship("Shop", lazy="joined", foreign_keys=[shop_id])
     homeowner = relationship("Homeowner", lazy="joined")
+    live_location = relationship(
+        "TechLocation", uselist=False, lazy="selectin", cascade="all, delete-orphan"
+    )
 
 
 class RequestPhoto(IdMixin, TimestampMixin, Base):
@@ -125,6 +131,37 @@ class RequestEvent(IdMixin, TimestampMixin, Base):
     actor: Mapped[str] = mapped_column(String(20), nullable=False)
     note: Mapped[str | None] = mapped_column(String(300))
     data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class Message(IdMixin, TimestampMixin, Base):
+    """Chat between the homeowner and the shop (office and, if allowed, the technician)."""
+
+    __tablename__ = "messages"
+    __table_args__ = (Index("ix_messages_request_created", "request_id", "created_at"),)
+
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False
+    )
+    sender: Mapped[str] = mapped_column(String(12), nullable=False)  # homeowner|technician|shop
+    sender_name: Mapped[str | None] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(EncryptedText, nullable=False)
+
+
+class TechLocation(IdMixin, TimestampMixin, Base):
+    """The technician's latest position, ONLY while driving to this job (status en_route).
+    One row per job, overwritten on each update and deleted on arrival or cancel.
+    Never kept as a history. Coordinates are encrypted."""
+
+    __tablename__ = "tech_locations"
+
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    lat: Mapped[float] = mapped_column(EncryptedFloat, nullable=False)
+    lng: Mapped[float] = mapped_column(EncryptedFloat, nullable=False)
+    accuracy_m: Mapped[float | None] = mapped_column(Float)
+    recorded_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
 
 class ProcessedWebhook(IdMixin, TimestampMixin, Base):

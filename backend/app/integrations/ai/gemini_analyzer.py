@@ -39,11 +39,11 @@ class GeminiUnitAnalyzer:
         model: str,
         *,
         max_concurrency: int = 8,
-        timeout_seconds: float = 90.0,
+        timeout_seconds: float = 20.0,
         http: httpx.AsyncClient | None = None,
         api_base: str = API_BASE,
         fallback_models: list[str] | None = None,
-        retry_delay_seconds: float = 2.0,
+        retry_delay_seconds: float = 1.0,
     ) -> None:
         self._key = api_key
         self._models = list(dict.fromkeys([model, *(fallback_models or [])]))
@@ -121,7 +121,7 @@ class GeminiUnitAnalyzer:
                 # Older models/endpoints may not accept a JSON schema: ask for plain JSON.
                 log.warning("Gemini %s rejected the JSON schema; retrying as plain JSON", model)
                 response = await self._post(model, parts, schema=False)
-            if response.status_code not in (404, 429, 500, 503):
+            if response.status_code not in (404, 429, 500, 503, 504):
                 return model, response
             log.warning("Gemini %s answered %s; trying the next model", model, response.status_code)
         assert response is not None
@@ -140,15 +140,18 @@ class GeminiUnitAnalyzer:
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": config,
         }
-        for attempt in range(3):
+        for attempt in range(2):  # one quick retry; then the next model is tried
             try:
                 response = await self._http.post(
                     url, json=payload, headers={"x-goog-api-key": self._key}
                 )
+            except httpx.TimeoutException:
+                log.warning("Gemini %s timed out", model)
+                return httpx.Response(504, json={"error": {"status": "DEADLINE_EXCEEDED"}})
             except httpx.HTTPError as exc:
                 log.warning("Gemini unreachable: %s", exc)
                 raise AnalysisFailed("couldn't reach Google Gemini (check the internet)") from exc
-            if response.status_code not in (500, 503) or attempt == 2:
+            if response.status_code not in (500, 503) or attempt == 1:
                 return response
             log.warning("Gemini %s is busy (%s); retrying", model, response.status_code)
             await asyncio.sleep(self._delay * (attempt + 1))  # overloaded: back off, retry
@@ -168,7 +171,7 @@ def _reason(response: httpx.Response) -> str:
         return "the free Gemini limit is used up for now (it resets daily); try again later"
     if "API key" in message or status in ("UNAUTHENTICATED", "PERMISSION_DENIED"):
         return "the Gemini API key was rejected (check HVAC_GEMINI_API_KEY)"
-    if response.status_code in (500, 503) or status == "UNAVAILABLE":
+    if response.status_code in (500, 503, 504) or status in ("UNAVAILABLE", "DEADLINE_EXCEEDED"):
         return "Google's free Gemini service is busy right now; try again in a minute"
     if response.status_code == 404 or status == "NOT_FOUND":
         return "that Gemini model isn't available (check HVAC_GEMINI_MODEL in AI Studio)"

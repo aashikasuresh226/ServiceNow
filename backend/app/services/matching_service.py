@@ -29,7 +29,7 @@ from app.domain.matching import (
 from app.models import Homeowner, ServiceRequest, Shop, Technician
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
-from app.services.lifecycle import clear_assignment, transition
+from app.services.lifecycle import clear_assignment, clear_live_location, transition
 from app.services.notifications import notify_homeowner
 from app.services.payment_service import PaymentService
 
@@ -187,6 +187,7 @@ class MatchingService:
         await self.calendar.book(request)
 
     async def cancel(self, request: ServiceRequest, actor: Actor, reason: str) -> None:
+        await clear_live_location(self.s, request)
         await self.payments.release_hold(request)
         await self.calendar.release(request)
         clear_assignment(request)
@@ -195,14 +196,19 @@ class MatchingService:
 
     # --- Shop actions -------------------------------------------------------------
     async def shop_accept(
-        self, request: ServiceRequest, shop: Shop, technician_id: uuid.UUID | None
+        self,
+        request: ServiceRequest,
+        shop: Shop,
+        technician_id: uuid.UUID | None,
+        actor: Actor = Actor.SHOP,
     ) -> None:
         now = self.c.clock.now()
         self._ensure_open_offer(request, shop, now)
         if technician_id and technician_id != request.technician_id:
             await self._reassign_within_shop(request, shop, technician_id, now)
         request.offer_expires_at = None
-        transition(self.s, request, S.DISPATCHED, Actor.SHOP)
+        request.technician_flag = None
+        transition(self.s, request, S.DISPATCHED, actor)
         await self.calendar.confirm(request)
         tech = await self.s.get(Technician, request.technician_id)
         homeowner = await self.s.get(Homeowner, request.homeowner_id)
@@ -214,9 +220,11 @@ class MatchingService:
                 "and will head your way shortly.",
             )
 
-    async def shop_decline(self, request: ServiceRequest, shop: Shop) -> None:
+    async def shop_decline(
+        self, request: ServiceRequest, shop: Shop, reason: str = "Shop declined"
+    ) -> None:
         self._ensure_open_offer(request, shop, self.c.clock.now())
-        await self._offer_to_next(request, reason="Shop declined")
+        await self._offer_to_next(request, reason=reason[:300])
 
     def _ensure_open_offer(self, request: ServiceRequest, shop: Shop, now: datetime) -> None:
         if request.shop_id != shop.id:

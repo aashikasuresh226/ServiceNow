@@ -13,6 +13,7 @@ import { JobsPage } from './pages/Jobs';
 import { PayoutsOnboarding } from './pages/Payouts';
 import { SettingsPage } from './pages/Settings';
 import { TechniciansPage } from './pages/Technicians';
+import { VerifyEmailPage } from './pages/VerifyEmail';
 import './styles.css';
 
 function RequireSession({ children }: { children: ReactNode }) {
@@ -24,6 +25,7 @@ createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<AuthPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route element={<RequireSession><Layout /></RequireSession>}>
           <Route index element={<DashboardPage />} />
           <Route path="jobs" element={<JobsPage />} />

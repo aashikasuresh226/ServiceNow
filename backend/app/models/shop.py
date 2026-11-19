@@ -7,9 +7,10 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text, Uuid
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db import Base, UTCDateTime
+from app.core.fieldcrypt import EncryptedText, blind_index
 from app.domain.enums import SchedulingProvider
 from app.models.base import IdMixin, TimestampMixin
 
@@ -60,7 +61,8 @@ class Technician(IdMixin, TimestampMixin, Base):
         Uuid, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    phone: Mapped[str | None] = mapped_column(String(20))
+    phone: Mapped[str | None] = mapped_column(EncryptedText)
+    phone_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     photo_url: Mapped[str | None] = mapped_column(String(500))
     external_id: Mapped[str | None] = mapped_column(String(64))  # id in ServiceTitan / HCP
 
@@ -83,7 +85,31 @@ class Technician(IdMixin, TimestampMixin, Base):
     rating_sum: Mapped[int] = mapped_column(default=0, nullable=False)
     rating_count: Mapped[int] = mapped_column(default=0, nullable=False)
 
+    # --- Technician app account ---------------------------------------------------------
+    # none: no app login (the office runs their jobs) | invited | active | disabled
+    app_status: Mapped[str] = mapped_column(String(12), default="none", nullable=False)
+    email: Mapped[str | None] = mapped_column(EncryptedText)
+    email_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
+    invited_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    joined_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # What the company lets this technician do in the app (enforced by the API).
+    can_respond_offers: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    can_contact_customers: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    schedule_view: Mapped[str] = mapped_column(String(8), default="full", nullable=False)
+
     shop = relationship("Shop", back_populates="technicians")
+
+    @validates("phone")
+    def _index_phone(self, _key: str, value: str | None) -> str | None:
+        self.phone_hash = blind_index("phone", value)
+        return value
+
+    @validates("email")
+    def _index_email(self, _key: str, value: str | None) -> str | None:
+        self.email_hash = blind_index("email", value)
+        return value
+
     availability = relationship(
         "AvailabilityBlock", back_populates="technician", cascade="all, delete-orphan"
     )

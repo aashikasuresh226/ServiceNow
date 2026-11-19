@@ -14,7 +14,7 @@ from app.container import Container
 from app.core.db import session_scope
 from app.core.errors import Forbidden, Unauthorized
 from app.core.security import Role, TokenClaims, TokenType
-from app.models import Homeowner, Shop, ShopUser
+from app.models import Homeowner, Shop, ShopUser, Technician
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -96,6 +96,8 @@ async def current_shop(
     """Fully signed-in shop user (password + 2-step)."""
     claims = _claims(container, credentials, TokenType.ACCESS)
     principal = await _shop_principal(session, claims)
+    if principal.user.email_verified_at is None:
+        raise Forbidden("Confirm your email address first", code="email_unverified")
     if not principal.user.mfa_enabled:
         raise Forbidden("Set up 2-step verification first", code="mfa_required")
     return principal
@@ -111,6 +113,30 @@ async def shop_in_mfa_setup(
     return await _shop_principal(session, claims)
 
 
+@dataclass(frozen=True, slots=True)
+class TechPrincipal:
+    tech: Technician
+    shop: Shop
+
+
+async def current_technician(
+    container: ContainerDep,
+    session: SessionDep,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> TechPrincipal:
+    claims = _claims(container, credentials, TokenType.ACCESS)
+    if claims.role != Role.TECHNICIAN:
+        raise Forbidden("Technician account required")
+    tech = await session.get(Technician, claims.subject_id)
+    # A company can switch off a technician's app access at any time.
+    if tech is None or tech.app_status != "active" or not tech.is_active:
+        raise Unauthorized("Your company turned off your app access", code="session_ended")
+    shop = await session.get(Shop, tech.shop_id)
+    assert shop is not None
+    return TechPrincipal(tech, shop)
+
+
 HomeownerDep = Annotated[Homeowner, Depends(current_homeowner)]
+TechDep = Annotated[TechPrincipal, Depends(current_technician)]
 ShopDep = Annotated[ShopPrincipal, Depends(current_shop)]
 ShopSetupDep = Annotated[ShopPrincipal, Depends(shop_in_mfa_setup)]

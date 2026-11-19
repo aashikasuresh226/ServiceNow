@@ -11,6 +11,7 @@ cd "$ROOT/backend"
 .venv/bin/pip install --upgrade pip -q
 .venv/bin/pip install -e . --prefer-binary
 [ -f .env ] || cp .env.example .env
+.venv/bin/python -m app.cli secrets
 .venv/bin/python -m app.cli migrate
 
 cd "$ROOT/mobile" && npm install --no-audit --no-fund && { [ -f .env ] || cp .env.example .env; }

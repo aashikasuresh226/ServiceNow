@@ -7,12 +7,13 @@ photo of their unit. Claude reads the data plate and the likely issue, the app s
 starting price, and books the qualified technician who can arrive soonest: free now, or at
 their next opening (e.g. tomorrow 8 AM) if everyone is busy or off shift. HVAC shops manage technicians and availability (from ServiceTitan or
 Housecall Pro later), accept jobs that land on each technician's calendar, and get paid
-through Stripe.
+through Stripe. Technicians are invited by their shop and get their own app: today's jobs,
+accept/decline, live location to the customer while driving, chat and calls.
 
 | Part | Tech | Folder |
 |---|---|---|
 | API + matching engine | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic | `backend/` |
-| Homeowner app | Expo (React Native), runs on web, iOS and Android | `mobile/` |
+| Homeowner app + technician app | Expo (React Native), runs on web, iOS and Android (`/tech` for technicians) | `mobile/` |
 | Shop portal | React + Vite (desktop web) | `shop-portal/` |
 
 ---
@@ -51,8 +52,9 @@ shop portal, homeowner app) and two browser tabs:
 
 | | URL | |
 |---|---|---|
-| Shop portal | http://localhost:5173 | **Create account** with Google or email + password, then scan the QR code with your authenticator app |
+| Shop portal | http://localhost:5173 | **Create account** with Google or email + password, confirm the email link, then scan the QR code with your authenticator app |
 | Homeowner app | http://localhost:8081 | **Continue with Google** or with a mobile number |
+| Technician app | http://localhost:8081/tech/sign-in | Opened from the shop's invite email; later sign in with a texted code or Google |
 
 To stop, close the three PowerShell windows. To delete **all** accounts and requests and
 start over, close the API window and run `scripts\windows\reset-database.ps1`.
@@ -63,20 +65,30 @@ start over, close the API window and run `scripts\windows\reset-database.ps1`.
 
 There is no demo data. Create real accounts with real addresses:
 
-1. **Shop owner (left window):** Create account → turn on 2-step verification with your
-   authenticator app → **Shop & payouts**: enter the shop's real street address (with city,
-   state and ZIP) → **Technicians**: add at least one tech with working hours that include
-   *now* → flip **Accept on-demand requests** at the top right.
-2. **Homeowner (right window):** Continue with Google or a mobile number → enter a name and a
+1. **Shop owner (left window):** Create account. The password needs 8+ characters, a
+   capital letter, a number and a symbol, and can't be a common or leaked password. Open the
+   email link (until Firebase is set up, a **TEST MODE** button opens it), then turn on
+   2-step verification with your authenticator app → **Shop & payouts**: enter the shop's
+   real street address (with city, state and ZIP) → **Technicians**: add at least one tech
+   with working hours → flip **Accept on-demand requests** at the top right.
+2. **Technician (optional):** on **Technicians**, click **Invite to app**, enter their email
+   and choose what they may do (accept/decline jobs, message and call customers, full day or
+   next job only). Until Firebase is set up, the invite link is shown for you to send or open.
+   The technician opens it on their phone, which confirms the email, and signs in with their
+   mobile number (or Google). Use a private/incognito window to test it next to the homeowner.
+3. **Homeowner (right window):** Continue with Google or a mobile number → enter a name and a
    real home address near the shop (within the tech's service radius, 25 km by default).
    Google users also confirm a mobile number with a texted code.
-3. Start a request and book. The job appears in the shop's **Jobs** and on the tech's
-   calendar (**Availability**).
+4. Start a request and book. The job appears in the shop's **Jobs**, on the tech's
+   calendar (**Availability**) and in the technician app, where they accept it, tap **Start
+   driving** (the homeowner sees a live map only from then until **Arrived**), chat, quote and
+   finish.
 
 Addresses are looked up with the free US Census geocoder, so made-up addresses are rejected.
 For more homeowners, sign out (**Account → Sign out**) and use another number or Google
-account. Until Twilio is connected, codes are shown on screen (**TEST MODE**), so any US
-number works. With a Twilio *trial* account, codes only reach numbers you've verified in
+account. Until Twilio is connected, codes are shown on screen (**TEST MODE**), so any real
+US number works. Numbers are checked with Google's libphonenumber, so impossible numbers
+(e.g. area code 999) are rejected. With a Twilio *trial* account, codes only reach numbers you've verified in
 Twilio.
 
 ### Troubleshooting
@@ -97,6 +109,11 @@ Twilio.
   *Authorized JavaScript origins*.
 - **A port is already in use**: close old windows and start again. The apps use ports
   8000, 5173 and 8081.
+- **Photo analysis is slow or gives up**: free Gemini models are sometimes overloaded. The app
+  waits at most 35 seconds (`HVAC_AI_TIME_BUDGET_SECONDS`), trying backup models, then
+  continues without AI so the homeowner can still book.
+- **The live map doesn't move**: the technician app must stay open while driving (location
+  is shared in the foreground only), and the browser must be allowed to use location.
 
 ---
 
@@ -111,6 +128,8 @@ All settings live in `backend/.env`. Run `.venv\Scripts\python.exe -m app.cli ch
 | **Twilio Verify** | Texted sign-in codes | Development only: the code is shown on screen | `HVAC_TWILIO_ACCOUNT_SID`, `HVAC_TWILIO_AUTH_TOKEN`, `HVAC_TWILIO_VERIFY_SERVICE_SID` |
 | **Twilio Messaging** | Job-update texts (matched, on the way, done) | Updates show in the app only | `HVAC_TWILIO_FROM_NUMBER` or `HVAC_TWILIO_MESSAGING_SERVICE_SID` |
 | **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` or `HVAC_ANTHROPIC_API_KEY` |
+| **Firebase** (free) | Emails that prove an address is real: shop sign-up and technician invites | Development only: the link is shown on screen | `HVAC_FIREBASE_API_KEY`, `HVAC_FIREBASE_PROJECT_ID` |
+| **Neon** (free Postgres) | Hosted database with encrypted storage | A local SQLite file on your computer | `HVAC_DATABASE_URL` |
 | **Stripe** | Card on file, hold at booking, charge at completion, shop payouts (Connect) | No card needed; the homeowner pays the shop directly | `HVAC_STRIPE_SECRET_KEY`, `HVAC_STRIPE_PUBLISHABLE_KEY`, `HVAC_STRIPE_WEBHOOK_SECRET` |
 
 **Google:** Google Cloud Console → *APIs & Services* → *OAuth consent screen* (External,
@@ -131,6 +150,21 @@ daily request limits (shown in AI Studio) and Google may use free-tier prompts t
 products; only the photos, symptoms and description are sent. If the default model
 (`gemini-flash-lite-latest`) isn't offered, set `HVAC_GEMINI_MODEL` to a free model from AI
 Studio. When both keys are set, Claude is used.
+
+**Firebase (free):** console.firebase.google.com → *Add project* → *Build → Authentication*
+→ *Get started* → *Sign-in method* → *Email/Password* → turn on **Email link (passwordless
+sign-in)**. Then *Project settings → General → Your apps → Web* to register an app and copy
+`apiKey` and `projectId`, and run
+`powershell -ExecutionPolicy Bypass -File scripts\windows\set-firebase.ps1`. `localhost` is
+already an authorized domain; add your real domain later (*Authentication → Settings*). The
+free plan covers this; Firebase only sends the emails, and the API checks the proof.
+
+**Neon (free Postgres):** neon.com → create a project → *Connect* → copy the connection
+string, then run `powershell -ExecutionPolicy Bypass -File scripts\windows\set-database.ps1`.
+Neon stores data encrypted (AES-256) and requires encrypted connections; the API verifies
+Neon's certificate. Free plan: 1 GB per project, scales to zero after 5 idle minutes (the
+first request after that takes a second), no deletion. The new database starts empty; to go
+back to the local file, delete the `HVAC_DATABASE_URL` line in `backend\.env`.
 
 **Anthropic:** console.anthropic.com → *API keys* (add credits under *Billing*). Then run
 `powershell -ExecutionPolicy Bypass -File scripts\windows\set-anthropic-key.ps1` and paste
@@ -236,6 +270,22 @@ optimistic version checks so the API and the worker can't overwrite each other.
   a **Book** button; a friend who signs up gets that technician or company preselected.
   Set `HVAC_PUBLIC_APP_URL` to the homeowner app's real address once it's hosted.
 
+### Technician app (`mobile/app/tech/`)
+
+The shop invites a technician by email from **Technicians → Invite to app** and chooses:
+
+| Permission | On | Off |
+|---|---|---|
+| Accept or decline job offers | Offers appear in the tech's app (the office can still respond in the portal) | The office accepts; jobs just appear. The tech can tap *I can't make this one*, which flags the job for the office |
+| Message and call customers | Chat in the app; customer and tech see each other's number | The office handles messages and calls; the customer sees the shop's number |
+| Schedule they can see | Full day, plus recent jobs | Only the current or next job |
+
+On a job the technician sees the problem, the AI's read of the data plate and the photos
+(name and address only after the job is accepted), then **Start driving** → **Arrived** →
+price → **Mark job complete**. The homeowner's app shows a live OpenStreetMap map only between
+*Start driving* and *Arrived*. Chat is shared by the homeowner, the shop office and (if
+allowed) the technician, from acceptance until 48 hours after the job.
+
 ### Technician calendars
 
 When the homeowner confirms, the job is put on the assigned tech's calendar as *Pending*
@@ -285,25 +335,49 @@ call.
 
 ### Security
 
-- **Phone codes** are generated, sent and checked by Twilio Verify. We add a resend cooldown,
-  an hourly cap per number, an attempt limit, a per-IP limit and a US-only allowlist.
-  (Without Twilio, in development only, codes are generated locally and only a keyed hash
-  is stored.)
-- **Google sign-in** verifies the ID token's signature against Google's published keys, the
-  issuer, our client ID as audience, expiry and a verified email. Each attempt carries a
-  single-use nonce issued by the API, so a captured token can't be replayed. Google users
-  must also verify a phone number.
-- **Shop users** sign in with Google or a password (Argon2) **and** always a mandatory
-  authenticator-app code (TOTP), with a per-account guess limit.
+**Customer data in the database is encrypted by the app** (`backend/app/core/fieldcrypt.py`):
+homeowner names, phone numbers, emails and addresses; request addresses and descriptions;
+technician phones and emails; chat messages; live locations. Photos are encrypted on disk.
+The key is `HVAC_ENCRYPTION_KEY` in `backend/.env`, outside the database, so a copy of the
+database (or the database password) shows only ciphertext. Phone and email also store a
+keyed hash ("blind index") so sign-in can find an account without decrypting every row.
+`setup.ps1` / `start-demo.ps1` create a private random key for your computer; if your
+database already had data, it keeps the built-in development key until you reset the
+database. **Back up `backend/.env`**: without the key, the data can't be read. In production,
+keep the key in a secrets manager.
+
+- **Passwords** (shops): 8+ characters with a capital letter, a number and a symbol; common
+  passwords are rejected, and Have I Been Pwned's free *Pwned Passwords* service blocks
+  leaked ones. Only the first 5 characters of the password's SHA-1 hash are sent
+  (k-anonymity); the password never leaves the server. Stored with Argon2.
+- **Shop accounts:** the email is proven with a link (Firebase), then a mandatory
+  authenticator-app code (TOTP) at every sign-in, with a per-account guess limit. Typos like
+  `gmial.com` and domains that can't receive mail are caught first.
+- **Technicians** can't sign up on their own: the shop invites them by email. The invite is
+  single-use, stored hashed and expires in 7 days; opening it only counts with Firebase's
+  proof that the person controls that inbox, so the shop that sent it can't accept it for
+  them. The company's permissions (accept/decline, contact customers, full day or next job)
+  are enforced by the API, not just hidden. Removing access ends their sessions at once.
+- **Live location** is accepted only while that job is *en route*, readable only by that
+  job's homeowner, stored as a single encrypted position (no history) and deleted on arrival
+  or cancel; a background job removes any leftovers.
+- **Phone codes** are generated, sent and checked by Twilio Verify, with a resend cooldown,
+  an hourly cap per number, an attempt limit, a per-IP limit and a US-only allowlist. Numbers
+  are validated with libphonenumber. (Without Twilio, in development only, codes are
+  generated locally and only a keyed hash is stored, keyed by the number's blind index.)
+- **Google sign-in** verifies the ID token's signature, issuer, audience, expiry, a verified
+  email and a single-use nonce. **Firebase** proofs are checked the same way (signature
+  against Google's keys, issuer and audience = your Firebase project, verified email).
 - Short-lived access tokens; rotating refresh tokens stored hashed. Reuse of an old refresh
   token ends every session in that family.
-- Scheduling credentials and TOTP secrets are encrypted at rest (Fernet).
 - Shops see a job's photos and AI summary before accepting, but not the homeowner's
   address or phone until dispatch. Homeowners can only read their own requests.
-- Photos are type-checked from their bytes, size-limited, and served through short-lived
-  signed URLs.
+- Calls use the phone's own dialer (free). When a company lets a technician contact
+  customers, the customer and technician see each other's real number; otherwise only the
+  shop's number is shown.
+- **Hosted Postgres** connections are encrypted and the certificate is verified.
 - Security headers on every response; production startup refuses to run with dev secrets,
-  test doubles or without Twilio.
+  test doubles, or without Twilio and Firebase.
 
 ### Code map
 
@@ -367,9 +441,14 @@ host the portal's `dist/` and the Expo web build on a CDN.
   aren't built yet; updates reach homeowners through live screen refresh and texts.
 - **Homeowners can't pick a time slot** yet: they get the earliest opening. Drive times are
   straight-line distance at 40 km/h; a routing API would make arrival times more accurate.
-- **Maps are illustrative.** There's no live GPS tracking of technicians, and distances are
-  straight-line. Add a technician app (or the shop's GPS feed) and a routing API next.
-- **Not yet built:** tips, refunds and disputes, an internal admin console, and message
-  threads between homeowner and tech (the app uses call and SMS links).
+- **Live location is foreground-only:** the technician app must stay open while driving.
+  Background tracking needs the native iOS/Android build with background location permission.
+  Arrival times are straight-line estimates; a routing API would improve them.
+- **Firebase email links open the web version of the app.** The native iOS/Android builds
+  would need Firebase's mobile link handling.
+- **Calls show real phone numbers** (free). Hidden "proxy" numbers would need a paid service
+  such as Twilio.
+- **Not yet built:** tips, refunds and disputes, an internal admin console, push
+  notifications.
 - **Card re-authorization** for a higher quote can need the homeowner to confirm in the app
   (3-D Secure); that error is surfaced, but there's no in-app confirmation flow yet.

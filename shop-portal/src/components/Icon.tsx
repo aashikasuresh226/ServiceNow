@@ -20,6 +20,10 @@ const PATHS: Record<string, string[]> = {
   plus: ['M12 5v14M5 12h14'],
   mapPin: ['M12 21s-7-6.5-7-12a7 7 0 0 1 14 0c0 5.5-7 12-7 12z'],
   phone: ['M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z'],
+  mail: ['M3 6h18v12H3zM3 7l9 6 9-6'],
+  dot: ['M12 12h.01'],
+  chat: ['M4 5h16v11H9l-5 4z'],
+  send: ['M4 12l16-8-6 16-2-6z'],
   bank: ['M3 9l9-6 9 6zM5 20h14M6 10v8M10 10v8M14 10v8M18 10v8'],
 };
 

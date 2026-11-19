@@ -17,11 +17,28 @@ export type Features = {
   photo_analysis: boolean;
   texts: 'twilio' | 'development';
   scheduling_integrations: boolean;
+  /** Who emails sign-up links and technician invites. */
+  email_links: 'firebase' | 'development';
+  firebase: FirebaseConfig | null;
+};
+
+export type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string; appId?: string };
+
+/** Send `continue_url` to `email` with Firebase, or (development) open `dev_link`. */
+export type EmailLink = {
+  email: string;
+  continue_url: string;
+  delivery: 'firebase' | 'development';
+  dev_link: string | null;
 };
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number };
 
-export type LoginStep = { step: 'mfa' | 'mfa_setup'; token: string };
+export type LoginStep = {
+  step: 'verify_email' | 'mfa' | 'mfa_setup';
+  token: string;
+  email_link: EmailLink | null;
+};
 
 export type Shop = {
   id: string;
@@ -59,6 +76,24 @@ export type Technician = {
   is_active: boolean;
   rating: number | null;
   rating_count: number;
+  email: string | null;
+  /** Technician app: none (office runs their jobs) | invited | active | disabled */
+  app_status: 'none' | 'invited' | 'active' | 'disabled';
+  invited_at: string | null;
+  joined_at: string | null;
+  can_respond_offers: boolean;
+  can_contact_customers: boolean;
+  schedule_view: 'full' | 'next';
+};
+
+export type TechPermissions = Pick<Technician, 'can_respond_offers' | 'can_contact_customers' | 'schedule_view'>;
+
+export type Message = {
+  id: string;
+  sender: 'homeowner' | 'technician' | 'shop';
+  sender_name: string | null;
+  body: string;
+  created_at: string;
 };
 
 export type Block = {
@@ -146,4 +181,9 @@ export type Job = {
   technician_rating: number | null;
   shop_rating: number | null;
   review: string | null;
+  /** The technician said they can't make it: reassign or call the customer. */
+  technician_flag: string | null;
+  chat_open: boolean;
+  /** The technician is on the way and sharing their location with the customer. */
+  driving: boolean;
 };

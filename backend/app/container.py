@@ -11,12 +11,14 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.core import fieldcrypt
 from app.core.clock import Clock, SystemClock
 from app.core.config import Settings
 from app.core.db import create_engine, create_session_factory
 from app.core.ratelimit import RateLimiter
 from app.core.security import Encryptor, TokenService, UrlSigner
 from app.integrations.ai.base import UnitAnalyzer
+from app.integrations.firebase_auth import FirebaseTokenVerifier
 from app.integrations.geocoding import (
     CensusGeocoder,
     FakeGeocoder,
@@ -51,6 +53,7 @@ class Container:
     phone_verify: TwilioVerifyClient | None  # None: codes are generated locally (dev only)
     sms: SmsSender | None  # job-update texts
     google: GoogleTokenVerifier | None
+    firebase: FirebaseTokenVerifier | None  # None: email links are shown on screen (dev only)
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -124,6 +127,7 @@ def _build_geocoder(settings: Settings, http: httpx.AsyncClient) -> Geocoder:
 def build_container(settings: Settings) -> Container:
     settings.validate_providers()
     settings.validate_for_production()
+    fieldcrypt.configure(settings.encryption_key.get_secret_value())
     engine = create_engine(settings.database_url)
     http = httpx.AsyncClient(timeout=httpx.Timeout(20.0))
 
@@ -172,4 +176,7 @@ def build_container(settings: Settings) -> Container:
         phone_verify=phone_verify,
         sms=sms,
         google=google,
+        firebase=FirebaseTokenVerifier(project_id=settings.firebase_project_id, http=http)
+        if settings.firebase_enabled
+        else None,
     )

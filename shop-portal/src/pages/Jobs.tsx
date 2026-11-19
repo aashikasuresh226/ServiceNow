@@ -5,7 +5,13 @@ import { Avatar, Icon } from '../components/Icon';
 import { Button, Empty, ErrorAlert } from '../components/ui';
 import { api } from '../lib/api';
 import { countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal, visitTime } from '../lib/hooks';
-import type { Job } from '../lib/types';
+import type { Job, Message } from '../lib/types';
+
+/** +14045550199 -> (404) 555-0199 */
+function prettyPhone(e164: string): string {
+  const d = e164.replace(/\D/g, '');
+  return d.length === 11 && d.startsWith('1') ? `(${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}` : e164;
+}
 
 const STATUS_LABEL: Record<string, string> = {
   offered: 'New offer',
@@ -22,7 +28,7 @@ function JobSummary({ job }: { job: Job }) {
   return (
     <>
     {job.picked_by_customer ? (
-      <p className="badge success" style={{ alignSelf: 'flex-start' }}>Customer chose you</p>
+      <p className="badge success" style={{ alignSelf: 'flex-start', width: 'fit-content' }}>Customer chose you</p>
     ) : null}
     <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
       {job.photos[0] ? (
@@ -128,10 +134,22 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
           {STATUS_LABEL[job.status]}
         </span>
       </div>
+      {job.technician_flag ? (
+        <div className="alert" role="alert">
+          <Icon name="alert" size={18} />
+          <span><strong>{job.technician_name} can't make this job:</strong> “{job.technician_flag}”. Call the
+            customer or reassign it.</span>
+        </div>
+      ) : null}
+      {job.driving ? (
+        <p className="row small"><span className="badge primary"><Icon name="truck" size={13} /> On the way</span>
+          <span className="muted">The customer sees the technician's live location until they arrive.</span></p>
+      ) : null}
       <JobSummary job={job} />
       {job.customer_phone ? (
-        <p className="row small"><Icon name="phone" size={14} /> <a href={`tel:${job.customer_phone}`}>{job.customer_phone}</a></p>
+        <p className="row small"><Icon name="phone" size={14} /> <a href={`tel:${job.customer_phone}`}>Call {job.customer_first_name ?? 'customer'} · {prettyPhone(job.customer_phone)}</a></p>
       ) : null}
+      {job.chat_open ? <ChatPanel job={job} /> : null}
 
       {job.status === 'dispatched' ? (
         <div className="row"><Button variant="primary" icon="truck" busy={act.busy} onClick={() => act.run(() => api.enRoute(job.id))}>Mark en route</Button></div>
@@ -181,6 +199,42 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
       ) : null}
       <ErrorAlert message={act.error} />
     </section>
+  );
+}
+
+/** The office's view of the customer chat (the technician joins if allowed). */
+function ChatPanel({ job }: { job: Job }) {
+  const [open, setOpen] = useState(false);
+  const messages = useLiveData(() => (open ? api.messages(job.id) : Promise.resolve([] as Message[])), open ? 4000 : 0);
+  const [text, setText] = useState('');
+  const send = useAction(async () => {
+    await api.sendMessage(job.id, text);
+    setText('');
+    await messages.reload();
+  });
+  if (!open) {
+    return <div className="row"><Button size="small" icon="chat" onClick={() => setOpen(true)}>Messages with {job.customer_first_name ?? 'customer'}</Button></div>;
+  }
+  return (
+    <div className="stack" style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12, gap: 8 }}>
+      <div className="row between"><strong className="small">Messages</strong>
+        <Button size="small" onClick={() => setOpen(false)}>Hide</Button></div>
+      <div className="chat" aria-live="polite">
+        {messages.data?.length ? messages.data.map((m) => (
+          <div key={m.id} className={`bubble ${m.sender === 'shop' ? 'us' : 'them'}`}>
+            <span className="who">{m.sender === 'homeowner' ? (m.sender_name ?? 'Customer') : m.sender === 'technician' ? `${m.sender_name ?? 'Technician'} (tech)` : 'Your office'}</span>
+            {m.body}
+          </div>
+        )) : <p className="small muted">No messages yet.</p>}
+      </div>
+      <form className="row" style={{ flexWrap: 'nowrap' }} onSubmit={(e) => { e.preventDefault(); if (text.trim()) void send.run(); }}>
+        <label htmlFor={`msg-${job.id}`} className="sr-only">Message</label>
+        <input id={`msg-${job.id}`} className="input" value={text} maxLength={1000} placeholder="Write a message"
+          onChange={(e) => setText(e.target.value)} />
+        <Button type="submit" variant="primary" icon="send" busy={send.busy} disabled={!text.trim()}>Send</Button>
+      </form>
+      <ErrorAlert message={send.error ?? messages.error} />
+    </div>
   );
 }
 

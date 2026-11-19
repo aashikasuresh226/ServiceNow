@@ -13,7 +13,7 @@ from app.domain.enums import Actor, RequestStatus
 from app.domain.state_machine import HOMEOWNER_CANCELABLE
 from app.models import Homeowner, ServiceRequest, Shop, Technician
 from app.services.calendar_service import CalendarService
-from app.services.lifecycle import transition
+from app.services.lifecycle import clear_live_location, transition
 from app.services.matching_service import MatchingService
 from app.services.notifications import notify_homeowner
 from app.services.payment_service import PaymentService
@@ -54,21 +54,27 @@ class JobService:
         )
         return list(rows)
 
-    async def mark_en_route(self, request: ServiceRequest) -> None:
-        transition(self.s, request, S.EN_ROUTE, Actor.SHOP)
+    async def mark_en_route(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
+        transition(self.s, request, S.EN_ROUTE, actor)
         await self._notify(request, "{tech} is on the way to your home.")
 
-    async def mark_on_site(self, request: ServiceRequest) -> None:
-        transition(self.s, request, S.ON_SITE, Actor.SHOP)
+    async def mark_on_site(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
+        transition(self.s, request, S.ON_SITE, actor)
+        await clear_live_location(self.s, request)  # sharing ends on arrival
 
     async def submit_quote(
-        self, request: ServiceRequest, *, final_price_cents: int, notes: str | None
+        self,
+        request: ServiceRequest,
+        *,
+        final_price_cents: int,
+        notes: str | None,
+        actor: Actor = Actor.SHOP,
     ) -> None:
         if not 0 < final_price_cents <= MAX_QUOTE_CENTS:
             raise AppError("Enter a valid price", code="invalid_price")
         request.final_price_cents = final_price_cents
         request.quote_notes = (notes or "").strip()[:1000] or None
-        transition(self.s, request, S.QUOTED, Actor.SHOP)
+        transition(self.s, request, S.QUOTED, actor)
         await self._notify(
             request,
             "Your technician sent the final price "
@@ -83,12 +89,12 @@ class JobService:
         await self.payments.ensure_hold_covers(request, homeowner, shop, request.final_price_cents)
         transition(self.s, request, S.IN_PROGRESS, Actor.HOMEOWNER)
 
-    async def complete(self, request: ServiceRequest) -> None:
+    async def complete(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
         if request.status != S.IN_PROGRESS.value:
             raise InvalidState("The homeowner hasn't approved the price yet")
         await self.payments.capture(request)
         request.completed_at = self.c.clock.now()
-        transition(self.s, request, S.COMPLETED, Actor.SHOP)
+        transition(self.s, request, S.COMPLETED, actor)
         await CalendarService(self.s, self.c).finish(request)
         if request.captured_cents is not None:
             message = (

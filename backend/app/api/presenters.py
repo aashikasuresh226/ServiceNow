@@ -8,17 +8,20 @@ from datetime import timedelta
 from app.container import Container
 from app.domain.enums import RequestStatus
 from app.domain.pricing import platform_fee
-from app.models import RequestPhoto, ServiceRequest, Technician
+from app.models import Message, RequestPhoto, ServiceRequest, Technician
 from app.schemas.api import (
     EstimateInfo,
+    MessageOut,
     PaymentInfo,
     PhotoOut,
     QuoteInfo,
     RequestOut,
     ShopJobOut,
+    TechJobOut,
     TechnicianSummary,
     WaitlistInfo,
 )
+from app.services.message_service import chat_open, technician_can_contact
 
 PHOTO_URL_TTL = timedelta(hours=1)
 S = RequestStatus
@@ -51,9 +54,15 @@ def _technician_summary(
     }:
         eta = max(1, math.ceil((request.eta_at - now).total_seconds() / 60))
     shop = request.shop
+    # Live location only while driving to THIS job. Before that (even when the tech is
+    # assigned for later today, or driving to another customer) and after arrival: none.
     location = None
-    if shop.lat is not None and shop.lng is not None:
-        location = {"lat": tech.base_lat or shop.lat, "lng": tech.base_lng or shop.lng}
+    location_at = None
+    live = request.live_location
+    if request.status == S.EN_ROUTE.value and live is not None:
+        location = {"lat": live.lat, "lng": live.lng}
+        location_at = live.recorded_at
+    contact = technician_can_contact(tech) and request.status in DISPATCHED_OR_LATER
     return TechnicianSummary(
         id=tech.id,
         name=tech.name,
@@ -68,6 +77,9 @@ def _technician_summary(
         eta_minutes=eta,
         arrival_at=request.eta_at,
         location=location,
+        location_updated_at=location_at,
+        phone=tech.phone if contact else None,
+        can_message=contact,
     )
 
 
@@ -116,6 +128,7 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
         preferred_technician_id=request.preferred_technician_id,
         canceled_reason=request.canceled_reason,
         completed_at=request.completed_at,
+        chat_open=chat_open(request, container.clock.now()),
     )
 
 
@@ -162,4 +175,46 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
         technician_rating=request.rating,
         shop_rating=request.shop_rating,
         review=request.review,
+        technician_flag=request.technician_flag,
+        chat_open=chat_open(request, container.clock.now()),
+        driving=request.status == S.EN_ROUTE.value and request.live_location is not None,
     )
+
+
+def _area(request: ServiceRequest) -> str:
+    if request.distance_km is None:
+        return "Nearby"
+    return f"{request.distance_km * 0.621371:.1f} mi away"
+
+
+def tech_job_out(container: Container, request: ServiceRequest, tech: Technician) -> TechJobOut:
+    """What a technician sees. Before they (or the office) accept: no name or address."""
+    accepted = request.status in DISPATCHED_OR_LATER
+    homeowner = request.homeowner
+    contact = accepted and tech.can_contact_customers
+    return TechJobOut(
+        id=request.id,
+        status=request.status,
+        arrival_at=request.eta_at,
+        offer_expires_at=request.offer_expires_at,
+        customer_name=(homeowner.name if accepted else None) if homeowner else None,
+        customer_phone=homeowner.phone if contact and homeowner else None,
+        address=request.address if accepted else None,
+        area_label=_area(request),
+        distance_km=request.distance_km,
+        symptoms=request.symptoms,
+        description=request.description,
+        photos=[photo_out(container, p) for p in request.photos],
+        unit=request.unit_info,
+        diagnosis=request.diagnosis,
+        quote=_quote(request),
+        approved=request.status in (S.IN_PROGRESS.value, S.COMPLETED.value),
+        technician_flag=request.technician_flag,
+        chat_open=contact and chat_open(request, container.clock.now()),
+        can_contact=contact,
+        completed_at=request.completed_at,
+    )
+
+
+def message_out(message: Message) -> MessageOut:
+    return MessageOut.model_validate(message)

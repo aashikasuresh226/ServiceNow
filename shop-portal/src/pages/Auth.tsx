@@ -1,6 +1,7 @@
 /**
- * Sign in / create account with Google or email + password, then the mandatory
- * authenticator-app code (2-step verification) on every shop account.
+ * Sign in / create account with Google or email + password. A new email address is
+ * proven with a link (sent by Firebase), then the mandatory authenticator-app code
+ * (2-step verification) on every shop account.
  */
 import QRCode from 'qrcode';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -11,8 +12,34 @@ import { GoogleButton } from '../components/GoogleButton';
 import { Icon } from '../components/Icon';
 import { Button, ErrorAlert } from '../components/ui';
 import { api, setTokens } from '../lib/api';
+import { firebaseErrorMessage, sendEmailLink } from '../lib/firebase';
 import { useAction, useOptions } from '../lib/hooks';
-import type { LoginStep } from '../lib/types';
+import type { EmailLink, LoginStep, Options } from '../lib/types';
+
+const PASSWORD_RULES: [string, (p: string) => boolean][] = [
+  ['At least 8 characters', (p) => p.length >= 8],
+  ['A capital letter', (p) => /[A-Z]/.test(p)],
+  ['A number', (p) => /\d/.test(p)],
+  ['A symbol (like ! # $ %)', (p) => /[^A-Za-z0-9]/.test(p)],
+];
+
+export function PasswordChecklist({ password }: { password: string }) {
+  return (
+    <ul className="checklist small" aria-label="Requirements">
+      {PASSWORD_RULES.map(([text, ok]) => {
+        const met = ok(password);
+        return (
+          <li key={text} className={met ? 'met' : ''}>
+            <Icon name={met ? 'check' : 'dot'} size={13} />
+            {text}
+            <span className="sr-only">{met ? ' (done)' : ' (needed)'}</span>
+          </li>
+        );
+      })}
+      <li className="muted">Not a common or leaked password (checked when you continue)</li>
+    </ul>
+  );
+}
 
 function Hero() {
   return (
@@ -56,6 +83,9 @@ export function AuthPage() {
   const googleClientId = options?.features.google_client_id;
   const canUseGoogle = mode === 'login' || shopName.trim().length >= 2;
 
+  if (step?.step === 'verify_email') {
+    return <VerifyEmailStep step={step} options={options} onNext={setStep} onBack={() => setStep(null)} />;
+  }
   if (step?.step === 'mfa') {
     return <MfaVerify step={step} onDone={() => navigate('/', { replace: true })} onBack={() => setStep(null)} />;
   }
@@ -87,8 +117,8 @@ export function AuthPage() {
             <label htmlFor="password">Password</label>
             <input id="password" className="input" type="password" value={password}
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              onChange={(e) => setPassword(e.target.value)} required minLength={mode === 'signup' ? 12 : 1} />
-            {mode === 'signup' ? <span className="small muted">At least 12 characters</span> : null}
+              onChange={(e) => setPassword(e.target.value)} required minLength={mode === 'signup' ? 8 : 1} />
+            {mode === 'signup' ? <PasswordChecklist password={password} /> : null}
           </div>
           <ErrorAlert message={submit.error} />
           <Button type="submit" variant="primary" busy={submit.busy}>
@@ -111,6 +141,84 @@ export function AuthPage() {
           ) : null}
           <p className="row small muted"><Icon name="shield" size={14} color="var(--primary)" /> 2-step verification is required on every shop account</p>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/** "Check your email": the link is sent by Firebase (or shown on screen in development).
+ * This tab waits, so the link can be opened on a phone too. */
+function VerifyEmailStep({ step, options, onNext, onBack }: {
+  step: LoginStep;
+  options: Options | null;
+  onNext: (next: LoginStep) => void;
+  onBack: () => void;
+}) {
+  const [link, setLink] = useState(step.email_link);
+  const [sent, setSent] = useState(false);
+  const firebase = options?.features.firebase ?? null;
+  const send = useAction(async (target: EmailLink | null = link) => {
+    if (!target || target.delivery !== 'firebase') return;
+    if (!firebase) throw new Error('Firebase is not configured');
+    try {
+      await sendEmailLink(firebase, target);
+    } catch (e) {
+      throw new Error(firebaseErrorMessage(e));
+    }
+    setSent(true);
+  });
+  const resend = useAction(async () => {
+    const next = await api.resendEmail(step.token);
+    if (next.step !== 'verify_email') return onNext(next);
+    setLink(next.email_link);
+    await send.run(next.email_link);
+  });
+  const sentOnce = useRef(false);
+  useEffect(() => {
+    if (sentOnce.current || !options) return;
+    sentOnce.current = true;
+    void send.run();
+  }, [options, send]);
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.setupStatus(step.token);
+        if (next.step !== 'verify_email') onNext(next);
+      } catch {
+        // keep waiting; the link may still be opened
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [step.token, onNext]);
+
+  const email = link?.email ?? 'your email';
+  return (
+    <div className="auth-page">
+      <div className="card stack" style={{ maxWidth: 460, width: '100%', padding: 28 }}>
+        <span className="stat-icon" style={{ background: 'var(--primary-soft)', color: 'var(--primary)' }}>
+          <Icon name="mail" size={22} />
+        </span>
+        <h1>Check your email</h1>
+        {link?.delivery === 'development' ? (
+          <>
+            <p className="muted">Email sending isn't set up yet (Firebase), so here is the link we would have emailed to <strong>{email}</strong>.</p>
+            <p className="row small"><span className="badge amber">TEST MODE</span> Opening it confirms the address.</p>
+            {link.dev_link ? (
+              <a className="btn primary" href={link.dev_link} target="_blank" rel="noreferrer">Open the verification link</a>
+            ) : null}
+          </>
+        ) : (
+          <p className="muted">
+            {sent ? 'We sent a link to ' : 'Sending a link to '}<strong>{email}</strong>. Open it on any device to confirm
+            the address. This page continues on its own.
+          </p>
+        )}
+        <ErrorAlert message={send.error ?? resend.error} />
+        <p className="row small muted" style={{ gap: 8 }}><span className="spinner" aria-hidden="true" /> Waiting for you to open the link…</p>
+        <div className="row between small">
+          <a href="#back" onClick={(e) => { e.preventDefault(); onBack(); }}>Use a different account</a>
+          <Button size="small" busy={resend.busy} onClick={() => resend.run()}>Send a new link</Button>
+        </div>
       </div>
     </div>
   );

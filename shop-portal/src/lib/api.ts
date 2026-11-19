@@ -3,8 +3,11 @@ import type {
   CalendarLink,
   Dashboard,
   Readiness,
+  EmailLink,
   Job,
   LoginStep,
+  Message,
+  TechPermissions,
   Options,
   ShopMe,
   TechDay,
@@ -126,6 +129,14 @@ export const api = {
   googleNonce: () => request<{ nonce: string }>('POST', '/auth/google/nonce'),
   google: (id_token: string, shop_name?: string) =>
     request<LoginStep>('POST', '/auth/shop/google', shop_name ? { id_token, shop_name } : { id_token }),
+  setupStatus: (setupToken: string) =>
+    request<LoginStep>('GET', '/auth/shop/setup-status', undefined, { token: setupToken }),
+  resendEmail: (setupToken: string) =>
+    request<LoginStep>('POST', '/auth/shop/resend-email', undefined, { token: setupToken }),
+  emailProofInfo: (token: string) =>
+    request<{ email: string; purpose: string }>('GET', `/auth/email-proof/${encodeURIComponent(token)}`),
+  verifyShopEmail: (token: string, firebase_id_token?: string) =>
+    request<void>('POST', '/auth/shop/verify-email', { token, firebase_id_token }),
   loginMfa: (token: string, code: string) =>
     request<Tokens>('POST', '/auth/shop/login/mfa', { token, code }),
   enrollMfa: (setupToken: string) =>
@@ -157,6 +168,10 @@ export const api = {
   markBusy: (id: string, minutes: number) =>
     request<Technician>('POST', `/shop/technicians/${id}/busy`, { minutes }),
   clearBusy: (id: string) => request<Technician>('DELETE', `/shop/technicians/${id}/busy`),
+  inviteTechnician: (id: string, email: string, permissions: TechPermissions) =>
+    request<{ technician: Technician; email_link: EmailLink }>(
+      'POST', `/shop/technicians/${id}/invite`, { email, ...permissions }),
+  removeAppAccess: (id: string) => request<Technician>('DELETE', `/shop/technicians/${id}/app-access`),
   importTechnicians: () => request<{ count: number }>('POST', '/shop/technicians/import'),
 
   calendarLink: (id: string, rotate = false) =>
@@ -177,4 +192,7 @@ export const api = {
   quote: (id: string, final_price_cents: number, notes: string) =>
     request<Job>('POST', `/shop/jobs/${id}/quote`, { final_price_cents, notes }),
   complete: (id: string) => request<Job>('POST', `/shop/jobs/${id}/complete`),
+  messages: (id: string) => request<Message[]>('GET', `/shop/jobs/${id}/messages`),
+  sendMessage: (id: string, body: string) =>
+    request<Message>('POST', `/shop/jobs/${id}/messages`, { body }),
 };

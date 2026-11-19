@@ -102,4 +102,5 @@ class SchedulingProvider(StrEnum):
 class Actor(StrEnum):
     HOMEOWNER = "homeowner"
     SHOP = "shop"
+    TECHNICIAN = "technician"
     SYSTEM = "system"

@@ -20,7 +20,12 @@ export type Features = {
   /** 'twilio' = codes arrive by text; 'development' = codes are shown on screen. */
   texts: 'twilio' | 'development';
   scheduling_integrations: boolean;
+  /** Emailed links (technician invites): sent by Firebase, or shown on screen in development. */
+  email_links: 'firebase' | 'development';
+  firebase: FirebaseConfig | null;
 };
+
+export type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string; appId?: string };
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number };
 
@@ -94,7 +99,68 @@ export type TechnicianSummary = {
   eta_minutes: number | null;
   /** When the tech is expected: soon, or a later opening (e.g. tomorrow 8:15 AM). */
   arrival_at: string | null;
+  /** Live position: only while the technician is driving to THIS job. */
   location: { lat: number; lng: number } | null;
+  location_updated_at: string | null;
+  /** The technician's own number, only if their company lets them take customer calls. */
+  phone: string | null;
+  can_message: boolean;
+};
+
+export type Message = {
+  id: string;
+  sender: 'homeowner' | 'technician' | 'shop';
+  sender_name: string | null;
+  body: string;
+  created_at: string;
+};
+
+// --- Technician app ---------------------------------------------------------------------------
+export type TechMe = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  shop_name: string;
+  shop_phone: string | null;
+  can_respond_offers: boolean;
+  can_contact_customers: boolean;
+  schedule_view: 'full' | 'next';
+};
+
+export type TechJob = {
+  id: string;
+  status: RequestStatus;
+  arrival_at: string | null;
+  offer_expires_at: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  address: string | null;
+  area_label: string;
+  distance_km: number | null;
+  symptoms: string[];
+  description: string | null;
+  photos: { id: string; url: string }[];
+  unit: ServiceRequest['unit'];
+  diagnosis: ServiceRequest['diagnosis'];
+  quote: { final_price_cents: number; notes: string | null } | null;
+  approved: boolean;
+  technician_flag: string | null;
+  chat_open: boolean;
+  can_contact: boolean;
+  completed_at: string | null;
+};
+
+export type TechBoard = { offers: TechJob[]; jobs: TechJob[]; hidden_jobs: number; recent: TechJob[] };
+
+export type InviteInfo = {
+  shop_name: string;
+  technician_name: string;
+  email: string;
+  email_verified: boolean;
+  can_respond_offers: boolean;
+  can_contact_customers: boolean;
+  schedule_view: 'full' | 'next';
 };
 
 export type ServiceRequest = {
@@ -129,6 +195,8 @@ export type ServiceRequest = {
   preferred_shop_id: string | null;
   preferred_technician_id: string | null;
   canceled_reason: string | null;
+  /** Messages with the shop / technician are open (from acceptance until 48 h after the job). */
+  chat_open: boolean;
   completed_at: string | null;
 };
 

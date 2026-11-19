@@ -8,12 +8,17 @@ import { API_URL } from './config';
 import type {
   CardSetup,
   Homeowner,
+  InviteInfo,
+  Message,
   Options,
   OtpStarted,
   Providers,
   PublicProvider,
   ShareInfo,
   ServiceRequest,
+  TechBoard,
+  TechJob,
+  TechMe,
   Tokens,
 } from './types';
 
@@ -177,8 +182,48 @@ export const api = {
   confirm: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/confirm`),
   approveQuote: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/approve-quote`),
   cancel: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/cancel`),
+  messages: (id: string) => request<Message[]>('GET', `/requests/${id}/messages`),
+  sendMessage: (id: string, body: string) =>
+    request<Message>('POST', `/requests/${id}/messages`, { body }),
   rate: (id: string, ratings: { technician_rating?: number; shop_rating?: number; review?: string }) =>
     request<ServiceRequest>('POST', `/requests/${id}/rating`, ratings),
+};
+
+/** Technician app. */
+export const techApi = {
+  inviteInfo: (token: string) =>
+    request<InviteInfo>('GET', `/auth/technician/invite/${encodeURIComponent(token)}`, undefined, { auth: false }),
+  verifyInviteEmail: (token: string, firebase_id_token?: string) =>
+    request<{ claim: string }>('POST', '/auth/technician/invite/verify-email',
+      { token, firebase_id_token }, { auth: false }),
+  invitePhone: (token: string, claim: string, phone: string) =>
+    request<OtpStarted>('POST', '/auth/technician/invite/phone', { token, claim, phone }, { auth: false }),
+  acceptInvite: (data: { token: string; claim: string; phone?: string; code?: string; google_id_token?: string }) =>
+    request<Tokens>('POST', '/auth/technician/invite/accept', data, { auth: false }),
+  startOtp: (phone: string) =>
+    request<OtpStarted>('POST', '/auth/technician/otp/start', { phone }, { auth: false }),
+  verifyOtp: (phone: string, code: string) =>
+    request<Tokens>('POST', '/auth/technician/otp/verify', { phone, code }, { auth: false }),
+  google: (id_token: string) =>
+    request<Tokens>('POST', '/auth/technician/google', { id_token }, { auth: false }),
+
+  me: () => request<TechMe>('GET', '/tech/me'),
+  board: () => request<TechBoard>('GET', '/tech/jobs'),
+  job: (id: string) => request<TechJob>('GET', `/tech/jobs/${id}`),
+  accept: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/accept`),
+  decline: (id: string, reason?: string) => request<void>('POST', `/tech/jobs/${id}/decline`, { reason }),
+  cantMakeIt: (id: string, reason?: string) =>
+    request<TechJob>('POST', `/tech/jobs/${id}/cant-make-it`, { reason }),
+  startDriving: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/start-driving`),
+  location: (id: string, lat: number, lng: number, accuracy_m?: number | null) =>
+    request<void>('PUT', `/tech/jobs/${id}/location`, { lat, lng, accuracy_m: accuracy_m ?? null }),
+  arrived: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/arrived`),
+  quote: (id: string, final_price_cents: number, notes: string) =>
+    request<TechJob>('POST', `/tech/jobs/${id}/quote`, { final_price_cents, notes }),
+  complete: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/complete`),
+  messages: (id: string) => request<Message[]>('GET', `/tech/jobs/${id}/messages`),
+  sendMessage: (id: string, body: string) =>
+    request<Message>('POST', `/tech/jobs/${id}/messages`, { body }),
 };
 
 export type UnitUpdate = {

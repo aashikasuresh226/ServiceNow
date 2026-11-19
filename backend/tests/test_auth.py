@@ -8,7 +8,15 @@ import pyotp
 from app.container import Container
 from app.core.clock import FrozenClock
 from app.integrations.payments.fake import FakePaymentGateway
-from tests.conftest import SHOP_PASSWORD, SeededShop, analyzed_request, homeowner_login
+from tests.conftest import (
+    SHOP_PASSWORD,
+    STRONG_PASSWORD,
+    SeededShop,
+    analyzed_request,
+    homeowner_login,
+    signup_shop,
+    token_from_link,
+)
 
 
 async def test_wrong_otp_then_lockout(client: httpx.AsyncClient) -> None:
@@ -56,29 +64,70 @@ async def test_homeowners_cannot_see_each_others_requests(
     assert (await client.get(f"/requests/{rid}", headers=bob)).status_code == 404
 
 
-async def test_shop_signup_requires_2step_before_access(
+async def test_shop_signup_requires_email_then_2step_before_access(
     client: httpx.AsyncClient, clock: FrozenClock
 ) -> None:
     r = await client.post(
         "/auth/shop/signup",
         json={
             "email": "Owner@NewShop.example.com",
-            "password": "a-very-long-password",
+            "password": STRONG_PASSWORD,
             "shop_name": "New",
         },
     )
     assert r.status_code == 201
-    setup_token = {"Authorization": f"Bearer {r.json()['token']}"}
+    body = r.json()
+    assert body["step"] == "verify_email"
+    assert body["email_link"]["delivery"] == "development"
+    setup_token = {"Authorization": f"Bearer {body['token']}"}
     # The setup token can't reach shop endpoints.
     assert (await client.get("/shop/me", headers=setup_token)).status_code == 401
+    # Still waiting for the link to be opened.
+    status = (await client.get("/auth/shop/setup-status", headers=setup_token)).json()
+    assert status["step"] == "verify_email"
+    # 2-step can be enrolled, but the account stays locked until the email is proven.
     enrolled = (await client.post("/auth/shop/mfa/enroll", headers=setup_token)).json()
     code = pyotp.TOTP(enrolled["secret"]).at(clock.now())
     tokens = (
         await client.post("/auth/shop/mfa/activate", headers=setup_token, json={"code": code})
     ).json()
+    locked = await client.get(
+        "/shop/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    assert locked.status_code == 403 and locked.json()["error"]["code"] == "email_unverified"
+
+    token = token_from_link(body["email_link"]["dev_link"])
+    info = (await client.get(f"/auth/email-proof/{token}")).json()
+    assert info == {"email": "owner@newshop.example.com", "purpose": "shop_email"}
+    assert (await client.post("/auth/shop/verify-email", json={"token": token})).status_code == 204
+    # The link works once.
+    assert (await client.post("/auth/shop/verify-email", json={"token": token})).status_code == 404
     me = await client.get("/shop/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
     assert me.status_code == 200
     assert me.json()["user_email"] == "owner@newshop.example.com"
+
+
+async def test_password_rules(client: httpx.AsyncClient) -> None:
+    for weak, why in (
+        ("Short1!", "8 characters"),
+        ("alllowercase1!", "capital"),
+        ("NoNumbers!!", "number"),
+        ("NoSymbols123", "symbol"),
+        ("Password1!", "too common"),
+        ("P@ssw0rd99", "too common"),
+    ):
+        r = await client.post(
+            "/auth/shop/signup",
+            json={"email": "weak@shop.example.com", "password": weak, "shop_name": "Weak Air"},
+        )
+        assert r.status_code == 400, weak
+        assert why in r.json()["error"]["message"], (weak, r.json())
+    r = await client.post(
+        "/auth/shop/signup",
+        json={"email": "someone@gmial.com", "password": STRONG_PASSWORD, "shop_name": "Typo Air"},
+    )
+    assert r.json()["error"]["code"] == "email_typo"
+    assert "gmail.com" in r.json()["error"]["message"]
 
 
 async def test_shop_login_rejects_bad_password_and_code(
@@ -105,24 +154,7 @@ async def test_homeowner_token_cannot_call_shop_api(client: httpx.AsyncClient) -
 async def test_go_live_requires_payouts(
     client: httpx.AsyncClient, clock: FrozenClock, container: Container
 ) -> None:
-    r = await client.post(
-        "/auth/shop/signup",
-        json={
-            "email": "x@shop.example.com",
-            "password": "a-very-long-password",
-            "shop_name": "X Air",
-        },
-    )
-    setup = {"Authorization": f"Bearer {r.json()['token']}"}
-    secret = (await client.post("/auth/shop/mfa/enroll", headers=setup)).json()["secret"]
-    tokens = (
-        await client.post(
-            "/auth/shop/mfa/activate",
-            headers=setup,
-            json={"code": pyotp.TOTP(secret).at(clock.now())},
-        )
-    ).json()
-    shop = {"Authorization": f"Bearer {tokens['access_token']}"}
+    shop = await signup_shop(client, clock, "x@shop.example.com", "X Air")
     r = await client.put("/shop/live", headers=shop, json={"is_live": True})
     assert r.status_code == 409
     assert "payout" in r.json()["error"]["message"]
@@ -151,7 +183,7 @@ async def test_go_live_requires_payouts(
 async def test_validation_errors_use_standard_shape(client: httpx.AsyncClient) -> None:
     r = await client.post(
         "/auth/shop/signup",
-        json={"email": "not-an-email", "password": "short", "shop_name": "Ok Shop"},
+        json={"email": "not-an-email", "password": "", "shop_name": "Ok Shop"},
     )
     assert r.status_code == 422
     error = r.json()["error"]

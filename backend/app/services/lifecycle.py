@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.enums import Actor, RequestStatus
 from app.domain.state_machine import ensure_transition
-from app.models import RequestEvent, ServiceRequest
+from app.models import RequestEvent, ServiceRequest, TechLocation
 
 
 def transition(
@@ -41,3 +43,19 @@ def clear_assignment(request: ServiceRequest) -> None:
     request.proposal_expires_at = None
     request.offer_expires_at = None
     request.eta_at = None
+
+
+async def clear_live_location(session: AsyncSession, request: ServiceRequest) -> None:
+    """Live location exists only while the technician drives to this job."""
+    if request.live_location is not None:
+        request.live_location = None  # delete-orphan removes the row when flushed
+
+
+async def purge_stale_locations(session: AsyncSession, request_ids_en_route: set[uuid.UUID]) -> int:
+    """Worker safety net: drop any location whose job is no longer en route."""
+    result = await session.execute(
+        delete(TechLocation).where(TechLocation.request_id.not_in(request_ids_en_route))
+        if request_ids_en_route
+        else delete(TechLocation)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)

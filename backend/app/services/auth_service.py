@@ -3,8 +3,10 @@
 Homeowners: "Continue with Google" or a one-time code texted to their phone
 (Twilio Verify). Google users then verify a phone number too, so technicians
 can reach them.
-Shop users: "Continue with Google" or email + password, always followed by a
-mandatory authenticator-app code (TOTP).
+Shop users: "Continue with Google" or email + password (the email is proven with a
+link first), always followed by a mandatory authenticator-app code (TOTP).
+Technicians: invited by their company by email; they prove the email, then sign in
+with a texted code or Google.
 All sessions use short-lived access tokens + rotating refresh tokens.
 """
 
@@ -18,7 +20,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
-from app.core.errors import AppError, Conflict, NotFound, RateLimited, Unauthorized
+from app.core import passwords
+from app.core.config import Environment
+from app.core.errors import AppError, Conflict, Forbidden, NotFound, RateLimited, Unauthorized
+from app.core.fieldcrypt import blind_index
 from app.core.security import (
     DUMMY_PASSWORD_HASH,
     Role,
@@ -36,10 +41,11 @@ from app.core.security import (
     verify_totp,
 )
 from app.integrations.google_auth import GoogleIdentity
-from app.models import AuthNonce, Homeowner, PhoneOtp, RefreshToken, Shop, ShopUser
+from app.models import AuthNonce, Homeowner, PhoneOtp, RefreshToken, Shop, ShopUser, Technician
+from app.services.email_check import check_email
+from app.services.email_proof import EmailLink, EmailProofService
 from app.services.phone import normalize_phone
 
-MIN_PASSWORD_LENGTH = 12
 APP_NAME = "HVAC Connect"
 NONCE_TTL = timedelta(minutes=10)
 # Per-IP ceilings (on top of the per-number limits stored in the database).
@@ -52,6 +58,15 @@ class SessionTokens:
     access_token: str
     refresh_token: str
     expires_in: int
+
+
+@dataclass(frozen=True, slots=True)
+class ShopStep:
+    """Where a shop user is in sign-up / sign-in: verify_email -> mfa_setup | mfa."""
+
+    step: str
+    token: str
+    email_link: EmailLink | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,9 +120,14 @@ class AuthService:
         shop_id = None
         if role == Role.SHOP_USER:
             user = await self.s.get(ShopUser, stored.subject_id)
-            if user is None or not user.mfa_enabled:
+            if user is None or not user.mfa_enabled or user.email_verified_at is None:
                 raise Unauthorized("Please sign in again", code="session_ended")
             shop_id = user.shop_id
+        elif role == Role.TECHNICIAN:
+            tech = await self.s.get(Technician, stored.subject_id)
+            if tech is None or tech.app_status != "active" or not tech.is_active:
+                raise Unauthorized("Please sign in again", code="session_ended")
+            shop_id = tech.shop_id
         elif await self.s.get(Homeowner, stored.subject_id) is None:
             raise Unauthorized("Please sign in again", code="session_ended")
 
@@ -153,8 +173,9 @@ class AuthService:
         phone = self._normalize_allowed(raw_phone)
         self.limit_ip(ip, "otp")
         now = self.c.clock.now()
+        key = _phone_key(phone)
         latest = await self.s.scalar(
-            select(PhoneOtp).where(PhoneOtp.phone == phone).order_by(PhoneOtp.created_at.desc())
+            select(PhoneOtp).where(PhoneOtp.phone == key).order_by(PhoneOtp.created_at.desc())
         )
         cooldown = self.settings.otp_resend_cooldown_seconds
         if latest and (wait := cooldown - (now - latest.created_at).total_seconds()) > 0:
@@ -162,13 +183,13 @@ class AuthService:
         sent_last_hour = await self.s.scalar(
             select(func.count())
             .select_from(PhoneOtp)
-            .where(PhoneOtp.phone == phone, PhoneOtp.created_at > now - timedelta(hours=1))
+            .where(PhoneOtp.phone == key, PhoneOtp.created_at > now - timedelta(hours=1))
         )
         if (sent_last_hour or 0) >= self.settings.otp_max_per_hour:
             raise RateLimited("Too many codes requested. Please try again later.")
 
         record = PhoneOtp(
-            phone=phone,
+            phone=key,
             expires_at=now + timedelta(minutes=self.settings.otp_ttl_minutes),
             created_at=now,  # rate limits compare against the injected clock
         )
@@ -196,7 +217,9 @@ class AuthService:
         otp = await self.s.scalar(
             select(PhoneOtp)
             .where(
-                PhoneOtp.phone == phone, PhoneOtp.consumed_at.is_(None), PhoneOtp.expires_at > now
+                PhoneOtp.phone == _phone_key(phone),
+                PhoneOtp.consumed_at.is_(None),
+                PhoneOtp.expires_at > now,
             )
             .order_by(PhoneOtp.created_at.desc())
         )
@@ -235,7 +258,9 @@ class AuthService:
         self.limit_ip(ip)
         phone = self._normalize_allowed(raw_phone)
         await self._check_phone_code(phone, code)
-        homeowner = await self.s.scalar(select(Homeowner).where(Homeowner.phone == phone))
+        homeowner = await self.s.scalar(
+            select(Homeowner).where(Homeowner.phone_hash == _phone_key(phone))
+        )
         if homeowner is None:
             homeowner = Homeowner(phone=phone)
             self.s.add(homeowner)
@@ -262,7 +287,9 @@ class AuthService:
         return homeowner
 
     async def _ensure_phone_free(self, homeowner: Homeowner, phone: str) -> None:
-        owner = await self.s.scalar(select(Homeowner.id).where(Homeowner.phone == phone))
+        owner = await self.s.scalar(
+            select(Homeowner.id).where(Homeowner.phone_hash == _phone_key(phone))
+        )
         if owner is not None and owner != homeowner.id:
             raise Conflict(
                 "This number belongs to another account. Sign out and continue with your "
@@ -308,7 +335,9 @@ class AuthService:
         )
         if homeowner is None:
             homeowner = await self.s.scalar(
-                select(Homeowner).where(Homeowner.email == identity.email)
+                select(Homeowner).where(
+                    Homeowner.email_hash == blind_index("email", identity.email)
+                )
             )
             if homeowner is not None and homeowner.google_sub not in (None, identity.subject):
                 raise Conflict("This email is linked to another Google account", code="email_taken")
@@ -327,7 +356,7 @@ class AuthService:
 
     async def google_shop(
         self, id_token: str, *, shop_name: str | None, ip: str | None = None
-    ) -> tuple[ShopUser, str, TokenType]:
+    ) -> ShopStep:
         """Google sign-in for shops. Still requires the authenticator-app code afterwards."""
         self.limit_ip(ip)
         identity = await self._verify_google(id_token)
@@ -339,7 +368,7 @@ class AuthService:
                     raise Conflict(
                         "This email is linked to another Google account", code="email_taken"
                     )
-                user.google_sub = identity.subject  # Google verified this email address
+                user.google_sub = identity.subject
         if user is None:
             if not shop_name or not shop_name.strip():
                 raise NotFound(
@@ -356,19 +385,22 @@ class AuthService:
                 name=identity.name,
             )
             self.s.add(user)
+        # Google verified this email address.
+        user.email_verified_at = user.email_verified_at or self.c.clock.now()
         await self.s.flush()
-        kind = TokenType.MFA if user.mfa_enabled else TokenType.MFA_SETUP
-        return user, self._limited_token(user, kind), kind
+        return await self._shop_step(user)
 
     # --- Shop users: password + TOTP ------------------------------------------------
     async def shop_signup(
         self, *, email: str, password: str, shop_name: str, name: str | None
-    ) -> tuple[ShopUser, str]:
-        email = email.strip().lower()
-        if len(password) < MIN_PASSWORD_LENGTH:
-            raise Conflict(
-                f"Password must be at least {MIN_PASSWORD_LENGTH} characters", code="weak_password"
-            )
+    ) -> ShopStep:
+        email = await check_email(email, check_dns=self.settings.environment != Environment.TEST)
+        await passwords.ensure_strong(
+            password,
+            http=self.c.http,
+            check_breaches=self.settings.password_breach_check
+            and self.settings.environment != Environment.TEST,
+        )
         if await self.s.scalar(select(ShopUser.id).where(ShopUser.email == email)):
             raise Conflict("An account with this email already exists", code="email_taken")
         shop = Shop(name=shop_name.strip())
@@ -379,11 +411,9 @@ class AuthService:
         )
         self.s.add(user)
         await self.s.flush()
-        return user, self._limited_token(user, TokenType.MFA_SETUP)
+        return await self._shop_step(user)
 
-    async def shop_login(
-        self, *, email: str, password: str, ip: str | None = None
-    ) -> tuple[ShopUser, str, TokenType]:
+    async def shop_login(self, *, email: str, password: str, ip: str | None = None) -> ShopStep:
         self.limit_ip(ip)
         user = await self.s.scalar(select(ShopUser).where(ShopUser.email == email.strip().lower()))
         # Verify against a dummy hash when the user doesn't exist, so response
@@ -392,8 +422,43 @@ class AuthService:
         ok = verify_password(password, stored)
         if user is None or not user.password_hash or not ok:
             raise Unauthorized("Email or password is incorrect", code="bad_credentials")
-        kind = TokenType.MFA if user.mfa_enabled else TokenType.MFA_SETUP
-        return user, self._limited_token(user, kind), kind
+        return await self._shop_step(user)
+
+    async def _shop_step(self, user: ShopUser, *, send_email: bool = True) -> ShopStep:
+        """Next step for a shop user who passed the first factor (password or Google)."""
+        if user.email_verified_at is None:
+            link = (
+                await EmailProofService(self.s, self.c).start(
+                    purpose="shop_email",
+                    subject_id=user.id,
+                    email=user.email,
+                    page_url=f"{self.settings.public_web_url}/verify-email",
+                )
+                if send_email
+                else None
+            )
+            return ShopStep("verify_email", self._limited_token(user, TokenType.MFA_SETUP), link)
+        if user.mfa_enabled:
+            return ShopStep("mfa", self._limited_token(user, TokenType.MFA))
+        return ShopStep("mfa_setup", self._limited_token(user, TokenType.MFA_SETUP))
+
+    async def resend_shop_email(self, user: ShopUser) -> ShopStep:
+        self.c.rate_limiter.check("email_link", str(user.id), limit=5, window_seconds=3600)
+        return await self._shop_step(user)
+
+    async def shop_setup_status(self, user: ShopUser) -> ShopStep:
+        """Polled by the sign-up tab while the person opens the email link elsewhere."""
+        return await self._shop_step(user, send_email=False)
+
+    async def verify_shop_email(self, token: str, firebase_id_token: str | None) -> ShopUser:
+        proof = EmailProofService(self.s, self.c)
+        claim = await proof.prove(token, "shop_email", firebase_id_token)
+        challenge = await proof.consume(token, "shop_email", claim)
+        user = await self.s.get(ShopUser, challenge.subject_id)
+        if user is None or user.email != challenge.email:
+            raise NotFound("This account no longer exists")
+        user.email_verified_at = self.c.clock.now()
+        return user
 
     def _limited_token(self, user: ShopUser, kind: TokenType) -> str:
         ttl = timedelta(
@@ -434,6 +499,137 @@ class AuthService:
         secret = self.c.encryptor.decrypt(user.totp_secret_encrypted or "")
         if not verify_totp(secret, code, at=self.c.clock.now()):
             raise Unauthorized("That code isn't right", code="mfa_invalid")
+
+    # --- Technicians ----------------------------------------------------------------------
+    async def invite_info(self, token: str) -> tuple[Technician, Shop, str, bool]:
+        challenge = await EmailProofService(self.s, self.c).get(token, "tech_invite")
+        tech = await self.s.get(Technician, challenge.subject_id)
+        if tech is None or tech.app_status not in ("invited", "active") or not tech.is_active:
+            raise NotFound("This invite was canceled. Ask your company for a new one.")
+        shop = await self.s.get(Shop, tech.shop_id)
+        assert shop is not None
+        return tech, shop, challenge.email, challenge.verified_at is not None
+
+    async def verify_invite_email(self, token: str, firebase_id_token: str | None) -> str:
+        await self.invite_info(token)
+        return await EmailProofService(self.s, self.c).prove(
+            token, "tech_invite", firebase_id_token
+        )
+
+    async def start_invite_phone(
+        self, token: str, claim: str, raw_phone: str, *, ip: str | None
+    ) -> OtpStarted:
+        tech, *_ = await self.invite_info(token)
+        proof = EmailProofService(self.s, self.c)
+        proof.check_claim(await proof.get(token, "tech_invite"), claim)
+        phone = self._normalize_allowed(raw_phone)
+        await self._ensure_tech_phone_free(tech, phone)
+        return await self.start_phone_otp(phone, ip=ip)
+
+    async def accept_invite(
+        self,
+        token: str,
+        claim: str,
+        *,
+        phone: str | None = None,
+        code: str | None = None,
+        google_id_token: str | None = None,
+        ip: str | None = None,
+    ) -> SessionTokens:
+        self.limit_ip(ip)
+        tech, _shop, email, _ = await self.invite_info(token)
+        proof = EmailProofService(self.s, self.c)
+        proof.check_claim(await proof.get(token, "tech_invite"), claim)
+        if google_id_token:
+            identity = await self._verify_google(google_id_token)
+            if identity.email != email.lower():
+                raise Unauthorized(
+                    f"Use the Google account for {email}, the address you were invited at.",
+                    code="email_mismatch",
+                )
+            other = await self.s.scalar(
+                select(Technician.id).where(Technician.google_sub == identity.subject)
+            )
+            if other is not None and other != tech.id:
+                raise Conflict("This Google account is already used by another technician")
+            tech.google_sub = identity.subject
+        elif phone and code:
+            normalized = self._normalize_allowed(phone)
+            await self._ensure_tech_phone_free(tech, normalized)
+            await self._check_phone_code(normalized, code)
+            tech.phone = normalized
+        else:
+            raise AppError("Choose how you'll sign in", code="missing_sign_in")
+        await proof.consume(token, "tech_invite", claim)
+        tech.email = email
+        tech.app_status = "active"
+        tech.joined_at = self.c.clock.now()
+        await self.s.flush()
+        return await self.issue_session(
+            TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
+        )
+
+    async def _ensure_tech_phone_free(self, tech: Technician, phone: str) -> None:
+        other = await self.s.scalar(
+            select(Technician.id).where(
+                Technician.phone_hash == _phone_key(phone),
+                Technician.app_status == "active",
+                Technician.id != tech.id,
+            )
+        )
+        if other is not None:
+            raise Conflict("Another technician account uses this number", code="phone_taken")
+
+    async def _active_tech_by_phone(self, phone: str) -> Technician:
+        tech = await self.s.scalar(
+            select(Technician).where(
+                Technician.phone_hash == _phone_key(phone),
+                Technician.app_status == "active",
+                Technician.is_active.is_(True),
+            )
+        )
+        if tech is None:
+            raise NotFound(
+                "No technician account uses this number. Ask your company to invite you.",
+                code="no_technician_account",
+            )
+        return tech
+
+    async def start_tech_otp(self, raw_phone: str, *, ip: str | None) -> OtpStarted:
+        phone = self._normalize_allowed(raw_phone)
+        self.limit_ip(ip, "otp")
+        await self._active_tech_by_phone(phone)
+        return await self.start_phone_otp(phone, ip=ip)
+
+    async def verify_tech_otp(self, raw_phone: str, code: str, *, ip: str | None) -> SessionTokens:
+        self.limit_ip(ip)
+        phone = self._normalize_allowed(raw_phone)
+        tech = await self._active_tech_by_phone(phone)
+        await self._check_phone_code(phone, code)
+        return await self.issue_session(
+            TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
+        )
+
+    async def google_tech(self, id_token: str, *, ip: str | None) -> SessionTokens:
+        self.limit_ip(ip)
+        identity = await self._verify_google(id_token)
+        tech = await self.s.scalar(
+            select(Technician).where(Technician.google_sub == identity.subject)
+        )
+        if tech is None or tech.app_status != "active" or not tech.is_active:
+            raise Forbidden(
+                "No technician account uses this Google account. Ask your company to invite you.",
+                code="no_technician_account",
+            )
+        return await self.issue_session(
+            TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
+        )
+
+
+def _phone_key(phone: str) -> str:
+    key = blind_index("phone", phone)
+    assert key is not None
+    return key
 
 
 def needs_profile(homeowner: Homeowner) -> bool:

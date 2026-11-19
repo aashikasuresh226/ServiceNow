@@ -41,6 +41,9 @@ const PATHS = {
   mic: ['M5 11a7 7 0 0 0 14 0M12 18v3'],
   logout: ['M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11'],
   plus: ['M12 5v14M5 12h14'],
+  send: ['M4 12l16-8-6 16-2-6z'],
+  navigation: ['M3 11l18-8-8 18-2-8z'],
+  mail: ['M3 6h18v12H3zM3 7l9 6 9-6'],
 } as const;
 
 export type IconName = keyof typeof PATHS;

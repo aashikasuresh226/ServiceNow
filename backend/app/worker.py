@@ -19,9 +19,10 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.container import Container, build_container
 from app.core.config import get_settings
-from app.domain.enums import SchedulingProvider
-from app.models import Shop
+from app.domain.enums import RequestStatus, SchedulingProvider
+from app.models import ServiceRequest, Shop
 from app.services.availability_service import AvailabilityService
+from app.services.lifecycle import purge_stale_locations
 from app.services.matching_service import MatchingService
 
 log = logging.getLogger("app.worker")
@@ -63,6 +64,15 @@ async def _sync_due_shops(container: Container, session: AsyncSession) -> int:
     return synced
 
 
+async def _purge_locations(session: AsyncSession) -> int:
+    en_route = set(
+        await session.scalars(
+            select(ServiceRequest.id).where(ServiceRequest.status == RequestStatus.EN_ROUTE.value)
+        )
+    )
+    return await purge_stale_locations(session, en_route)
+
+
 async def tick(container: Container) -> None:
     await _run_step(
         container, "expire_proposals", lambda s: MatchingService(s, container).expire_proposals()
@@ -74,6 +84,7 @@ async def tick(container: Container) -> None:
     await _run_step(
         container, "process_waitlist", lambda s: MatchingService(s, container).process_waitlist()
     )
+    await _run_step(container, "purge_locations", _purge_locations)
 
 
 async def run_forever(container: Container, stop: asyncio.Event | None = None) -> None:

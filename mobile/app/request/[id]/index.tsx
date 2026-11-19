@@ -10,6 +10,7 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { Icon } from '@/components/icons';
 import type { IconName } from '@/components/icons';
 import { Avatar, RouteMap, Ring } from '@/components/illustrations';
+import { LiveMap } from '@/components/LiveMap';
 import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, Checkbox, ErrorText, Field, KeyValue, Loading, Muted, Row, Screen, Segmented, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -275,24 +276,61 @@ function Stages({ status }: { status: string }) {
   );
 }
 
+/** Message the shop (in the app) and call the shop, or the technician if their company allows. */
+function ContactBar({ request }: { request: ServiceRequest }) {
+  const t = request.technician;
+  if (!t) return null;
+  const call = (phone: string) => Linking.openURL(`tel:${phone}`);
+  return (
+    <View style={{ gap: 8 }}>
+      {request.chat_open ? (
+        <Button label="Message" variant="secondary" icon="chat"
+          onPress={() => router.push(`/request/${request.id}/chat`)} />
+      ) : null}
+      <Row style={{ gap: 8 }}>
+        {t.shop_phone ? (
+          <Button label="Call shop" variant="secondary" icon="phone" style={{ flex: 1 }}
+            accessibilityLabel={`Call ${t.shop_name}`} onPress={() => call(t.shop_phone!)} />
+        ) : null}
+        {t.phone ? (
+          <Button label={`Call ${t.first_name}`} variant="secondary" icon="phone" style={{ flex: 1 }}
+            accessibilityLabel={`Call ${t.name}`} onPress={() => call(t.phone!)} />
+        ) : null}
+      </Row>
+    </View>
+  );
+}
+
 function Tracking({ request, onChange }: Props) {
   const t = request.technician;
   const cancel = useAction(async () => onChange(await api.cancel(request.id)));
   const progress = { dispatched: 0.08, en_route: 0.5, on_site: 1 }[request.status as 'dispatched'] ?? 0;
   const headline = { dispatched: 'Booking confirmed', en_route: 'On the way', on_site: 'Your tech has arrived' }[request.status as 'dispatched'];
+  // The live map appears ONLY while the technician is driving to this home.
+  const live = request.status === 'en_route' ? t?.location : null;
   return (
-    <Screen footer={
-      <Row style={{ gap: 8 }}>
-        <Button label="Message" variant="secondary" icon="chat" style={{ flex: 1 }}
-          onPress={() => t?.shop_phone && Linking.openURL(`sms:${t.shop_phone}`)} />
-        <Button label="Call" variant="secondary" icon="phone" style={{ flex: 1 }}
-          onPress={() => t?.shop_phone && Linking.openURL(`tel:${t.shop_phone}`)} />
-      </Row>
-    }>
+    <Screen footer={<ContactBar request={request} />}>
       <StepHeader onBack={() => router.replace('/home')} />
       <Title>{headline}</Title>
       <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <RouteMap height={190} progress={progress} />
+        {live ? (
+          <>
+            <LiveMap lat={live.lat} lng={live.lng} label={`${t?.first_name ?? 'Technician'}'s location`} />
+            <Row style={{ padding: 10, gap: 6 }}>
+              <View style={styles.liveDot} />
+              <Muted style={{ flex: 1 }}>Live · updated {t?.location_updated_at ? agoLabel(t.location_updated_at) : 'just now'}</Muted>
+            </Row>
+          </>
+        ) : (
+          <>
+            <RouteMap height={190} progress={progress} />
+            {request.status === 'dispatched' ? (
+              <Muted style={{ padding: 10 }}>You'll see {t?.first_name ?? 'your technician'} on a live map once they're on the way to you.</Muted>
+            ) : request.status === 'en_route' ? (
+              <Muted style={{ padding: 10 }}>Waiting for {t?.first_name ?? 'your technician'}'s location…</Muted>
+            ) : null}
+          </>
+        )}
       </Card>
       <Row style={{ gap: 12 }}>
         <Avatar size={44} name={t?.name} />
@@ -312,6 +350,13 @@ function Tracking({ request, onChange }: Props) {
       <ErrorText message={cancel.error} />
     </Screen>
   );
+}
+
+function agoLabel(iso: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 10) return 'just now';
+  if (seconds < 60) return `${seconds} s ago`;
+  return `${Math.round(seconds / 60)} min ago`;
 }
 
 function Quote({ request, onChange }: Props) {
@@ -344,7 +389,7 @@ function Quote({ request, onChange }: Props) {
 
 function InProgress({ request }: Props) {
   return (
-    <Screen>
+    <Screen footer={<ContactBar request={request} />}>
       <StepHeader onBack={() => router.replace('/home')} />
       <Title sub="You approved the price. We'll let you know when it's done.">Repair in progress</Title>
       <Card style={{ alignItems: 'center', gap: 10, paddingVertical: 24 }}>
@@ -499,6 +544,7 @@ function Expired({ request, onChange }: Props) {
 }
 
 const styles = StyleSheet.create({
+  liveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#17A34A' },
   offline: { position: 'absolute', top: 8, alignSelf: 'center', backgroundColor: colors.ink, color: '#FFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, fontSize: 12 },
   avatarRing: { marginTop: -34, borderWidth: 3, borderColor: '#FFF', borderRadius: 32 },
   techName: { fontSize: 17, fontWeight: '800', color: colors.ink },

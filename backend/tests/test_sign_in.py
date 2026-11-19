@@ -242,7 +242,7 @@ async def test_phone_sign_in_through_twilio_verify(container: Container) -> None
 
 
 async def test_only_us_numbers_and_per_ip_limit(client: httpx.AsyncClient) -> None:
-    r = await client.post("/auth/homeowner/otp/start", json={"phone": "+44 7700 900123"})
+    r = await client.post("/auth/homeowner/otp/start", json={"phone": "+44 20 7930 4832"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "phone_not_supported"
     statuses = []
     for i in range(22):

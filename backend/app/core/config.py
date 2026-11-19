@@ -65,6 +65,18 @@ class Settings(BaseSettings):
     # (never faked): photo analysis is skipped, payments aren't collected, etc.
     # "fake" providers exist only for the automated tests (HVAC_ENVIRONMENT=test).
 
+    # Firebase Authentication (free "Spark" plan) emails the links that prove an email
+    # address is real: a shop owner's sign-up email and technician invites. From Firebase
+    # console > Project settings > General > Your apps (Web app config).
+    # Without it (development only) the link is printed in the API window and shown on screen.
+    firebase_api_key: str = ""
+    firebase_project_id: str = ""
+    firebase_auth_domain: str = ""  # default: <project id>.firebaseapp.com
+    firebase_app_id: str = ""
+
+    # Reject passwords found in known data breaches (Have I Been Pwned, free, k-anonymity).
+    password_breach_check: bool = True
+
     # Sign in with Google: OAuth client IDs from Google Cloud Console (comma-separated).
     # The first one is the Web client ID used by the homeowner app and shop portal.
     google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -83,6 +95,9 @@ class Settings(BaseSettings):
     gemini_fallback_models: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash"]
     )
+    # The homeowner waits on this screen: after this many seconds the request continues
+    # without AI ("your technician will diagnose on site") instead of hanging.
+    ai_time_budget_seconds: float = 35.0
     ai_max_concurrency: int = 8  # simultaneous Claude calls per API process
     ai_analyses_per_hour: int = 15  # per homeowner, caps cost from abuse
 
@@ -133,6 +148,22 @@ class Settings(BaseSettings):
     default_job_duration_minutes: int = 90
     scheduling_sync_interval_seconds: int = 300
     worker_tick_seconds: int = 5
+
+    @property
+    def firebase_enabled(self) -> bool:
+        return bool(self.firebase_api_key and self.firebase_project_id)
+
+    @property
+    def firebase_web_config(self) -> dict[str, str] | None:
+        if not self.firebase_enabled:
+            return None
+        return {
+            "apiKey": self.firebase_api_key,
+            "authDomain": self.firebase_auth_domain
+            or f"{self.firebase_project_id}.firebaseapp.com",
+            "projectId": self.firebase_project_id,
+            **({"appId": self.firebase_app_id} if self.firebase_app_id else {}),
+        }
 
     @field_validator(
         "google_client_ids", "sms_allowed_country_codes", "gemini_fallback_models", mode="before"
@@ -197,6 +228,8 @@ class Settings(BaseSettings):
             problems.append("Twilio (HVAC_TWILIO_*) must be configured in prod")
         if self.payments_enabled and not self.stripe_webhook_secret:
             problems.append("HVAC_STRIPE_WEBHOOK_SECRET must be set")
+        if not self.firebase_enabled:
+            problems.append("Firebase (HVAC_FIREBASE_*) must be configured in prod")
         if problems:
             raise RuntimeError("Invalid production configuration: " + "; ".join(problems))
 

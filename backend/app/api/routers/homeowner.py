@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, File, Request, UploadFile, status
 
 from app.api.deps import ContainerDep, HomeownerDep, SessionDep, client_ip
-from app.api.presenters import request_out
+from app.api.presenters import message_out, request_out
 from app.models import ServiceRequest
 from app.schemas.api import (
     CardSetupFinishIn,
@@ -16,6 +16,8 @@ from app.schemas.api import (
     HomeownerOut,
     HomeownerUpdateIn,
     MatchIn,
+    MessageIn,
+    MessageOut,
     OtpStartOut,
     PhoneStartIn,
     PhoneVerifyIn,
@@ -28,6 +30,7 @@ from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
+from app.services.message_service import MessageService
 from app.services.provider_service import ProviderService
 from app.services.request_service import RequestService
 
@@ -245,3 +248,30 @@ async def list_providers(
     """Companies and technicians who can take this request, soonest first."""
     request = await RequestService(session, c).get_for_homeowner(request_id, me)
     return await ProviderService(session, c).options_for(request)
+
+
+# --- Chat with the shop / technician ------------------------------------------------------
+@router.get("/requests/{request_id}/messages", response_model=list[MessageOut])
+async def list_messages(
+    request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> list[MessageOut]:
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    return [message_out(m) for m in await MessageService(session, c).list(request)]
+
+
+@router.post(
+    "/requests/{request_id}/messages",
+    response_model=MessageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_message(
+    request_id: uuid.UUID, body: MessageIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> MessageOut:
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    message = await MessageService(session, c).post(
+        request,
+        sender="homeowner",
+        sender_name=(me.name or "").split(" ")[0] or None,
+        body=body.body,
+    )
+    return message_out(message)

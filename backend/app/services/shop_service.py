@@ -14,6 +14,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
+from app.core.config import Environment
 from app.core.errors import AppError, InvalidState, NotFound
 from app.domain.availability import (
     Block,
@@ -30,8 +31,18 @@ from app.domain.enums import (
     SchedulingProvider,
 )
 from app.integrations.payments.base import PaymentGateway
-from app.models import AvailabilityBlock, ServiceRequest, Shop, ShopUser, Technician
+from app.models import (
+    AvailabilityBlock,
+    RefreshToken,
+    ServiceRequest,
+    Shop,
+    ShopUser,
+    Technician,
+)
 from app.services.availability_service import AvailabilityService
+from app.services.email_check import check_email
+from app.services.email_proof import EmailLink, EmailProofService
+from app.services.phone import normalize_optional_phone
 from app.services.validation import validate_options
 
 PAYOUT_SCHEDULES = {"daily", "weekly", "manual"}
@@ -66,7 +77,7 @@ class ShopService:
                 raise AppError("Shop name can't be empty", code="invalid_name")
             shop.name = name.strip()[:160]
         if phone is not None:
-            shop.phone = phone.strip()[:20] or None
+            shop.phone = normalize_optional_phone(phone)
         if address is not None:
             geo = await self.c.geocoder.geocode(address)
             shop.address = geo.formatted_address
@@ -233,13 +244,67 @@ class ShopService:
             if not 1 <= radius <= 100:
                 raise AppError("Service radius must be 1-100 km", code="invalid_radius")
             tech.service_radius_km = radius
-        for simple in ("phone", "photo_url", "external_id"):
+        if "phone" in data:
+            phone = normalize_optional_phone(data["phone"])
+            if tech.app_status == "active" and phone != tech.phone:
+                raise AppError(
+                    "This technician signs in to the app with their phone number, "
+                    "so only they can change it.",
+                    code="phone_locked",
+                )
+            tech.phone = phone
+        for simple in ("photo_url", "external_id"):
             if simple in data:
                 setattr(tech, simple, (data[simple] or None))
         if data.get("is_active") is not None:
             tech.is_active = bool(data["is_active"])
+        self._apply_permissions(tech, data)
         await self.s.flush()
         return tech
+
+    @staticmethod
+    def _apply_permissions(tech: Technician, data: dict[str, Any]) -> None:
+        for flag in ("can_respond_offers", "can_contact_customers"):
+            if data.get(flag) is not None:
+                setattr(tech, flag, bool(data[flag]))
+        if data.get("schedule_view") is not None:
+            if data["schedule_view"] not in ("full", "next"):
+                raise AppError("Schedule view must be full or next", code="invalid_option")
+            tech.schedule_view = data["schedule_view"]
+
+    async def invite_technician(
+        self, shop: Shop, tech: Technician, email: str, permissions: dict[str, Any]
+    ) -> EmailLink:
+        """Invite a technician to the app by email, with what they're allowed to do."""
+        if tech.app_status == "active":
+            raise InvalidState("This technician already joined the app", code="already_joined")
+        self.c.rate_limiter.check("invite", str(tech.id), limit=5, window_seconds=3600)
+        email = await check_email(email, check_dns=self.c.settings.environment != Environment.TEST)
+        self._apply_permissions(tech, permissions)
+        tech.email = email
+        tech.app_status = "invited"
+        tech.invited_at = self.c.clock.now()
+        link = await EmailProofService(self.s, self.c).start(
+            purpose="tech_invite",
+            subject_id=tech.id,
+            email=email,
+            page_url=f"{self.c.settings.public_app_url}/tech/join",
+        )
+        await self.s.flush()
+        return link
+
+    async def remove_app_access(self, tech: Technician) -> None:
+        """Turn off the technician's app sign-in; their sessions end immediately."""
+        tech.app_status = "disabled" if tech.app_status == "active" else "none"
+        now = self.c.clock.now()
+        rows = await self.s.scalars(
+            select(RefreshToken).where(
+                RefreshToken.subject_id == tech.id, RefreshToken.revoked_at.is_(None)
+            )
+        )
+        for row in rows:
+            row.revoked_at = now
+        await self.s.flush()
 
     async def mark_busy(self, tech: Technician, minutes: int) -> None:
         """Dispatcher blocks a tech's time by hand (lunch, a job booked by phone, etc.)."""

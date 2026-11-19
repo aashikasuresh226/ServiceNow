@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import ssl
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, MetaData, TypeDecorator
+from sqlalchemy import DateTime, MetaData, TypeDecorator, make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -51,11 +52,35 @@ class UTCDateTime(TypeDecorator[datetime]):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-def create_engine(database_url: str) -> AsyncEngine:
-    kwargs: dict[str, Any] = {"pool_pre_ping": True}
+def prepare_database_url(database_url: str) -> tuple[str, dict[str, Any]]:
+    """Accept a connection string as hosted Postgres providers show it (Neon, Supabase, ...):
+    `postgresql://user:pass@host/db?sslmode=require` -> the async driver's URL + TLS settings.
+    TLS certificates are always verified for remote hosts."""
     if database_url.startswith("sqlite"):
-        kwargs = {}
-    return create_async_engine(database_url, **kwargs)
+        return database_url, {}
+    url = make_url(database_url)
+    if url.drivername in ("postgres", "postgresql", "postgresql+psycopg2", "postgresql+psycopg"):
+        url = url.set(drivername="postgresql+asyncpg")
+    query = dict(url.query)
+    sslmode = str(query.pop("sslmode", "") or "")
+    query.pop("channel_binding", None)  # libpq-only option; asyncpg negotiates it itself
+    url = url.set(query=query)
+    connect_args: dict[str, Any] = {}
+    host = url.host or ""
+    local = host in ("", "localhost", "127.0.0.1", "::1")
+    if sslmode in ("require", "verify-ca", "verify-full") or (not local and sslmode != "disable"):
+        connect_args["ssl"] = ssl.create_default_context()
+    if "-pooler" in host:
+        # Connection poolers (PgBouncer) don't support prepared-statement caching.
+        connect_args["statement_cache_size"] = 0
+    return url.render_as_string(hide_password=False), connect_args
+
+
+def create_engine(database_url: str) -> AsyncEngine:
+    url, connect_args = prepare_database_url(database_url)
+    if url.startswith("sqlite"):
+        return create_async_engine(url)
+    return create_async_engine(url, pool_pre_ping=True, pool_recycle=300, connect_args=connect_args)
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

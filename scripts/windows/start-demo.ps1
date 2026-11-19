@@ -11,8 +11,9 @@ function Open-Window($title, $dir, $command) {
   )
 }
 
-# Apply any new database changes (safe to run every time; keeps your data).
+# Private keys (only created if missing), then any new database changes (keeps your data).
 Set-Location $Backend
+.\.venv\Scripts\python.exe -m app.cli secrets
 .\.venv\Scripts\python.exe -m app.cli migrate
 if ($LASTEXITCODE -ne 0) { throw "Database update failed. See the messages above." }
 .\.venv\Scripts\python.exe -m app.cli check
@@ -28,4 +29,5 @@ Start-Sleep -Seconds 12
 Start-Process "http://localhost:8081"
 Write-Host "Shop portal:   http://localhost:5173   (create your shop account)"
 Write-Host "Homeowner app: http://localhost:8081   (sign in with Google or a phone number)"
+Write-Host "Technician app: http://localhost:8081/tech/sign-in   (after the shop invites them)"
 Write-Host "Close the three PowerShell windows to stop everything."

@@ -10,7 +10,6 @@ from dataclasses import replace
 import anthropic
 import httpx
 import httpx2  # the HTTP library the Anthropic SDK uses
-import pyotp
 from PIL import Image
 
 from app.container import Container
@@ -27,7 +26,13 @@ from app.integrations.ai.anthropic_analyzer import (
 from app.integrations.ai.base import PhotoInput
 from app.integrations.geocoding import CensusGeocoder, format_census_address
 from app.main import create_app
-from tests.conftest import SeededShop, analyzed_request, homeowner_login, shop_login
+from tests.conftest import (
+    SeededShop,
+    analyzed_request,
+    homeowner_login,
+    shop_login,
+    signup_shop,
+)
 
 
 async def test_booking_goes_on_the_technicians_calendar(
@@ -108,24 +113,7 @@ async def test_full_job_with_payments_and_ai_switched_off(
         assert features["payments"] is False and features["photo_analysis"] is False
 
         # A brand-new shop can go live with just an address and a technician.
-        r = await client.post(
-            "/auth/shop/signup",
-            json={
-                "email": "owner@realshop.example.com",
-                "password": "a-very-long-password",
-                "shop_name": "Real Shop",
-            },
-        )
-        setup = {"Authorization": f"Bearer {r.json()['token']}"}
-        secret = (await client.post("/auth/shop/mfa/enroll", headers=setup)).json()["secret"]
-        tokens = (
-            await client.post(
-                "/auth/shop/mfa/activate",
-                headers=setup,
-                json={"code": pyotp.TOTP(secret).at(clock.now())},
-            )
-        ).json()
-        shop = {"Authorization": f"Bearer {tokens['access_token']}"}
+        shop = await signup_shop(client, clock, "owner@realshop.example.com", "Real Shop")
         r = await client.patch(
             "/shop/me", headers=shop, json={"address": "@33.755,-84.39 1 Main St, Atlanta, GA"}
         )
@@ -550,7 +538,7 @@ async def test_gemini_analyzer_request_and_errors() -> None:
     )
     result = await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
     assert result.unit.brand == "Carrier"
-    assert calls.count("/v1beta/models/gemini-flash-lite-latest:generateContent") == 3
+    assert calls.count("/v1beta/models/gemini-flash-lite-latest:generateContent") == 2
     assert calls[-1] == "/v1beta/models/gemini-flash-latest:generateContent"
 
     # Every model busy -> a clear message.

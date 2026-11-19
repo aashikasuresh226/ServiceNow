@@ -67,6 +67,7 @@ export default function Photo() {
               </Row>
             ))}
           </View>
+          <Muted style={{ textAlign: 'center' }}>Usually under 15 seconds. If it takes too long, we'll continue and your technician will check on site.</Muted>
         </View>
       </Screen>
     );

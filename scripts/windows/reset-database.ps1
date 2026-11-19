@@ -5,4 +5,6 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")) "backend")
 .\.venv\Scripts\python.exe -m app.cli reset-db
 if ($LASTEXITCODE -ne 0) { throw "Reset failed. Is the API window still open?" }
+# With an empty database this computer can switch to its own private encryption key.
+.\.venv\Scripts\python.exe -m app.cli secrets
 Write-Host "Database is empty. Start again with start-demo.ps1" -ForegroundColor Green

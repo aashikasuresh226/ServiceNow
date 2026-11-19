@@ -131,6 +131,7 @@ async def make_shop(
                 password_hash=hash_password(SHOP_PASSWORD),
                 totp_secret_encrypted=container.encryptor.encrypt(secret),
                 mfa_enabled=True,
+                email_verified_at=datetime.now(UTC),
             )
         )
         ids = []
@@ -201,6 +202,39 @@ async def homeowner_login(
         )
         assert r.json()["payment_method_label"] == "Visa •• 4242"
     return headers
+
+
+STRONG_PASSWORD = "Furnace-Blue-27!"
+
+
+def token_from_link(link: str) -> str:
+    return link.split("?t=", 1)[1]
+
+
+async def signup_shop(
+    client: httpx.AsyncClient, clock: FrozenClock, email: str, shop_name: str
+) -> dict[str, str]:
+    """Sign up -> open the emailed link (development link) -> authenticator app -> signed in."""
+    r = await client.post(
+        "/auth/shop/signup",
+        json={"email": email, "password": STRONG_PASSWORD, "shop_name": shop_name},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["step"] == "verify_email"
+    setup = {"Authorization": f"Bearer {body['token']}"}
+    token = token_from_link(body["email_link"]["dev_link"])
+    r = await client.post("/auth/shop/verify-email", json={"token": token})
+    assert r.status_code == 204, r.text
+    status = (await client.get("/auth/shop/setup-status", headers=setup)).json()
+    assert status["step"] == "mfa_setup"
+    setup = {"Authorization": f"Bearer {status['token']}"}
+    secret = (await client.post("/auth/shop/mfa/enroll", headers=setup)).json()["secret"]
+    r = await client.post(
+        "/auth/shop/mfa/activate", headers=setup, json={"code": pyotp.TOTP(secret).at(clock.now())}
+    )
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 async def shop_login(

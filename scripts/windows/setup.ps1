@@ -40,7 +40,9 @@ Write-Host "Downloading packages (usually 1-3 minutes)..."
 & $VenvPy -m pip install -e . --prefer-binary --disable-pip-version-check; Check "Installing backend packages"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env" }
 
-Step "Creating or updating the database"
+Step "Creating private keys and updating the database"
+# Random secrets for this computer (sign-in tokens + encryption of customer data).
+& $VenvPy -m app.cli secrets; Check "Creating private keys"
 & $VenvPy -m app.cli migrate; Check "Updating the database"
 
 # --- Homeowner app -----------------------------------------------------------------------

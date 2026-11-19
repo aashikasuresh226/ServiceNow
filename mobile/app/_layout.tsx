@@ -11,17 +11,27 @@ import { OptionsContext, useLoadOptions } from '@/lib/hooks';
 
 // 'p' = public company / technician pages opened from shared links.
 const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'p']);
+// Technician screens anyone can open: sign-in and the emailed invite.
+const PUBLIC_TECH_ROUTES = new Set(['sign-in', 'join']);
 
-/** Sends signed-out users to the welcome screen. */
+/** Sends signed-out users to the welcome screen, and each role to its own screens. */
 function AuthGate() {
-  const { ready, tokens } = useAuth();
-  const segments = useSegments();
+  const { ready, tokens, role } = useAuth();
+  const segments = useSegments() as string[];
   const first = segments[0] ?? '';
+  const second = segments[1] ?? '';
+  const isPublic = PUBLIC_ROUTES.has(first) || (first === 'tech' && PUBLIC_TECH_ROUTES.has(second));
 
   useEffect(() => {
     if (!ready) return;
-    if (!tokens && !PUBLIC_ROUTES.has(first)) router.replace('/welcome');
-  }, [ready, tokens, first]);
+    if (!tokens) {
+      if (!isPublic) router.replace(first === 'tech' ? '/tech/sign-in' : '/welcome');
+      return;
+    }
+    if (isPublic || first === 'p') return;
+    if (role === 'technician' && first !== 'tech') router.replace('/tech');
+    if (role === 'homeowner' && first === 'tech') router.replace('/home');
+  }, [ready, tokens, role, first, isPublic]);
 
   if (!ready) return <Loading />;
   return <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }} />;

@@ -22,6 +22,10 @@ dependencies = [
     "pillow>=11",
     # Windows has no system time zone database; zoneinfo needs this package there.
     "tzdata>=2024.1",
+    # Phone number checks (Google's libphonenumber).
+    "phonenumbers>=8.13",
+    # Postgres driver (Neon / any hosted Postgres).
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]

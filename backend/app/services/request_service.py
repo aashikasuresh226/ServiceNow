@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import asdict
@@ -173,13 +174,18 @@ class RequestService:
             PhotoInput(await self.c.storage.read(p.storage_key), p.content_type)
             for p in request.photos
         ]
+        budget = self.c.settings.ai_time_budget_seconds
         try:
-            result = await self.c.analyzer.analyze(
-                symptoms=request.symptoms,
-                description=request.description,
-                photos=photos,
-                current_year=self.c.clock.now().year,
-            )
+            async with asyncio.timeout(budget):
+                result = await self.c.analyzer.analyze(
+                    symptoms=request.symptoms,
+                    description=request.description,
+                    photos=photos,
+                    current_year=self.c.clock.now().year,
+                )
+        except TimeoutError:
+            log.warning("Photo analysis for request %s took over %ss", request.id, budget)
+            return on_site, f"the AI took longer than {int(budget)} seconds"
         except ExternalServiceError as exc:
             log.warning("Photo analysis failed for request %s: %s", request.id, exc.message)
             return on_site, getattr(exc, "reason", None) or exc.message

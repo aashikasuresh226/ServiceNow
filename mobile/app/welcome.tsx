@@ -5,7 +5,7 @@ import { Text, View, useWindowDimensions } from 'react-native';
 import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
 import { HouseIllustration } from '@/components/illustrations';
 import { colors } from '@/components/theme';
-import { Badge, Body, Button, Card, ErrorText, Field, Muted, Row, Screen } from '@/components/ui';
+import { Badge, Body, Button, Card, ErrorText, Field, Muted, Row, Screen, TextLink } from '@/components/ui';
 import { api } from '@/lib/api';
 import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
@@ -51,6 +51,7 @@ export default function Welcome() {
           <Muted style={{ textAlign: 'center', fontSize: 11 }}>
             By continuing you agree to the Terms and Privacy Policy. Message and data rates may apply.
           </Muted>
+          <TextLink label="I'm a technician" color={colors.muted} onPress={() => router.push('/tech/sign-in')} />
         </>
       }
     >

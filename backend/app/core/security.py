@@ -41,6 +41,7 @@ DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(16))
 class Role(StrEnum):
     HOMEOWNER = "homeowner"
     SHOP_USER = "shop_user"
+    TECHNICIAN = "technician"
 
 
 class TokenType(StrEnum):

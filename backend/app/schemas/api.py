@@ -49,7 +49,7 @@ class RefreshIn(Model):
 
 class ShopSignupIn(Model):
     email: EmailStr
-    password: str = Field(min_length=12, max_length=200)
+    password: str = Field(min_length=1, max_length=200)  # rules: core.passwords
     shop_name: str = Field(min_length=2, max_length=160)
     name: str | None = Field(None, max_length=120)
 
@@ -59,9 +59,59 @@ class ShopLoginIn(Model):
     password: str = Field(max_length=200)
 
 
+class EmailLinkOut(Model):
+    """Send `continue_url` to `email` with Firebase (delivery=firebase), or, in development
+    without Firebase, open `dev_link` to stand in for clicking the email."""
+
+    email: str
+    continue_url: str
+    delivery: str
+    dev_link: str | None = None
+
+
 class ShopLoginOut(Model):
-    step: str  # "mfa" (enter code) | "mfa_setup" (enroll 2-step first)
+    # "verify_email" (open the emailed link) | "mfa" (enter code) | "mfa_setup" (enroll first)
+    step: str
     token: str
+    email_link: EmailLinkOut | None = None
+
+
+class EmailProofIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+    firebase_id_token: str | None = Field(None, max_length=4096)
+
+
+class EmailProofInfoOut(Model):
+    email: str
+    purpose: str
+
+
+class InviteInfoOut(Model):
+    shop_name: str
+    technician_name: str
+    email: str
+    email_verified: bool
+    can_respond_offers: bool
+    can_contact_customers: bool
+    schedule_view: str
+
+
+class ClaimOut(Model):
+    claim: str
+
+
+class InvitePhoneIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+    claim: str = Field(min_length=10, max_length=200)
+    phone: str = Field(min_length=7, max_length=20)
+
+
+class InviteAcceptIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+    claim: str = Field(min_length=10, max_length=200)
+    phone: str | None = Field(None, max_length=20)
+    code: str | None = Field(None, max_length=8)
+    google_id_token: str | None = Field(None, max_length=4096)
 
 
 class MfaEnrollOut(Model):
@@ -176,7 +226,12 @@ class TechnicianSummary(Model):
     distance_km: float | None
     eta_minutes: int | None
     arrival_at: datetime | None  # when the tech is expected (now-ish, or e.g. tomorrow 8:15)
+    # Live position: ONLY while this job is en route (null before and after).
     location: dict[str, float] | None
+    location_updated_at: datetime | None = None
+    # Direct number, only if the company lets this technician take customer calls.
+    phone: str | None = None
+    can_message: bool = False
 
 
 class WaitlistInfo(Model):
@@ -227,6 +282,19 @@ class RequestOut(Model):
     preferred_technician_id: uuid.UUID | None = None
     canceled_reason: str | None
     completed_at: datetime | None
+    chat_open: bool = False
+
+
+class MessageOut(Model):
+    id: uuid.UUID
+    sender: str  # homeowner | technician | shop
+    sender_name: str | None
+    body: str
+    created_at: datetime
+
+
+class MessageIn(Model):
+    body: str = Field(min_length=1, max_length=1000)
 
 
 # --- Shop -----------------------------------------------------------------------------------
@@ -293,6 +361,16 @@ class TechnicianIn(Model):
     service_radius_km: float | None = None
     working_hours: dict[str, list[list[str]]] | None = None
     is_active: bool | None = None
+    can_respond_offers: bool | None = None
+    can_contact_customers: bool | None = None
+    schedule_view: str | None = Field(None, pattern="^(full|next)$")
+
+
+class TechInviteIn(Model):
+    email: EmailStr
+    can_respond_offers: bool = True
+    can_contact_customers: bool = True
+    schedule_view: str = Field("full", pattern="^(full|next)$")
 
 
 class TechnicianOut(Model):
@@ -308,6 +386,18 @@ class TechnicianOut(Model):
     is_active: bool
     rating: float | None
     rating_count: int
+    email: str | None = None
+    app_status: str = "none"  # none | invited | active | disabled
+    invited_at: datetime | None = None
+    joined_at: datetime | None = None
+    can_respond_offers: bool = True
+    can_contact_customers: bool = True
+    schedule_view: str = "full"
+
+
+class TechInviteOut(Model):
+    technician: TechnicianOut
+    email_link: EmailLinkOut
 
 
 class BlockOut(Model):
@@ -378,3 +468,59 @@ class ShopJobOut(Model):
     technician_rating: int | None = None
     shop_rating: int | None = None
     review: str | None = None
+    technician_flag: str | None = None  # the technician said they can't make it
+    chat_open: bool = False
+    driving: bool = False  # the technician is sharing their location on the way
+
+
+# --- Technician app -------------------------------------------------------------------------
+class TechMeOut(Model):
+    id: uuid.UUID
+    name: str
+    phone: str | None
+    email: str | None
+    shop_name: str
+    shop_phone: str | None
+    can_respond_offers: bool
+    can_contact_customers: bool
+    schedule_view: str
+
+
+class TechJobOut(Model):
+    id: uuid.UUID
+    status: str
+    arrival_at: datetime | None
+    offer_expires_at: datetime | None
+    customer_name: str | None
+    customer_phone: str | None  # only with permission, after the job is accepted
+    address: str | None  # only after the job is accepted
+    area_label: str
+    distance_km: float | None
+    symptoms: list[str]
+    description: str | None
+    photos: list[PhotoOut]
+    unit: dict[str, Any] | None
+    diagnosis: dict[str, Any] | None
+    quote: QuoteInfo | None
+    approved: bool
+    technician_flag: str | None
+    chat_open: bool
+    can_contact: bool
+    completed_at: datetime | None
+
+
+class TechBoardOut(Model):
+    offers: list[TechJobOut]
+    jobs: list[TechJobOut]
+    hidden_jobs: int
+    recent: list[TechJobOut]
+
+
+class DeclineIn(Model):
+    reason: str | None = Field(None, max_length=200)
+
+
+class LocationIn(Model):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    accuracy_m: float | None = Field(None, ge=0, le=100000)

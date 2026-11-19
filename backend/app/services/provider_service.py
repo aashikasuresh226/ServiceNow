@@ -150,7 +150,7 @@ class ProviderService:
         return {
             "id": shop.id,
             "name": shop.name,
-            "phone": shop.phone,
+            "phone": _pretty_phone(shop.phone),
             "area": city,
             "rating": shop.rating,
             "rating_count": shop.rating_count,
@@ -189,7 +189,7 @@ class ProviderService:
             "shop": {
                 "title": shop.name,
                 "url": self.shop_link(shop.id),
-                "phone": shop.phone,
+                "phone": _pretty_phone(shop.phone),
                 "message": (
                     f"Recommending {shop.name} for HVAC repairs{shop_stars}.{call} book them "
                     f"here: {self.shop_link(shop.id)}"
