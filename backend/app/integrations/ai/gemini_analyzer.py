@@ -24,8 +24,9 @@ from app.integrations.ai.anthropic_analyzer import (
     _extract_json,
     parse_analysis,
     prepare_image,
+    request_text,
 )
-from app.integrations.ai.base import AnalysisResult, PhotoInput
+from app.integrations.ai.base import AnalysisResult, PhotoInput, PriceContext
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class GeminiUnitAnalyzer:
         description: str | None,
         photos: list[PhotoInput],
         current_year: int,
+        price_context: PriceContext | None = None,
     ) -> AnalysisResult:
         parts: list[dict[str, Any]] = []
         images = 0
@@ -74,11 +76,12 @@ class GeminiUnitAnalyzer:
             )
         parts.append(
             {
-                "text": (
-                    f"Current year: {current_year}\n"
-                    f"Photos attached: {images}\n"
-                    f"Symptoms selected: {', '.join(symptoms) or 'none'}\n"
-                    f"Homeowner description: {description or '(none)'}"
+                "text": request_text(
+                    symptoms=symptoms,
+                    description=description,
+                    images=images,
+                    current_year=current_year,
+                    price_context=price_context,
                 )
             }
         )

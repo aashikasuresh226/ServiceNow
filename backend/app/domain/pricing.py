@@ -1,12 +1,13 @@
-"""Price book: turns a diagnosis category into a low-end estimate.
+"""Price book and estimate helpers. All amounts are integer cents.
 
-The AI only classifies the problem; it never invents prices. Prices come from
-this table so they are auditable and easy to tune per market. All amounts are
-integer cents.
+The AI estimates the repair range from the photos and description, anchored on the final
+prices of past jobs on the platform and on this price book (see PriceContext). When the
+AI is off or fails, the price book alone gives the estimate.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.domain.enums import IssueCategory
@@ -48,6 +49,20 @@ class Estimate:
     @property
     def total_low_cents(self) -> int:
         return self.diagnostic_fee_cents + self.repair_low_cents
+
+
+def market_from_address(address: str | None) -> str:
+    """'191 Peachtree St NE, Atlanta, GA 30303' -> 'Atlanta, GA' (no street, no ZIP)."""
+    if not address:
+        return ""
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    if parts and parts[-1].upper() in ("USA", "US", "UNITED STATES"):
+        parts = parts[:-1]
+    if len(parts) >= 3:
+        match = re.match(r"^([A-Za-z]{2})\b", parts[-1])
+        if match:
+            return f"{parts[-2]}, {match.group(1).upper()}"
+    return ""
 
 
 def estimate_for(category: IssueCategory) -> Estimate:

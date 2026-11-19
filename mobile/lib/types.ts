@@ -22,10 +22,7 @@ export type Features = {
   scheduling_integrations: boolean;
   /** Emailed links (technician invites): sent by Firebase, or shown on screen in development. */
   email_links: 'firebase' | 'development';
-  firebase: FirebaseConfig | null;
 };
-
-export type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string; appId?: string };
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number };
 
@@ -178,7 +175,7 @@ export type ServiceRequest = {
   photos: { id: string; url: string }[];
   unit: UnitInfo | null;
   diagnosis: Diagnosis | null;
-  estimate: { diagnostic_fee_cents: number | null; low_cents: number | null };
+  estimate: Estimate;
   require_all_skills: boolean;
   technician: TechnicianSummary | null;
   proposal_expires_at: string | null;
@@ -263,3 +260,12 @@ export type PublicProvider =
 
 export type ShareTarget = { title: string; url: string; message: string; phone?: string | null };
 export type ShareInfo = { technician: ShareTarget; shop: ShareTarget };
+
+/** Visit + repair. high_cents null: the repair is priced on site. */
+export type Estimate = {
+  diagnostic_fee_cents: number | null;
+  low_cents: number | null;
+  high_cents?: number | null;
+  basis?: string | null;
+  source?: 'ai' | 'past_jobs' | 'price_book' | null;
+};

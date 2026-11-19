@@ -13,7 +13,6 @@ import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, Loading, Muted, Row, Screen, Title } from '@/components/ui';
 import { api, techApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { finishEmailLink } from '@/lib/firebase';
 import { formatPhone } from '@/lib/format';
 import { useAction, useOptions } from '@/lib/hooks';
 import type { InviteInfo } from '@/lib/types';
@@ -39,9 +38,7 @@ export default function JoinAsTechnician() {
       try {
         const invite = await techApi.inviteInfo(token);
         setInfo(invite);
-        const firebase = options.features.firebase;
-        const idToken = firebase ? await finishEmailLink(firebase, invite.email) : undefined;
-        setClaim((await techApi.verifyInviteEmail(token, idToken)).claim);
+        setClaim((await techApi.verifyInviteEmail(token)).claim);
       } catch (e) {
         setFatal(e instanceof Error && e.message ? e.message : 'This invite link is not valid.');
       }

@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from app.domain.enums import Confidence, EquipmentType, IssueCategory, Symptom
-from app.integrations.ai.base import AnalysisResult, Diagnosis, PhotoInput, UnitInfo
+from app.domain.pricing import PRICE_BOOK
+from app.integrations.ai.base import (
+    AnalysisResult,
+    CostEstimate,
+    Diagnosis,
+    PhotoInput,
+    PriceContext,
+    UnitInfo,
+)
 
 _RULES: list[tuple[Symptom, EquipmentType, IssueCategory, list[IssueCategory], str]] = [
     (
@@ -53,6 +61,8 @@ _RULES: list[tuple[Symptom, EquipmentType, IssueCategory, list[IssueCategory], s
 
 
 class FakeUnitAnalyzer:
+    last_price_context: PriceContext | None = None
+
     async def analyze(
         self,
         *,
@@ -60,7 +70,9 @@ class FakeUnitAnalyzer:
         description: str | None,
         photos: list[PhotoInput],
         current_year: int,
+        price_context: PriceContext | None = None,
     ) -> AnalysisResult:
+        self.last_price_context = price_context
         rule = next((r for r in _RULES if r[0].value in symptoms), None)
         if rule:
             _, unit_type, issue, alternatives, summary = rule
@@ -76,7 +88,25 @@ class FakeUnitAnalyzer:
         if Symptom.ODD_SMELL.value in symptoms and description and "gas" in description.lower():
             safety = "If you smell gas, leave the house and call your gas utility's emergency line."
 
+        # Like the real AI: price from past jobs for this issue when there are any.
+        estimate = None
+        low = PRICE_BOOK[issue].repair_low_cents
+        past = next(
+            (
+                p
+                for p in (price_context.past_by_issue if price_context else [])
+                if p.issue == PRICE_BOOK[issue].label
+            ),
+            None,
+        )
+        if past is not None and price_context is not None:
+            low = max(past.low_cents - price_context.diagnostic_fee_cents, 0)
+            high = max(past.high_cents - price_context.diagnostic_fee_cents, low)
+            estimate = CostEstimate(low, high, f"Based on {past.jobs} past jobs for this issue.")
+        elif low:
+            estimate = CostEstimate(low, low * 2, "Based on typical prices for this repair.")
         return AnalysisResult(
+            estimate=estimate,
             unit=UnitInfo(
                 brand="Carrier" if photos else None,
                 model_number="24ACC636A003" if photos else None,

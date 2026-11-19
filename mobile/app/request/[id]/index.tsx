@@ -15,7 +15,7 @@ import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, Checkbox, ErrorText, Field, KeyValue, Loading, Muted, Row, Screen, Segmented, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { POLL_INTERVAL_MS } from '@/lib/config';
-import { clockTime, countdown, isScheduled, miles, minutesLabel, money, visitTime } from '@/lib/format';
+import { clockTime, countdown, estimateRange, isScheduled, miles, minutesLabel, money, visitTime } from '@/lib/format';
 import { labelFor, useAction, useCountdown, useOptions, usePolling } from '@/lib/hooks';
 import { copyText, shareSheet, textMessage, whatsApp } from '@/lib/share';
 import type { ServiceRequest, ShareInfo } from '@/lib/types';
@@ -158,7 +158,7 @@ function Proposed({ request, onChange }: Props) {
         <Muted>{request.technician.shop_name} chooses which of their technicians comes. We'll tell you who as soon as they do.</Muted>
       ) : null}
       <Card tone="muted">
-        <KeyValue k="Estimate" v={`from ${money(request.estimate.low_cents)}`} />
+        <KeyValue k="Estimate" v={estimateRange(request.estimate)} />
         <Muted>{payments
           ? "A hold is placed on your card now. You're only charged after you approve the final price."
           : 'You approve the final price before any work. Pay the shop directly when the job is done.'}</Muted>
@@ -380,7 +380,7 @@ function Quote({ request, onChange }: Props) {
         {q.notes ? <Body style={{ textAlign: 'center', color: colors.body }}>{q.notes}</Body> : null}
       </Card>
       <Card tone="muted">
-        <KeyValue k="Original estimate" v={`from ${money(request.estimate.low_cents)}`} />
+        <KeyValue k="Original estimate" v={estimateRange(request.estimate)} />
         {payments ? <KeyValue k="Card on hold" v={money(request.payment.authorized_cents)} /> : null}
       </Card>
       {payments && overEstimate ? (

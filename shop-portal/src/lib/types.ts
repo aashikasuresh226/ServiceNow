@@ -19,12 +19,10 @@ export type Features = {
   scheduling_integrations: boolean;
   /** Who emails sign-up links and technician invites. */
   email_links: 'firebase' | 'development';
-  firebase: FirebaseConfig | null;
+  technician_sign_in_url: string;
 };
 
-export type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string; appId?: string };
-
-/** Send `continue_url` to `email` with Firebase, or (development) open `dev_link`. */
+/** Firebase emailed the link (delivery=firebase), or in development open `dev_link`. */
 export type EmailLink = {
   email: string;
   continue_url: string;
@@ -189,7 +187,13 @@ export type Job = {
     visible_issues?: string[];
     ai_used?: boolean;
   } | null;
-  estimate: { diagnostic_fee_cents: number | null; low_cents: number | null };
+  estimate: {
+    diagnostic_fee_cents: number | null;
+    low_cents: number | null;
+    high_cents?: number | null;
+    basis?: string | null;
+    source?: string | null;
+  };
   technician_id: string | null;
   technician_name: string | null;
   offer_expires_at: string | null;

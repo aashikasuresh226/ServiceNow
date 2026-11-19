@@ -149,9 +149,9 @@ def check(settings: Settings) -> None:
     line(
         "Email links (Firebase)",
         settings.firebase_enabled,
-        f"project {settings.firebase_project_id}"
+        "verification emails sent by Firebase"
         if settings.firebase_enabled
-        else "dev mode: links shown on screen (set HVAC_FIREBASE_*)",
+        else "dev mode: links shown on screen (set HVAC_FIREBASE_API_KEY)",
     )
     line("Payments (Stripe)", settings.payments_enabled, "HVAC_STRIPE_SECRET_KEY + publishable key")
     line("Address lookup", True, settings.geocoding_provider)

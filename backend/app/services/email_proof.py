@@ -1,15 +1,14 @@
 """Proving someone controls an email address (shop sign-up, technician invites).
 
 1. We create a single-use challenge and a link `<page>?t=<token>`.
-2. Firebase (free) emails the link: the browser calls Firebase's
-   sendSignInLinkToEmail with it. Development without Firebase: the link is
-   printed in the API window and shown on screen instead.
-3. The person opens the link; the page finishes Firebase's email-link sign-in and
-   sends us the Firebase ID token. We check the token's verified email equals the
-   challenge's email. Only then is the address proven.
-
-The token alone is not proof when Firebase is on (the browser that asked for the
-email knows it); the Firebase ID token is.
+2. Our server asks Firebase (free) to send a "verify your email" message whose
+   continue button leads to that link (integrations/firebase_email.py). The token
+   is only ever in the email: it isn't returned to the browser that asked.
+   Development without Firebase: the link is printed in the API window and shown
+   on screen instead.
+3. The person opens the email: Firebase marks the address verified. We check that
+   with Firebase before accepting the token, so both the inbox (token) and
+   Firebase (verified address) agree.
 """
 
 from __future__ import annotations
@@ -76,8 +75,9 @@ class EmailProofService:
         )
         await self.s.flush()
         link = f"{page_url}?t={token}"
-        if settings.firebase_enabled:
-            return EmailLink(email, link, "firebase", None)
+        if self.c.firebase is not None:
+            await self.c.firebase.send_verification(email.strip().lower(), link)
+            return EmailLink(email, "", "firebase", None)  # the link is only in the email
         log.warning("Email link for %s (development: no Firebase configured): %s", email, link)
         return EmailLink(email, link, "development", link)
 
@@ -97,16 +97,15 @@ class EmailProofService:
             )
         return challenge
 
-    async def prove(self, token: str, purpose: str, firebase_id_token: str | None) -> str:
-        """Check the Firebase proof. Returns a claim secret for the browser that proved it."""
+    async def prove(self, token: str, purpose: str) -> str:
+        """The person opened the emailed link. Returns a claim secret for their browser."""
         challenge = await self.get(token, purpose)
         if self.c.firebase is not None:
-            if not firebase_id_token:
-                raise Unauthorized("Open the link from your email to continue.", code="no_proof")
-            identity = await self.c.firebase.verify(firebase_id_token)
-            if identity.email != challenge.email.lower():
+            if not await self.c.firebase.is_verified(challenge.email):
                 raise Unauthorized(
-                    "That link was for a different email address.", code="email_mismatch"
+                    "Open the link in the email we sent (it confirms the address), then "
+                    "continue from there.",
+                    code="email_unverified",
                 )
         elif self.c.settings.environment == Environment.PROD:
             raise AppError("Email links aren't set up (Firebase)", code="email_not_configured")
@@ -124,6 +123,29 @@ class EmailProofService:
             or not constant_time_equals(challenge.claim_hash, hash_token(claim))
         ):
             raise Unauthorized("Please confirm your email first.", code="email_unverified")
+        challenge.used_at = self.c.clock.now()
+        return challenge
+
+    async def verified_elsewhere(
+        self, subject_id: uuid.UUID, purpose: str
+    ) -> EmailChallenge | None:
+        """The address was verified in Firebase (e.g. on a phone) even though our page
+        wasn't opened: used by the sign-up tab that's waiting."""
+        if self.c.firebase is None:
+            return None
+        challenge = await self.s.scalar(
+            select(EmailChallenge)
+            .where(
+                EmailChallenge.subject_id == subject_id,
+                EmailChallenge.purpose == purpose,
+                EmailChallenge.used_at.is_(None),
+                EmailChallenge.expires_at > self.c.clock.now(),
+            )
+            .order_by(EmailChallenge.created_at.desc())
+        )
+        if challenge is None or not await self.c.firebase.is_verified(challenge.email):
+            return None
+        challenge.verified_at = self.c.clock.now()
         challenge.used_at = self.c.clock.now()
         return challenge
 

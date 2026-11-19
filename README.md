@@ -129,7 +129,7 @@ All settings live in `backend/.env`. Run `.venv\Scripts\python.exe -m app.cli ch
 | **Twilio Verify** | Texted sign-in codes | Development only: the code is shown on screen | `HVAC_TWILIO_ACCOUNT_SID`, `HVAC_TWILIO_AUTH_TOKEN`, `HVAC_TWILIO_VERIFY_SERVICE_SID` |
 | **Twilio Messaging** | Job-update texts (matched, on the way, done) | Updates show in the app only | `HVAC_TWILIO_FROM_NUMBER` or `HVAC_TWILIO_MESSAGING_SERVICE_SID` |
 | **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` or `HVAC_ANTHROPIC_API_KEY` |
-| **Firebase** (free) | Emails that prove an address is real: shop sign-up and technician invites | Development only: the link is shown on screen | `HVAC_FIREBASE_API_KEY`, `HVAC_FIREBASE_PROJECT_ID` |
+| **Firebase** (free) | Emails that prove an address is real: shop sign-up and technician invites | Development only: the link is shown on screen | `HVAC_FIREBASE_API_KEY` |
 | **Housecall Pro** (per shop, MAX plan) | Accepted jobs go into the shop's Housecall Pro; its dispatcher assigns the tech | The shop runs on the portal and technician app | Entered by each shop in the portal (**How you take jobs**), stored encrypted |
 | **Neon** (free Postgres) | Hosted database with encrypted storage | A local SQLite file on your computer | `HVAC_DATABASE_URL` |
 | **Stripe** | Card on file, hold at booking, charge at completion, shop payouts (Connect) | No card needed; the homeowner pays the shop directly | `HVAC_STRIPE_SECRET_KEY`, `HVAC_STRIPE_PUBLISHABLE_KEY`, `HVAC_STRIPE_WEBHOOK_SECRET` |
@@ -153,13 +153,22 @@ products; only the photos, symptoms and description are sent. If the default mod
 (`gemini-flash-lite-latest`) isn't offered, set `HVAC_GEMINI_MODEL` to a free model from AI
 Studio. When both keys are set, Claude is used.
 
-**Firebase (free):** console.firebase.google.com → *Add project* → *Build → Authentication*
-→ *Get started* → *Sign-in method* → *Email/Password* → turn on **Email link (passwordless
-sign-in)**. Then *Project settings → General → Your apps → Web* to register an app and copy
-`apiKey` and `projectId`, and run
-`powershell -ExecutionPolicy Bypass -File scripts\windows\set-firebase.ps1`. `localhost` is
-already an authorized domain; add your real domain later (*Authentication → Settings*). The
-free plan covers this; Firebase only sends the emails, and the API checks the proof.
+**Firebase (free):** sends the "verify your email" messages (shop sign-up, technician
+invites). Only the Web API key is needed:
+1. console.firebase.google.com → *Add project* (Google Analytics not needed).
+2. *Build → Authentication → Get started → Sign-in method → Email/Password* → **Enable** →
+   *Save*. (Leave "Email link (passwordless sign-in)" off; it isn't used.)
+3. *Project settings* (gear) → *General* → copy the **Web API key** (starts with `AIza`).
+   If it says there is none, add a Web app under *Your apps* (`</>`) and it appears.
+4. Run `powershell -ExecutionPolicy Bypass -File scripts\windows\set-firebase.ps1`, paste
+   the key, then restart `start-demo.ps1`.
+
+Our server asks Firebase to email a verification link; opening it marks the address verified
+in Firebase and its *Continue* button returns to our page. The free plan allows 1,000 of these
+emails a day. They come from `noreply@<project>.firebaseapp.com`, so check spam the first
+time. If sign-up says the email "already exists in Firebase from an earlier setup", delete
+that user under *Authentication → Users* and resend. For a real domain, add it under
+*Authentication → Settings → Authorized domains*.
 
 **Neon (free Postgres):** neon.com → create a project → *Connect* → copy the connection
 string, then run `powershell -ExecutionPolicy Bypass -File scripts\windows\set-database.ps1`.
@@ -196,7 +205,10 @@ portal on the left and the homeowner app on the right.
 1. **Homeowner (right):** **Start a request** → **No cooling** → **Next** → upload a photo of
    a real unit's label → **Analyze my unit**. With the Anthropic key set, Claude reads the
    brand, model, serial, manufacture year (age), refrigerant and tonnage, and lists anything
-   visibly wrong. Show the low-end estimate, labeled as an estimate.
+   visibly wrong. The estimate is a range (visit fee + likely repair) that the AI prices from
+   the photo and description, anchored on the final prices of past completed jobs on the
+   platform (per issue and overall, last 2 years), the price book and the city/state. Without
+   AI it falls back to past prices for that issue, then the price book.
 2. **Matching (right):** **Continue** → **Find a technician** → the qualified tech who can
    arrive soonest is reserved for 3 minutes (after hours, it's their first opening the next
    morning) → **Confirm booking**.
@@ -413,8 +425,8 @@ keep the key in a secrets manager.
   are validated with libphonenumber. (Without Twilio, in development only, codes are
   generated locally and only a keyed hash is stored, keyed by the number's blind index.)
 - **Google sign-in** verifies the ID token's signature, issuer, audience, expiry, a verified
-  email and a single-use nonce. **Firebase** proofs are checked the same way (signature
-  against Google's keys, issuer and audience = your Firebase project, verified email).
+  email and a single-use nonce. **Firebase** emails are sent from our server; a link
+  counts only when its single-use token matches and Firebase reports the address verified.
 - Short-lived access tokens; rotating refresh tokens stored hashed. Reuse of an old refresh
   token ends every session in that family.
 - Shops see a job's photos and AI summary before accepting, but not the homeowner's
@@ -497,8 +509,8 @@ host the portal's `dist/` and the Expo web build on a CDN.
 - **Live location is foreground-only:** the technician app must stay open while driving.
   Background tracking needs the native iOS/Android build with background location permission.
   Arrival times are straight-line estimates; a routing API would improve them.
-- **Firebase email links open the web version of the app.** The native iOS/Android builds
-  would need Firebase's mobile link handling.
+- **Technician invite links open the web version of the app.** The native iOS/Android
+  builds would need app links (universal links) set up for your domain.
 - **Calls show real phone numbers** (free). Hidden "proxy" numbers would need a paid service
   such as Twilio.
 - **Not yet built:** tips, refunds and disputes, an internal admin console, push

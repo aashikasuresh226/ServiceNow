@@ -78,7 +78,6 @@ class ShopLoginOut(Model):
 
 class EmailProofIn(Model):
     token: str = Field(min_length=10, max_length=200)
-    firebase_id_token: str | None = Field(None, max_length=4096)
 
 
 class EmailProofInfoOut(Model):
@@ -245,7 +244,10 @@ class WaitlistInfo(Model):
 
 class EstimateInfo(Model):
     diagnostic_fee_cents: int | None
-    low_cents: int | None
+    low_cents: int | None  # visit + low end of the repair
+    high_cents: int | None = None  # None: the repair is priced on site
+    basis: str | None = None  # what the range is based on, for the homeowner
+    source: str | None = None  # ai | past_jobs | price_book
 
 
 class QuoteInfo(Model):

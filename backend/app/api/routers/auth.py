@@ -190,7 +190,7 @@ async def shop_verify_email(
 ) -> None:
     service = AuthService(session, c)
     service.limit_ip(client_ip(request))
-    await service.verify_shop_email(body.token, body.firebase_id_token)
+    await service.verify_shop_email(body.token)
 
 
 @router.post("/shop/mfa/enroll", response_model=MfaEnrollOut)
@@ -248,7 +248,7 @@ async def invite_verify_email(
 ) -> ClaimOut:
     service = AuthService(session, c)
     service.limit_ip(client_ip(request))
-    return ClaimOut(claim=await service.verify_invite_email(body.token, body.firebase_id_token))
+    return ClaimOut(claim=await service.verify_invite_email(body.token))
 
 
 @router.post("/technician/invite/phone", response_model=OtpStartOut)

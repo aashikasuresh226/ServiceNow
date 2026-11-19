@@ -27,7 +27,15 @@ from PIL import Image, ImageOps
 
 from app.core.errors import ExternalServiceError
 from app.domain.enums import Confidence, EquipmentType, IssueCategory
-from app.integrations.ai.base import AnalysisResult, Diagnosis, PhotoInput, UnitInfo
+from app.integrations.ai.base import (
+    AnalysisResult,
+    CostEstimate,
+    Diagnosis,
+    PastPrice,
+    PhotoInput,
+    PriceContext,
+    UnitInfo,
+)
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +109,18 @@ off at the thermostat and the breaker"); otherwise "".
 in photo_feedback (e.g. "Move closer to the silver label on the side of the outdoor unit"). \
 Otherwise "".
 
+Repair cost estimate (repair_estimate), in US dollars, for the repair only (the diagnostic \
+visit fee is charged separately and is NOT included):
+- Base it on the "Pricing context" in the request: first the final prices of past jobs on \
+this platform (for the same issue when listed, otherwise overall), then the price book, then \
+typical residential prices in that market and year. Adjust for what you see: unit size \
+(tonnage), age, refrigerant (R-22 is costly), equipment type, brand, and the visible damage.
+- Give a realistic low and high for the most likely issue, covering the alternatives when \
+they would cost more. Keep the range honest (high usually no more than about 3x low).
+- If the evidence is too thin to price at all, use 0 for both.
+- basis: one short plain sentence for the homeowner on what the range is based on (e.g. \
+"Based on 12 recent capacitor repairs nearby and your 3-ton unit."). Never promise a price.
+
 """
     + FORMAT_RULES
 )
@@ -138,6 +158,16 @@ RESPONSE_SCHEMA: dict[str, Any] = {
         "summary": _TEXT,
         "safety_warning": _TEXT,
         "photo_feedback": _TEXT,
+        "repair_estimate": {
+            "type": "object",
+            "properties": {
+                "low_usd": {"type": "number"},
+                "high_usd": {"type": "number"},
+                "basis": _TEXT,
+            },
+            "required": ["low_usd", "high_usd", "basis"],
+            "additionalProperties": False,
+        },
     },
     "additionalProperties": False,
 }
@@ -185,6 +215,7 @@ class AnthropicUnitAnalyzer:
         description: str | None,
         photos: list[PhotoInput],
         current_year: int,
+        price_context: PriceContext | None = None,
     ) -> AnalysisResult:
         content: list[dict[str, Any]] = []
         images = 0
@@ -208,11 +239,12 @@ class AnthropicUnitAnalyzer:
         content.append(
             {
                 "type": "text",
-                "text": (
-                    f"Current year: {current_year}\n"
-                    f"Photos attached: {images}\n"
-                    f"Symptoms selected: {', '.join(symptoms) or 'none'}\n"
-                    f"Homeowner description: {description or '(none)'}"
+                "text": request_text(
+                    symptoms=symptoms,
+                    description=description,
+                    images=images,
+                    current_year=current_year,
+                    price_context=price_context,
                 ),
             }
         )
@@ -319,8 +351,77 @@ PLAIN_JSON_RULES = (
     + ", ".join(e.value for e in EquipmentType)
     + ". primary_issue and alternatives use: "
     + ", ".join(c.value for c in IssueCategory)
-    + ". confidence is low, medium or high."
+    + ". confidence is low, medium or high. repair_estimate is an object with low_usd, "
+    "high_usd (numbers) and basis (text)."
 )
+
+
+def _usd(cents: int) -> str:
+    return f"${cents / 100:,.0f}"
+
+
+def request_text(
+    *,
+    symptoms: list[str],
+    description: str | None,
+    images: int,
+    current_year: int,
+    price_context: PriceContext | None,
+) -> str:
+    """The text part of the request (shared by Claude and Gemini)."""
+    lines = [
+        f"Current year: {current_year}",
+        f"Photos attached: {images}",
+        f"Symptoms selected: {', '.join(symptoms) or 'none'}",
+        f"Homeowner description: {description or '(none)'}",
+    ]
+    ctx = price_context
+    if ctx is not None:
+        lines += ["", "Pricing context:", f"- Market: {ctx.market or 'United States'}"]
+        lines.append(
+            f"- Diagnostic visit fee (charged separately, not part of your estimate): "
+            f"{_usd(ctx.diagnostic_fee_cents)}"
+        )
+
+        def past(p: PastPrice) -> str:
+            return (
+                f"{p.jobs} jobs, average {_usd(p.average_cents)} "
+                f"(range {_usd(p.low_cents)}-{_usd(p.high_cents)})"
+            )
+
+        if ctx.past_overall is not None:
+            lines.append(
+                "- Final prices of past completed jobs on this platform (repair + visit), "
+                f"all issues: {past(ctx.past_overall)}"
+            )
+            for item in ctx.past_by_issue:
+                lines.append(f"  - {item.issue}: {past(item)}")
+        else:
+            lines.append("- No completed jobs on this platform yet.")
+        lines.append("- Price book (typical starting repair price, excluding the visit):")
+        lines += [f"  - {label}: {_usd(cents)}" for label, cents in ctx.price_book.items() if cents]
+    return "\n".join(lines)
+
+
+def parse_estimate(value: Any) -> CostEstimate | None:
+    """The AI's repair range, or None when it's missing, zero or implausible."""
+    if not isinstance(value, dict):
+        return None
+    raw = [value.get("low_usd"), value.get("high_usd")]
+    numbers = [float(v) for v in raw if isinstance(v, int | float) and not isinstance(v, bool)]
+    if len(numbers) != 2:
+        return None
+    low, high = sorted(numbers)
+    if high <= 0 or low < 0 or high > 25_000:
+        return None
+    if low and high > low * 6:  # an unhelpfully wide range: keep the bottom, cap the top
+        high = low * 6
+    basis = _clean(value.get("basis"), 240) or "Estimated from your photos and description."
+    return CostEstimate(
+        repair_low_cents=round(low) * 100,
+        repair_high_cents=round(high) * 100,
+        basis=basis,
+    )
 
 
 def parse_analysis(data: dict[str, Any], *, current_year: int) -> AnalysisResult:
@@ -374,6 +475,7 @@ def parse_analysis(data: dict[str, Any], *, current_year: int) -> AnalysisResult
     )
     return AnalysisResult(
         unit=unit,
+        estimate=parse_estimate(data.get("repair_estimate")),
         diagnosis=Diagnosis(
             primary_issue=enum_or(
                 IssueCategory, data.get("primary_issue"), IssueCategory.GENERAL_DIAGNOSTIC

@@ -138,8 +138,8 @@ export const api = {
     request<LoginStep>('POST', '/auth/shop/resend-email', undefined, { token: setupToken }),
   emailProofInfo: (token: string) =>
     request<{ email: string; purpose: string }>('GET', `/auth/email-proof/${encodeURIComponent(token)}`),
-  verifyShopEmail: (token: string, firebase_id_token?: string) =>
-    request<void>('POST', '/auth/shop/verify-email', { token, firebase_id_token }),
+  verifyShopEmail: (token: string) =>
+    request<void>('POST', '/auth/shop/verify-email', { token }),
   loginMfa: (token: string, code: string) =>
     request<Tokens>('POST', '/auth/shop/login/mfa', { token, code }),
   enrollMfa: (setupToken: string) =>

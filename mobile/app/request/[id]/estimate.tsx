@@ -7,7 +7,7 @@ import { EstimateBar } from '@/components/illustrations';
 import { colors } from '@/components/theme';
 import { Body, Button, Card, Loading, Muted, Row, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
-import { money } from '@/lib/format';
+import { estimateRange, money } from '@/lib/format';
 import type { ServiceRequest } from '@/lib/types';
 
 export default function Estimate() {
@@ -19,8 +19,13 @@ export default function Estimate() {
   }, [id]);
 
   if (!request) return <Loading />;
-  const { diagnostic_fee_cents: fee, low_cents: low } = request.estimate;
-  const repair = low != null && fee != null ? low - fee : null;
+  const { diagnostic_fee_cents: fee, low_cents: low, high_cents: high, basis } = request.estimate;
+  const repairLow = low != null && fee != null ? low - fee : null;
+  const repairHigh = high != null && fee != null ? high - fee : null;
+  const ranged = high != null && low != null && high > low;
+  const repairText = repairLow
+    ? repairHigh && repairHigh > repairLow ? `${money(repairLow)}–${money(repairHigh)}` : `from ${money(repairLow)}`
+    : 'On site';
 
   return (
     <Screen footer={
@@ -32,9 +37,10 @@ export default function Estimate() {
       <StepHeader step={3} />
       <Title>Estimated cost</Title>
       <Card style={{ alignItems: 'center', gap: 6, paddingVertical: 20 }}>
-        <Muted>Starting from</Muted>
-        <Text style={{ fontSize: 44, fontWeight: '800', color: colors.ink, letterSpacing: -1 }}>
-          {money(low)}
+        <Muted>{ranged ? 'Likely total' : 'Starting from'}</Muted>
+        <Text style={{ fontSize: ranged ? 38 : 44, fontWeight: '800', color: colors.ink, letterSpacing: -1 }}
+          adjustsFontSizeToFit numberOfLines={1}>
+          {ranged ? estimateRange(request.estimate) : money(low)}
         </Text>
         <Muted>for {request.diagnosis?.primary_issue_label.toLowerCase() ?? 'the visit'}</Muted>
         <View style={{ alignSelf: 'stretch', gap: 4, marginTop: 8 }}>
@@ -54,14 +60,14 @@ export default function Estimate() {
         <Card tone="muted" style={{ flex: 1 }}>
           <Icon name="wrench" size={20} color={colors.ink} />
           <Muted>Likely repair</Muted>
-          <Body style={{ fontWeight: '700' }}>{repair ? `from ${money(repair)}` : 'On site'}</Body>
+          <Body style={{ fontWeight: '700' }}>{repairText}</Body>
         </Card>
       </Row>
       <Row style={{ alignItems: 'flex-start' }}>
         <Icon name="info" size={18} color={colors.muted} />
         <Muted style={{ flex: 1 }}>
-          <Text style={{ fontWeight: '700', color: colors.body }}>This is only an estimate.</Text> It's
-          the low end, based on your photo and description. Your technician confirms the final price
+          <Text style={{ fontWeight: '700', color: colors.body }}>This is only an estimate.</Text>{' '}
+          {basis ?? 'Based on your photo and description.'} Your technician confirms the final price
           before any work starts.
         </Muted>
       </Row>

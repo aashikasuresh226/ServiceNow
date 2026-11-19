@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { Avatar } from '../components/Icon';
 import { Button, ChipGroup, Empty, ErrorAlert, Switch } from '../components/ui';
 import { api } from '../lib/api';
-import { firebaseErrorMessage, sendEmailLink } from '../lib/firebase';
 import { label, useAction, useLiveData, usePortal } from '../lib/hooks';
 import type { EmailLink, TechPermissions, Technician, WorkingHours } from '../lib/types';
 
@@ -57,6 +56,11 @@ export function TechniciansPage() {
           <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>Add technician</Button>
         </div>
       </div>
+      <p className="muted">
+        Technicians can't sign up on their own: add them, then send an email invite from their row. Once they've joined,
+        they sign in at{' '}
+        {options ? <a href={options.features.technician_sign_in_url} target="_blank" rel="noreferrer">{options.features.technician_sign_in_url}</a> : 'the technician app'}.
+      </p>
       <ErrorAlert message={techs.error ?? importNow.error ?? toggle.error ?? removeAccess.error} />
       {inviting ? (
         <InviteDialog tech={inviting} onClose={() => { setInviting(null); void techs.reload(); }} />
@@ -297,7 +301,6 @@ function permissionSummary(t: Technician): string {
 
 /** Invite by email: Firebase sends the link (or, in development, it's shown here). */
 function InviteDialog({ tech, onClose }: { tech: Technician; onClose: () => void }) {
-  const { options } = usePortal();
   const [email, setEmail] = useState(tech.email ?? '');
   const [perms, setPerms] = useState<TechPermissions>({
     can_respond_offers: tech.can_respond_offers,
@@ -307,15 +310,6 @@ function InviteDialog({ tech, onClose }: { tech: Technician; onClose: () => void
   const [sent, setSent] = useState<EmailLink | null>(null);
   const invite = useAction(async () => {
     const { email_link } = await api.inviteTechnician(tech.id, email, perms);
-    if (email_link.delivery === 'firebase') {
-      const firebase = options?.features.firebase;
-      if (!firebase) throw new Error('Firebase is not configured');
-      try {
-        await sendEmailLink(firebase, email_link);
-      } catch (e) {
-        throw new Error(firebaseErrorMessage(e));
-      }
-    }
     setSent(email_link);
   });
 

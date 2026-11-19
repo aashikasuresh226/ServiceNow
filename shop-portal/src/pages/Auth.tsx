@@ -12,9 +12,8 @@ import { GoogleButton } from '../components/GoogleButton';
 import { Icon } from '../components/Icon';
 import { Button, ErrorAlert } from '../components/ui';
 import { api, setTokens } from '../lib/api';
-import { firebaseErrorMessage, sendEmailLink } from '../lib/firebase';
 import { useAction, useOptions } from '../lib/hooks';
-import type { EmailLink, LoginStep, Options } from '../lib/types';
+import type { LoginStep } from '../lib/types';
 
 const PASSWORD_RULES: [string, (p: string) => boolean][] = [
   ['At least 8 characters', (p) => p.length >= 8],
@@ -84,7 +83,7 @@ export function AuthPage() {
   const canUseGoogle = mode === 'login' || shopName.trim().length >= 2;
 
   if (step?.step === 'verify_email') {
-    return <VerifyEmailStep step={step} options={options} onNext={setStep} onBack={() => setStep(null)} />;
+    return <VerifyEmailStep step={step} onNext={setStep} onBack={() => setStep(null)} />;
   }
   if (step?.step === 'mfa') {
     return <MfaVerify step={step} onDone={() => navigate('/', { replace: true })} onBack={() => setStep(null)} />;
@@ -148,37 +147,19 @@ export function AuthPage() {
 
 /** "Check your email": the link is sent by Firebase (or shown on screen in development).
  * This tab waits, so the link can be opened on a phone too. */
-function VerifyEmailStep({ step, options, onNext, onBack }: {
+function VerifyEmailStep({ step, onNext, onBack }: {
   step: LoginStep;
-  options: Options | null;
   onNext: (next: LoginStep) => void;
   onBack: () => void;
 }) {
   const [link, setLink] = useState(step.email_link);
-  const [sent, setSent] = useState(false);
-  const firebase = options?.features.firebase ?? null;
-  const send = useAction(async (target: EmailLink | null = link) => {
-    if (!target || target.delivery !== 'firebase') return;
-    if (!firebase) throw new Error('Firebase is not configured');
-    try {
-      await sendEmailLink(firebase, target);
-    } catch (e) {
-      throw new Error(firebaseErrorMessage(e));
-    }
-    setSent(true);
-  });
+  const [resent, setResent] = useState(false);
   const resend = useAction(async () => {
     const next = await api.resendEmail(step.token);
     if (next.step !== 'verify_email') return onNext(next);
     setLink(next.email_link);
-    await send.run(next.email_link);
+    setResent(true);
   });
-  const sentOnce = useRef(false);
-  useEffect(() => {
-    if (sentOnce.current || !options) return;
-    sentOnce.current = true;
-    void send.run();
-  }, [options, send]);
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
@@ -209,11 +190,11 @@ function VerifyEmailStep({ step, options, onNext, onBack }: {
           </>
         ) : (
           <p className="muted">
-            {sent ? 'We sent a link to ' : 'Sending a link to '}<strong>{email}</strong>. Open it on any device to confirm
-            the address. This page continues on its own.
+            {resent ? 'We sent a new link to ' : 'We sent a link to '}<strong>{email}</strong>. Open it on any device
+            to confirm the address (check spam if it's not there in a minute). This page continues on its own.
           </p>
         )}
-        <ErrorAlert message={send.error ?? resend.error} />
+        <ErrorAlert message={resend.error} />
         <p className="row small muted" style={{ gap: 8 }}><span className="spinner" aria-hidden="true" /> Waiting for you to open the link…</p>
         <div className="row between small">
           <a href="#back" onClick={(e) => { e.preventDefault(); onBack(); }}>Use a different account</a>

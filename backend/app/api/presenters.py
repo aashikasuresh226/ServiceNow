@@ -136,9 +136,7 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
         photos=[photo_out(container, p) for p in request.photos],
         unit=request.unit_info,
         diagnosis=request.diagnosis,
-        estimate=EstimateInfo(
-            diagnostic_fee_cents=request.diagnostic_fee_cents, low_cents=request.estimate_low_cents
-        ),
+        estimate=estimate_info(request),
         technician=_technician_summary(container, request, request.technician),
         proposal_expires_at=request.proposal_expires_at,
         offer_expires_at=request.offer_expires_at,
@@ -191,9 +189,7 @@ def shop_job_out(
         photos=[photo_out(container, p) for p in request.photos],
         unit=request.unit_info,
         diagnosis=request.diagnosis,
-        estimate=EstimateInfo(
-            diagnostic_fee_cents=request.diagnostic_fee_cents, low_cents=request.estimate_low_cents
-        ),
+        estimate=estimate_info(request),
         technician_id=offer.technician_id if offer else request.technician_id,
         technician_name=offer_technician
         if offer
@@ -258,3 +254,14 @@ def tech_job_out(container: Container, request: ServiceRequest, tech: Technician
 
 def message_out(message: Message) -> MessageOut:
     return MessageOut.model_validate(message)
+
+
+def estimate_info(request: ServiceRequest) -> EstimateInfo:
+    diagnosis = request.diagnosis or {}
+    return EstimateInfo(
+        diagnostic_fee_cents=request.diagnostic_fee_cents,
+        low_cents=request.estimate_low_cents,
+        high_cents=request.estimate_high_cents,
+        basis=diagnosis.get("estimate_basis"),
+        source=diagnosis.get("estimate_source"),
+    )

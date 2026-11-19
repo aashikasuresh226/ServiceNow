@@ -46,9 +46,39 @@ class Diagnosis:
 
 
 @dataclass(frozen=True, slots=True)
+class CostEstimate:
+    """The AI's repair range (excluding the diagnostic visit), in cents."""
+
+    repair_low_cents: int
+    repair_high_cents: int
+    basis: str  # one plain sentence: what the range is based on
+
+
+@dataclass(frozen=True, slots=True)
+class PastPrice:
+    issue: str  # e.g. "Failed capacitor"
+    jobs: int
+    average_cents: int
+    low_cents: int
+    high_cents: int
+
+
+@dataclass(frozen=True, slots=True)
+class PriceContext:
+    """What the AI may base a price on: our own past final prices plus the price book."""
+
+    market: str  # e.g. "Atlanta, GA" (city and state only, never the street)
+    diagnostic_fee_cents: int
+    price_book: dict[str, int]  # issue label -> typical low repair price, cents
+    past_overall: PastPrice | None = None  # all completed jobs on the platform
+    past_by_issue: list[PastPrice] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisResult:
     unit: UnitInfo
     diagnosis: Diagnosis
+    estimate: CostEstimate | None = None
 
 
 class UnitAnalyzer(Protocol):
@@ -59,4 +89,5 @@ class UnitAnalyzer(Protocol):
         description: str | None,
         photos: list[PhotoInput],
         current_year: int,
+        price_context: PriceContext | None = None,
     ) -> AnalysisResult: ...

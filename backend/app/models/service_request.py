@@ -41,7 +41,8 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     issue_category: Mapped[str | None] = mapped_column(String(40))
     requires_refrigerant_work: Mapped[bool] = mapped_column(Boolean, default=False)
     diagnostic_fee_cents: Mapped[int | None] = mapped_column(Integer)
-    estimate_low_cents: Mapped[int | None] = mapped_column(Integer)
+    estimate_low_cents: Mapped[int | None] = mapped_column(Integer)  # visit + low repair
+    estimate_high_cents: Mapped[int | None] = mapped_column(Integer)  # None: priced on site
 
     # Matching preferences
 

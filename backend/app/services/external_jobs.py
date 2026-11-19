@@ -131,9 +131,10 @@ class ExternalJobService:
                 f"Likely issue: {dx['primary_issue_label']}. {dx.get('summary') or ''}".strip()
             )
         if request.estimate_low_cents:
-            lines.append(
-                f"Customer was shown a starting price of ${request.estimate_low_cents / 100:.0f}."
-            )
+            shown = f"${request.estimate_low_cents / 100:,.0f}"
+            if request.estimate_high_cents:
+                shown += f"-${request.estimate_high_cents / 100:,.0f}"
+            lines.append(f"Customer was shown an estimate of {shown} (including the visit).")
         return "\n".join(lines)
 
     async def note_canceled(self, request: ServiceRequest, shop: Shop, reason: str) -> None:

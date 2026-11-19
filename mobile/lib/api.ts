@@ -193,9 +193,9 @@ export const api = {
 export const techApi = {
   inviteInfo: (token: string) =>
     request<InviteInfo>('GET', `/auth/technician/invite/${encodeURIComponent(token)}`, undefined, { auth: false }),
-  verifyInviteEmail: (token: string, firebase_id_token?: string) =>
+  verifyInviteEmail: (token: string) =>
     request<{ claim: string }>('POST', '/auth/technician/invite/verify-email',
-      { token, firebase_id_token }, { auth: false }),
+      { token }, { auth: false }),
   invitePhone: (token: string, claim: string, phone: string) =>
     request<OtpStarted>('POST', '/auth/technician/invite/phone', { token, claim, phone }, { auth: false }),
   acceptInvite: (data: { token: string; claim: string; phone?: string; code?: string; google_id_token?: string }) =>

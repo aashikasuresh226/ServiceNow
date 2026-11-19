@@ -79,7 +79,8 @@ async def options(c: ContainerDep) -> dict[str, object]:
             # Email links (shop sign-up, technician invites): sent by Firebase, or shown
             # on screen in development.
             "email_links": "firebase" if c.firebase is not None else "development",
-            "firebase": c.settings.firebase_web_config,
+            # Technicians have no sign-up: invited ones sign in here.
+            "technician_sign_in_url": f"{c.settings.public_app_url.rstrip('/')}/tech/sign-in",
         },
     }
 

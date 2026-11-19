@@ -6,8 +6,9 @@ import asyncio
 import logging
 import uuid
 from dataclasses import asdict
+from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
@@ -20,8 +21,15 @@ from app.domain.enums import (
     Symptom,
     Urgency,
 )
-from app.domain.pricing import PRICE_BOOK, estimate_for
-from app.integrations.ai.base import AnalysisResult, Diagnosis, PhotoInput, UnitInfo
+from app.domain.pricing import DIAGNOSTIC_FEE_CENTS, PRICE_BOOK, estimate_for, market_from_address
+from app.integrations.ai.base import (
+    AnalysisResult,
+    Diagnosis,
+    PastPrice,
+    PhotoInput,
+    PriceContext,
+    UnitInfo,
+)
 from app.integrations.storage import sniff_image_type
 from app.models import Homeowner, RequestPhoto, ServiceRequest
 from app.services.lifecycle import transition
@@ -126,9 +134,30 @@ class RequestService:
                 limit=self.c.settings.ai_analyses_per_hour,
                 window_seconds=3600,
             )
-        result, ai_error = await self._run_analysis(request)
+        context = await self.price_context(request)
+        result, ai_error = await self._run_analysis(request, context)
         estimate = estimate_for(result.diagnosis.primary_issue)
         price_entry = PRICE_BOOK[result.diagnosis.primary_issue]
+        fee = estimate.diagnostic_fee_cents
+        if result.estimate is not None:
+            # The AI's range, from the photos + description and past prices (see price_context).
+            low = fee + result.estimate.repair_low_cents
+            high: int | None = fee + result.estimate.repair_high_cents
+            basis, source = result.estimate.basis, "ai"
+        else:
+            past = next((p for p in context.past_by_issue if p.issue == price_entry.label), None)
+            if past is not None:
+                low, high = past.low_cents, past.high_cents
+                basis = f"Based on {past.jobs} past {price_entry.label.lower()} jobs here."
+                source = "past_jobs"
+            else:
+                low, high = estimate.total_low_cents, None
+                basis = (
+                    "Includes the diagnostic visit; the repair is priced on site."
+                    if not estimate.repair_low_cents
+                    else f"Typical starting price for: {price_entry.label.lower()}."
+                )
+                source = "price_book"
 
         request.unit_info = {
             **asdict(result.unit),
@@ -147,18 +176,61 @@ class RequestService:
             "visible_issues": result.diagnosis.visible_issues,
             "ai_used": self.c.analyzer is not None and ai_error is None,
             "ai_error": ai_error,
+            "estimate_basis": basis,
+            "estimate_source": source,
         }
         request.issue_category = result.diagnosis.primary_issue.value
         request.requires_refrigerant_work = price_entry.requires_refrigerant_work or any(
             PRICE_BOOK[a].requires_refrigerant_work for a in result.diagnosis.alternatives
         )
-        request.diagnostic_fee_cents = estimate.diagnostic_fee_cents
-        request.estimate_low_cents = estimate.total_low_cents
+        request.diagnostic_fee_cents = fee
+        request.estimate_low_cents = low
+        request.estimate_high_cents = high if high is None or high > low else None
         transition(self.s, request, S.ANALYZED, Actor.SYSTEM)
         await self.s.flush()
         return request
 
-    async def _run_analysis(self, request: ServiceRequest) -> tuple[AnalysisResult, str | None]:
+    async def price_context(self, request: ServiceRequest) -> PriceContext:
+        """What the AI bases its estimate on: final prices of completed jobs on the platform
+        (last 2 years, overall and per issue), the price book, and the city/state."""
+        since = self.c.clock.now() - timedelta(days=730)
+        done = (
+            ServiceRequest.completed_at.is_not(None),
+            ServiceRequest.completed_at >= since,
+            ServiceRequest.final_price_cents.is_not(None),
+            ServiceRequest.final_price_cents > 0,
+        )
+        price = ServiceRequest.final_price_cents
+        stats = (func.count(), func.avg(price), func.min(price), func.max(price))
+        overall = (await self.s.execute(select(*stats).where(*done))).one()
+        rows = (
+            await self.s.execute(
+                select(ServiceRequest.issue_category, *stats)
+                .where(*done, ServiceRequest.issue_category.is_not(None))
+                .group_by(ServiceRequest.issue_category)
+            )
+        ).all()
+
+        def past(label: str, row: tuple[object, ...]) -> PastPrice:
+            jobs, avg, low, high = row
+            return PastPrice(label, int(jobs), int(avg), int(low), int(high))  # type: ignore[call-overload]
+
+        by_issue = [
+            past(PRICE_BOOK[IssueCategory(category)].label, tuple(rest))
+            for category, *rest in rows
+            if category in IssueCategory._value2member_map_ and rest[0]
+        ]
+        return PriceContext(
+            market=market_from_address(request.address),
+            diagnostic_fee_cents=DIAGNOSTIC_FEE_CENTS,
+            price_book={entry.label: entry.repair_low_cents for entry in PRICE_BOOK.values()},
+            past_overall=past("All issues", tuple(overall)) if overall[0] else None,
+            past_by_issue=sorted(by_issue, key=lambda p: -p.jobs)[:12],
+        )
+
+    async def _run_analysis(
+        self, request: ServiceRequest, context: PriceContext
+    ) -> tuple[AnalysisResult, str | None]:
         """The analysis, plus why it failed (None when it worked or is switched off).
         A failure never blocks the request: the technician diagnoses on site."""
         on_site = AnalysisResult(
@@ -182,6 +254,7 @@ class RequestService:
                     description=request.description,
                     photos=photos,
                     current_year=self.c.clock.now().year,
+                    price_context=context,
                 )
         except TimeoutError:
             log.warning("Photo analysis for request %s took over %ss", request.id, budget)

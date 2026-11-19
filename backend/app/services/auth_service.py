@@ -448,11 +448,24 @@ class AuthService:
 
     async def shop_setup_status(self, user: ShopUser) -> ShopStep:
         """Polled by the sign-up tab while the person opens the email link elsewhere."""
+        if user.email_verified_at is None and self._may_ask_firebase(user):
+            proof = EmailProofService(self.s, self.c)
+            challenge = await proof.verified_elsewhere(user.id, "shop_email")
+            if challenge is not None and challenge.email == user.email:
+                user.email_verified_at = self.c.clock.now()
         return await self._shop_step(user, send_email=False)
 
-    async def verify_shop_email(self, token: str, firebase_id_token: str | None) -> ShopUser:
+    def _may_ask_firebase(self, user: ShopUser) -> bool:
+        """The waiting tab polls every few seconds; ask Firebase at most every 10 s."""
+        try:
+            self.c.rate_limiter.check("firebase_poll", str(user.id), limit=1, window_seconds=10)
+        except RateLimited:
+            return False
+        return True
+
+    async def verify_shop_email(self, token: str) -> ShopUser:
         proof = EmailProofService(self.s, self.c)
-        claim = await proof.prove(token, "shop_email", firebase_id_token)
+        claim = await proof.prove(token, "shop_email")
         challenge = await proof.consume(token, "shop_email", claim)
         user = await self.s.get(ShopUser, challenge.subject_id)
         if user is None or user.email != challenge.email:
@@ -510,11 +523,9 @@ class AuthService:
         assert shop is not None
         return tech, shop, challenge.email, challenge.verified_at is not None
 
-    async def verify_invite_email(self, token: str, firebase_id_token: str | None) -> str:
+    async def verify_invite_email(self, token: str) -> str:
         await self.invite_info(token)
-        return await EmailProofService(self.s, self.c).prove(
-            token, "tech_invite", firebase_id_token
-        )
+        return await EmailProofService(self.s, self.c).prove(token, "tech_invite")
 
     async def start_invite_phone(
         self, token: str, claim: str, raw_phone: str, *, ip: str | None
