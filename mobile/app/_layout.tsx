@@ -9,7 +9,8 @@ import { AuthProvider, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
 import { OptionsContext, useLoadOptions } from '@/lib/hooks';
 
-const PUBLIC_ROUTES = new Set(['welcome', 'verify']);
+// 'p' = public company / technician pages opened from shared links.
+const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'p']);
 
 /** Sends signed-out users to the welcome screen. */
 function AuthGate() {

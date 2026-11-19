@@ -7,7 +7,7 @@ import { useLiveData, usePortal } from '../lib/hooks';
 import { OfferCard } from './Jobs';
 
 export function DashboardPage() {
-  const { options } = usePortal();
+  const { me, options } = usePortal();
   const paymentsOn = options?.features.payments ?? false;
   const stats = useLiveData(() => api.dashboard(), 4000);
   const offers = useLiveData(() => api.jobs(['offered']), 4000);
@@ -19,7 +19,10 @@ export function DashboardPage() {
     <>
       <div className="row between">
         <h1>Dashboard</h1>
-        <span className="small muted">Updates live</span>
+        <span className="small muted">
+          {me.shop.rating ? <>Company rating <strong>★ {me.shop.rating.toFixed(1)}</strong> ({me.shop.rating_count}) · </> : null}
+          Updates live
+        </span>
       </div>
 
       {offers.data?.map((job) => <OfferCard key={job.id} job={job} onChanged={() => { void offers.reload(); void stats.reload(); void readiness.reload(); }} />)}

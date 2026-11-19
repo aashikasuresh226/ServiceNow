@@ -111,6 +111,9 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
             authorized_cents=request.authorized_cents, captured_cents=request.captured_cents
         ),
         rating=request.rating,
+        shop_rating=request.shop_rating,
+        preferred_shop_id=request.preferred_shop_id,
+        preferred_technician_id=request.preferred_technician_id,
         canceled_reason=request.canceled_reason,
         completed_at=request.completed_at,
     )
@@ -154,4 +157,9 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
             authorized_cents=request.authorized_cents, captured_cents=request.captured_cents
         ),
         payout_cents=payout,
+        picked_by_customer=request.preferred_shop_id is not None
+        and request.preferred_shop_id == request.shop_id,
+        technician_rating=request.rating,
+        shop_rating=request.shop_rating,
+        review=request.review,
     )

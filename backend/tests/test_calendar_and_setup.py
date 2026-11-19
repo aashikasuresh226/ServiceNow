@@ -17,7 +17,9 @@ from app.container import Container
 from app.core.clock import FrozenClock
 from app.domain.enums import EquipmentType
 from app.integrations.ai.anthropic_analyzer import (
+    RESPONSE_SCHEMA,
     SPEC_FIELDS,
+    AnalysisFailed,
     AnthropicUnitAnalyzer,
     parse_analysis,
     prepare_image,
@@ -357,3 +359,113 @@ async def test_shop_readiness_explains_problems(
     failing = {c["label"] for c in body["checks"] if not c["ok"]}
     assert "Accepting requests" in failing
     assert body["technicians"][0]["problems"] == ["Not qualified for any equipment type"]
+
+
+def _count_schema(schema: object) -> tuple[int, int]:
+    """(union-typed fields, optional fields) across a JSON schema, as the API counts them."""
+    unions = optional = 0
+    if isinstance(schema, dict):
+        if "anyOf" in schema or isinstance(schema.get("type"), list):
+            unions += 1
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            optional += len(set(props) - set(schema.get("required", [])))
+        for value in schema.values():
+            u, o = _count_schema(value)
+            unions, optional = unions + u, optional + o
+    elif isinstance(schema, list):
+        for value in schema:
+            u, o = _count_schema(value)
+            unions, optional = unions + u, optional + o
+    return unions, optional
+
+
+def test_response_schema_within_structured_output_limits() -> None:
+    # API limits: 16 union-typed parameters, 24 optional parameters (we use neither).
+    assert _count_schema(RESPONSE_SCHEMA) == (0, 0)
+
+
+def _anthropic_reply(text: str) -> dict[str, object]:
+    return {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-5-5",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": 10, "output_tokens": 10},
+    }
+
+
+async def test_analyzer_falls_back_to_plain_json_and_reports_errors() -> None:
+    calls: list[dict[str, object]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        if "output_config" in body:
+            return httpx2.Response(
+                400,
+                json={
+                    "type": "error",
+                    "error": {"type": "invalid_request_error", "message": "Schema too complex"},
+                },
+            )
+        return httpx2.Response(
+            200, json=_anthropic_reply("```json\n" + json.dumps(_plate_response()) + "\n```")
+        )
+
+    analyzer = AnthropicUnitAnalyzer("sk-ant-test", "claude-sonnet-5-5")
+    analyzer._client = anthropic.AsyncAnthropic(
+        api_key="sk-ant-test",
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    result = await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
+    assert result.unit.brand == "Carrier"
+    assert len(calls) == 2 and "output_config" not in calls[1]
+
+    def no_credits(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            400,
+            json={
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "Your credit balance is too low to access the Anthropic API.",
+                },
+            },
+        )
+
+    analyzer._client = anthropic.AsyncAnthropic(
+        api_key="sk-ant-test",
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(no_credits)),
+    )
+    try:
+        await analyzer.analyze(symptoms=[], description=None, photos=[], current_year=2026)
+        raise AssertionError("expected a failure")
+    except AnalysisFailed as exc:
+        assert "out of credits" in exc.reason
+
+
+async def test_failed_analysis_still_lets_the_homeowner_book(
+    container: Container, shops: dict[str, SeededShop], clock: FrozenClock
+) -> None:
+    class Broken:
+        async def analyze(self, **_: object) -> object:
+            raise AnalysisFailed("the Anthropic API key was rejected")
+
+    built = replace(container, analyzer=Broken())
+    app = create_app(built.settings, built)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test/v1"
+    ) as client:
+        home = await homeowner_login(client)
+        req = await analyzed_request(client, home)
+        assert req["status"] == "analyzed"
+        assert req["diagnosis"]["ai_used"] is False
+        assert "key was rejected" in req["diagnosis"]["ai_error"]
+        r = await client.post(f"/requests/{req['id']}/match", headers=home)
+        assert r.json()["status"] == "proposed"

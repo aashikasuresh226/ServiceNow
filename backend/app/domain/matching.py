@@ -54,6 +54,14 @@ class MatchCriteria:
     equipment_type: str = EquipmentType.UNKNOWN.value
     requires_refrigerant_work: bool = False
     excluded_technician_ids: frozenset[uuid.UUID] = field(default_factory=frozenset)
+    # The homeowner's pick: only this company / only this technician.
+    only_shop_id: uuid.UUID | None = None
+    only_technician_id: uuid.UUID | None = None
+
+    def allows(self, c: TechCandidate) -> bool:
+        if self.only_technician_id and c.technician_id != self.only_technician_id:
+            return False
+        return not (self.only_shop_id and c.shop_id != self.only_shop_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +92,23 @@ class NoMatchReport:
     needs_epa: int = 0
     no_time: int = 0
     declined: int = 0
+    chosen: bool = False  # the homeowner picked a company or technician
 
     def message(self) -> str:
+        if self.chosen:
+            if self.nearby == 0:
+                return "The company or technician you picked isn't taking requests right now."
+            if self.out_of_range == self.nearby:
+                return "The company or technician you picked doesn't cover this address."
+            if self.no_time:
+                return (
+                    "The company or technician you picked has no opening in the next 7 days. "
+                    "Try another, or let us find the soonest available technician."
+                )
+            return (
+                "The company or technician you picked isn't qualified for this equipment. "
+                "Try another, or let us find the soonest available technician."
+            )
         if self.nearby == 0:
             return (
                 "No HVAC shops are taking requests near this address yet. We'll keep looking "
@@ -125,7 +148,9 @@ def plan_option(
     c: TechCandidate, criteria: MatchCriteria, now: datetime, settings: PlanSettings
 ) -> Option | None:
     """The earliest way this tech can serve the request, or None."""
-    if c.technician_id in criteria.excluded_technician_ids or not is_qualified(c, criteria):
+    if c.technician_id in criteria.excluded_technician_ids or not criteria.allows(c):
+        return None
+    if not is_qualified(c, criteria):
         return None
     distance = haversine_km(c.location, criteria.location)
     if distance > c.service_radius_km:
@@ -158,7 +183,10 @@ def plan_options(
     settings: PlanSettings,
 ) -> tuple[list[Option], NoMatchReport]:
     """All feasible options, best first, plus counts explaining who was filtered out."""
-    report = NoMatchReport(nearby=len(candidates))
+    candidates = [c for c in candidates if criteria.allows(c)]
+    report = NoMatchReport(
+        nearby=len(candidates), chosen=bool(criteria.only_shop_id or criteria.only_technician_id)
+    )
     options: list[Option] = []
     for c in candidates:
         if c.technician_id in criteria.excluded_technician_ids:

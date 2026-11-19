@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from enum import StrEnum
+from typing import Any
 
 from fastapi import APIRouter, Header, Query, Request, Response
 from sqlalchemy import select
@@ -15,8 +16,10 @@ from app.core.errors import NotFound
 from app.domain import enums
 from app.domain.pricing import DIAGNOSTIC_FEE_CENTS
 from app.models import Homeowner, ProcessedWebhook, RequestPhoto, Shop
+from app.services.provider_service import ProviderService
 
 log = logging.getLogger(__name__)
+
 router = APIRouter(tags=["public"])
 
 LABELS = {
@@ -92,6 +95,20 @@ async def get_photo(
         media_type=photo.content_type,
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+@router.get("/providers/technicians/{technician_id}")
+async def public_technician(
+    technician_id: uuid.UUID, session: SessionDep, c: ContainerDep
+) -> dict[str, Any]:
+    """Public card for a shared technician link (no customer data)."""
+    return await ProviderService(session, c).public_technician(technician_id)
+
+
+@router.get("/providers/shops/{shop_id}")
+async def public_shop(shop_id: uuid.UUID, session: SessionDep, c: ContainerDep) -> dict[str, Any]:
+    """Public card for a shared company link."""
+    return await ProviderService(session, c).public_shop(shop_id)
 
 
 @router.post("/webhooks/payments", status_code=200)

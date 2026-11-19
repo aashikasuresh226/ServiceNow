@@ -145,7 +145,17 @@ class UnitUpdateIn(Model):
 
 
 class RatingIn(Model):
-    rating: int = Field(ge=1, le=5)
+    rating: int | None = Field(None, ge=1, le=5)  # the technician (older apps send only this)
+    technician_rating: int | None = Field(None, ge=1, le=5)
+    shop_rating: int | None = Field(None, ge=1, le=5)
+    review: str | None = Field(None, max_length=500)
+
+
+class MatchIn(Model):
+    """Who the homeowner wants: a company, a specific technician, or neither (soonest)."""
+
+    shop_id: uuid.UUID | None = None
+    technician_id: uuid.UUID | None = None
 
 
 class PhotoOut(Model):
@@ -212,6 +222,9 @@ class RequestOut(Model):
     quote: QuoteInfo | None
     payment: PaymentInfo
     rating: int | None
+    shop_rating: int | None = None
+    preferred_shop_id: uuid.UUID | None = None
+    preferred_technician_id: uuid.UUID | None = None
     canceled_reason: str | None
     completed_at: datetime | None
 
@@ -227,6 +240,8 @@ class ShopOut(Model):
     timezone: str
     is_live: bool
     payouts_enabled: bool
+    rating: float | None = None
+    rating_count: int = 0
     payout_schedule: str
     scheduling_provider: str
     scheduling_last_synced_at: datetime | None
@@ -359,3 +374,7 @@ class ShopJobOut(Model):
     quote: QuoteInfo | None
     payment: PaymentInfo
     payout_cents: int | None  # what the shop receives after the platform fee
+    picked_by_customer: bool = False  # the homeowner chose this company / technician
+    technician_rating: int | None = None
+    shop_rating: int | None = None
+    review: str | None = None

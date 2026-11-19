@@ -74,7 +74,18 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     platform_fee_cents: Mapped[int | None] = mapped_column(Integer)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     canceled_reason: Mapped[str | None] = mapped_column(String(200))
-    rating: Mapped[int | None] = mapped_column(Integer)
+    rating: Mapped[int | None] = mapped_column(Integer)  # the technician, 1-5
+    shop_rating: Mapped[int | None] = mapped_column(Integer)  # the company, 1-5
+    review: Mapped[str | None] = mapped_column(String(500))
+
+    # Homeowner's choice when requesting: a company, a specific technician, or neither
+    # (soonest qualified tech). Matching only considers that company / technician.
+    preferred_shop_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("shops.id", ondelete="SET NULL")
+    )
+    preferred_technician_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("technicians.id", ondelete="SET NULL")
+    )
 
     # Optimistic locking: concurrent writers (API + worker) cannot silently clobber each other.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -83,8 +94,8 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     photos = relationship(
         "RequestPhoto", back_populates="request", cascade="all, delete-orphan", lazy="selectin"
     )
-    technician = relationship("Technician", lazy="joined")
-    shop = relationship("Shop", lazy="joined")
+    technician = relationship("Technician", lazy="joined", foreign_keys=[technician_id])
+    shop = relationship("Shop", lazy="joined", foreign_keys=[shop_id])
     homeowner = relationship("Homeowner", lazy="joined")
 
 

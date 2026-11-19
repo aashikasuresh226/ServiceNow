@@ -61,6 +61,8 @@ class MatchingService:
             excluded_technician_ids=frozenset(
                 uuid.UUID(t) for t in (request.declined_technician_ids or [])
             ),
+            only_shop_id=request.preferred_shop_id,
+            only_technician_id=request.preferred_technician_id,
         )
 
     @property
@@ -144,6 +146,10 @@ class MatchingService:
             raise InvalidState("This request isn't ready for matching")
         now = self.c.clock.now()
         best, report = await self._pick_and_reserve(request, now)
+        if best is None and report.chosen:
+            # The homeowner picked someone who can't take it: say so and let them choose
+            # again (don't silently waitlist them).
+            raise AppError(report.message(), code="provider_unavailable")
         if best:
             self._assign(request, best, now)
             request.proposal_expires_at = now + timedelta(
@@ -256,7 +262,12 @@ class MatchingService:
         await self.payments.release_hold(request)
         await self.calendar.release(request)
         clear_assignment(request)
+        # A picked technician declined: try other techs at the same company, then anyone.
+        request.preferred_technician_id = None
         best, report = await self._pick_and_reserve(request, now)
+        if best is None and request.preferred_shop_id:
+            request.preferred_shop_id = None
+            best, report = await self._pick_and_reserve(request, now)
         if best:
             await self._offer_confirmed(request, best, now, note=reason)
         else:

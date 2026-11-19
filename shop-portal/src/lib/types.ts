@@ -33,6 +33,8 @@ export type Shop = {
   timezone: string;
   is_live: boolean;
   payouts_enabled: boolean;
+  rating: number | null;
+  rating_count: number;
   payout_schedule: 'daily' | 'weekly' | 'manual';
   scheduling_provider: 'none' | 'servicetitan' | 'housecall_pro';
   scheduling_last_synced_at: string | null;
@@ -139,4 +141,9 @@ export type Job = {
   quote: { final_price_cents: number; notes: string | null } | null;
   payment: { authorized_cents: number | null; captured_cents: number | null };
   payout_cents: number | null;
+  /** The homeowner chose your company or technician (e.g. from a shared link). */
+  picked_by_customer: boolean;
+  technician_rating: number | null;
+  shop_rating: number | null;
+  review: string | null;
 };

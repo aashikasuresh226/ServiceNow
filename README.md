@@ -212,6 +212,22 @@ Two homeowners can't book the same slot: the tech's row is locked during reserva
 Postgres) and the slot is re-planned with fresh data before it's confirmed; requests use
 optimistic version checks so the API and the worker can't overwrite each other.
 
+### Choosing, rating and sharing
+
+- **Who should come?** Before booking, homeowners pick *Soonest* (default), a **company**
+  (its soonest technician) or a **specific technician**. Each option shows its earliest
+  arrival from the same scheduling engine. If the pick has no opening, the app says so and
+  lets them choose again; if a picked technician declines, the job goes to another tech at
+  the same company, then to anyone. The shop sees "Customer chose you".
+- **Ratings:** after the job, homeowners rate the technician and the company separately
+  (1–5 stars, plus an optional comment). Shops see both on completed jobs; the company
+  rating shows on the dashboard.
+- **Share:** the completed screen has ready-made messages recommending the technician or
+  the company (rating, shop phone, booking link) with Share…, Text, WhatsApp and Copy. The
+  link opens a public page (`/p/technician/<id>` or `/p/shop/<id>`) with ratings, phone and
+  a **Book** button; a friend who signs up gets that technician or company preselected.
+  Set `HVAC_PUBLIC_APP_URL` to the homeowner app's real address once it's hosted.
+
 ### Technician calendars
 
 When the homeowner confirms, the job is put on the assigned tech's calendar as *Pending*
@@ -237,6 +253,10 @@ design pressure, SEER/SEER2/EER/HSPF/AFUE, gas type, plus visible problems, the 
 with confidence, a safety warning, and retake advice for unreadable labels. The server
 validates every field, computes age from the year and adds plain notes (e.g. past typical
 lifespan, R-22 phased out). **Prices never come from the model** (`domain/pricing.py`).
+
+If Claude fails (bad key, no credits, network), the request still goes ahead: the
+homeowner sees the reason on the diagnosis screen and the technician diagnoses on site. The
+full error is in the API window.
 
 **Scaling:** each API process allows `HVAC_AI_MAX_CONCURRENCY` (8) Claude calls at once;
 the SDK retries rate-limit/overload errors with backoff; the instructions are prompt-cached;
@@ -300,7 +320,7 @@ shop-portal/src/ pages/, components/, lib/
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"   # test + lint tools (once)
-.\.venv\Scripts\python.exe -m pytest -q          # 64 tests: matching, sign-in, calendars, full flows
+.\.venv\Scripts\python.exe -m pytest -q          # 71 tests: matching, sign-in, calendars, full flows
 .\.venv\Scripts\python.exe -m ruff check app tests
 .\.venv\Scripts\python.exe -m mypy app
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload   # API docs at http://localhost:8000/docs

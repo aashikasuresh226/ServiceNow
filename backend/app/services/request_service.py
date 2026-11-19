@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import asdict
 
@@ -9,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
-from app.core.errors import AppError, InvalidState, NotFound
+from app.core.errors import AppError, ExternalServiceError, InvalidState, NotFound
 from app.domain.enums import (
     Actor,
     EquipmentType,
@@ -27,6 +28,9 @@ from app.services.validation import validate_options
 
 S = RequestStatus
 EDITABLE_STATUSES = {S.DRAFT.value, S.ANALYZED.value}
+
+
+log = logging.getLogger(__name__)
 
 
 class RequestService:
@@ -121,7 +125,7 @@ class RequestService:
                 limit=self.c.settings.ai_analyses_per_hour,
                 window_seconds=3600,
             )
-        result = await self._run_analysis(request)
+        result, ai_error = await self._run_analysis(request)
         estimate = estimate_for(result.diagnosis.primary_issue)
         price_entry = PRICE_BOOK[result.diagnosis.primary_issue]
 
@@ -140,7 +144,8 @@ class RequestService:
             "confidence": result.diagnosis.confidence.value,
             "safety_warning": result.diagnosis.safety_warning,
             "visible_issues": result.diagnosis.visible_issues,
-            "ai_used": self.c.analyzer is not None,
+            "ai_used": self.c.analyzer is not None and ai_error is None,
+            "ai_error": ai_error,
         }
         request.issue_category = result.diagnosis.primary_issue.value
         request.requires_refrigerant_work = price_entry.requires_refrigerant_work or any(
@@ -152,26 +157,33 @@ class RequestService:
         await self.s.flush()
         return request
 
-    async def _run_analysis(self, request: ServiceRequest) -> AnalysisResult:
+    async def _run_analysis(self, request: ServiceRequest) -> tuple[AnalysisResult, str | None]:
+        """The analysis, plus why it failed (None when it worked or is switched off).
+        A failure never blocks the request: the technician diagnoses on site."""
+        on_site = AnalysisResult(
+            unit=UnitInfo(None, None, None, EquipmentType.UNKNOWN, None),
+            diagnosis=Diagnosis(
+                primary_issue=IssueCategory.GENERAL_DIAGNOSTIC,
+                summary="Your technician will diagnose the problem on site.",
+            ),
+        )
         if self.c.analyzer is None:
-            # Photo analysis is switched off (no Anthropic key): nothing is guessed.
-            return AnalysisResult(
-                unit=UnitInfo(None, None, None, EquipmentType.UNKNOWN, None),
-                diagnosis=Diagnosis(
-                    primary_issue=IssueCategory.GENERAL_DIAGNOSTIC,
-                    summary="Your technician will diagnose the problem on site.",
-                ),
-            )
+            return on_site, None  # switched off (no Anthropic key): nothing is guessed
         photos = [
             PhotoInput(await self.c.storage.read(p.storage_key), p.content_type)
             for p in request.photos
         ]
-        return await self.c.analyzer.analyze(
-            symptoms=request.symptoms,
-            description=request.description,
-            photos=photos,
-            current_year=self.c.clock.now().year,
-        )
+        try:
+            result = await self.c.analyzer.analyze(
+                symptoms=request.symptoms,
+                description=request.description,
+                photos=photos,
+                current_year=self.c.clock.now().year,
+            )
+        except ExternalServiceError as exc:
+            log.warning("Photo analysis failed for request %s: %s", request.id, exc.message)
+            return on_site, getattr(exc, "reason", None) or exc.message
+        return result, None
 
     async def update_unit(
         self,

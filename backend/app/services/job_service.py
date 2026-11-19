@@ -99,20 +99,44 @@ class JobService:
             message = "Your HVAC job is complete. Thanks for using HVAC Connect!"
         await self._notify(request, message)
 
-    async def rate(self, request: ServiceRequest, rating: int) -> None:
+    async def rate(
+        self,
+        request: ServiceRequest,
+        *,
+        technician_rating: int | None,
+        shop_rating: int | None,
+        review: str | None = None,
+    ) -> None:
+        """Homeowner rates the technician and the company (1-5 each), once per job."""
         if request.status != S.COMPLETED.value:
             raise InvalidState("You can rate a job once it's complete")
-        if request.rating is not None:
-            raise InvalidState("You already rated this job")
-        if not 1 <= rating <= 5:
-            raise AppError("Rating must be 1 to 5", code="invalid_rating")
-        request.rating = rating
-        tech = (
-            await self.s.get(Technician, request.technician_id) if request.technician_id else None
-        )
-        if tech:
-            tech.rating_sum += rating
-            tech.rating_count += 1
+        if technician_rating is None and shop_rating is None:
+            raise AppError("Choose a rating", code="invalid_rating")
+        for value in (technician_rating, shop_rating):
+            if value is not None and not 1 <= value <= 5:
+                raise AppError("Ratings must be 1 to 5", code="invalid_rating")
+        if technician_rating is not None:
+            if request.rating is not None:
+                raise InvalidState("You already rated this technician")
+            request.rating = technician_rating
+            tech = (
+                await self.s.get(Technician, request.technician_id)
+                if request.technician_id
+                else None
+            )
+            if tech:
+                tech.rating_sum += technician_rating
+                tech.rating_count += 1
+        if shop_rating is not None:
+            if request.shop_rating is not None:
+                raise InvalidState("You already rated this company")
+            request.shop_rating = shop_rating
+            shop = await self.s.get(Shop, request.shop_id) if request.shop_id else None
+            if shop:
+                shop.rating_sum += shop_rating
+                shop.rating_count += 1
+        if review and review.strip():
+            request.review = review.strip()[:500]
 
     async def homeowner_cancel(self, request: ServiceRequest) -> None:
         if RequestStatus(request.status) not in HOMEOWNER_CANCELABLE:

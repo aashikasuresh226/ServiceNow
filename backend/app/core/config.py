@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     ai_provider: str = "auto"  # auto (on when a key is set) | anthropic | off | fake (tests)
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5-5"
-    anthropic_effort: str = "medium"  # low | medium | high: how hard Claude thinks
+    anthropic_effort: str = "low"  # low | medium | high: how hard Claude thinks
     ai_max_concurrency: int = 8  # simultaneous Claude calls per API process
     ai_analyses_per_hour: int = 15  # per homeowner, caps cost from abuse
 
@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     max_photo_bytes: int = 10 * 1024 * 1024
     max_photos_per_request: int = 5
 
+    public_app_url: str = "http://localhost:8081"  # homeowner app, used in share links
     public_web_url: str = "http://localhost:5173"  # shop portal, used for Stripe return URLs
 
     # --- Matching / marketplace tuning -----------------------------------------

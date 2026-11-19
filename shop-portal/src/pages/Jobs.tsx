@@ -20,6 +20,10 @@ const STATUS_LABEL: Record<string, string> = {
 function JobSummary({ job }: { job: Job }) {
   const { options } = usePortal();
   return (
+    <>
+    {job.picked_by_customer ? (
+      <p className="badge success" style={{ alignSelf: 'flex-start' }}>Customer chose you</p>
+    ) : null}
     <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
       {job.photos[0] ? (
         <img className="photo-thumb" src={job.photos[0].url} alt="Homeowner's photo of the unit" />
@@ -51,6 +55,7 @@ function JobSummary({ job }: { job: Job }) {
         <span><span className="muted">Quoted to homeowner:</span> from {money(job.estimate.low_cents)}</span>
       </div>
     </div>
+    </>
   );
 }
 
@@ -166,6 +171,14 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
           <p className="small"><strong>Done · {money(job.quote?.final_price_cents)}</strong> · collect payment directly</p>
         )
       ) : null}
+      {job.technician_rating || job.shop_rating ? (
+        <p className="small">
+          Rated {job.technician_rating ? <>technician <strong>★ {job.technician_rating}</strong></> : null}
+          {job.technician_rating && job.shop_rating ? ' · ' : null}
+          {job.shop_rating ? <>company <strong>★ {job.shop_rating}</strong></> : null}
+          {job.review ? <span className="muted"> · “{job.review}”</span> : null}
+        </p>
+      ) : null}
       <ErrorAlert message={act.error} />
     </section>
   );
@@ -189,15 +202,26 @@ export function JobsPage() {
       {done.data?.length ? (
         <div className="card table-wrap">
           <table className="table">
-            <thead><tr><th>Date</th><th>Technician</th><th>Work</th><th>Charged</th><th>Your payout</th></tr></thead>
+            <thead><tr><th>Date</th><th>Technician</th><th>Work</th><th>Price</th><th>Your payout</th><th>Ratings</th></tr></thead>
             <tbody>
               {done.data.map((j) => (
                 <tr key={j.id}>
                   <td>{new Date(j.created_at).toLocaleDateString()}</td>
-                  <td>{j.technician_name}</td>
+                  <td>
+                    {j.technician_name}
+                    {j.picked_by_customer ? <span className="badge success small" style={{ marginLeft: 6 }}>Customer chose you</span> : null}
+                  </td>
                   <td>{j.diagnosis?.primary_issue_label ?? 'Service'}</td>
-                  <td>{money(j.payment.captured_cents)}</td>
-                  <td><strong>{money(j.payout_cents)}</strong></td>
+                  <td>{money(j.payment.captured_cents ?? j.quote?.final_price_cents)}</td>
+                  <td><strong>{j.payment.captured_cents != null ? money(j.payout_cents) : 'Collect directly'}</strong></td>
+                  <td className="small">
+                    {j.technician_rating || j.shop_rating ? (
+                      <span title={j.review ?? undefined}>
+                        Tech {j.technician_rating ? `★ ${j.technician_rating}` : '—'} · Company {j.shop_rating ? `★ ${j.shop_rating}` : '—'}
+                        {j.review ? <span className="muted" style={{ display: 'block' }}>“{j.review}”</span> : null}
+                      </span>
+                    ) : <span className="muted">Not rated yet</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>

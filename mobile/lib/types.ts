@@ -76,6 +76,8 @@ export type Diagnosis = {
   visible_issues?: string[];
   /** false when photo analysis is switched off (no Anthropic key yet). */
   ai_used?: boolean;
+  /** Why photo analysis failed, when it did (the request still goes ahead). */
+  ai_error?: string | null;
 };
 
 export type TechnicianSummary = {
@@ -123,6 +125,9 @@ export type ServiceRequest = {
   quote: { final_price_cents: number; notes: string | null } | null;
   payment: { authorized_cents: number | null; captured_cents: number | null };
   rating: number | null;
+  shop_rating: number | null;
+  preferred_shop_id: string | null;
+  preferred_technician_id: string | null;
   canceled_reason: string | null;
   completed_at: string | null;
 };
@@ -136,3 +141,55 @@ export type CardSetup = {
 };
 
 export type OtpStarted = { phone: string; resend_after_seconds: number; dev_code: string | null };
+
+export type ProviderShop = {
+  id: string;
+  name: string;
+  rating: number | null;
+  rating_count: number;
+  technician_count: number;
+  distance_km: number;
+  arrival_at: string;
+};
+
+export type ProviderTech = {
+  id: string;
+  name: string;
+  photo_url: string | null;
+  shop_id: string;
+  shop_name: string;
+  rating: number | null;
+  rating_count: number;
+  certifications: string[];
+  distance_km: number;
+  arrival_at: string;
+};
+
+export type Providers = { shops: ProviderShop[]; technicians: ProviderTech[] };
+
+type ShopCard = {
+  id: string;
+  name: string;
+  phone: string | null;
+  area: string | null;
+  rating: number | null;
+  rating_count: number;
+  taking_requests: boolean;
+};
+
+export type PublicProvider =
+  | ({ kind: 'shop' } & ShopCard)
+  | {
+      kind: 'technician';
+      id: string;
+      name: string;
+      photo_url: string | null;
+      rating: number | null;
+      rating_count: number;
+      certifications: string[];
+      equipment_types: string[];
+      shop: ShopCard;
+    };
+
+export type ShareTarget = { title: string; url: string; message: string; phone?: string | null };
+export type ShareInfo = { technician: ShareTarget; shop: ShareTarget };

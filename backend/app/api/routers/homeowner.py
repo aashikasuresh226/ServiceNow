@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, File, Request, UploadFile, status
 
@@ -14,6 +15,7 @@ from app.schemas.api import (
     CardSetupOut,
     HomeownerOut,
     HomeownerUpdateIn,
+    MatchIn,
     OtpStartOut,
     PhoneStartIn,
     PhoneVerifyIn,
@@ -26,6 +28,7 @@ from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
+from app.services.provider_service import ProviderService
 from app.services.request_service import RequestService
 
 router = APIRouter(tags=["homeowner"])
@@ -167,9 +170,20 @@ async def update_unit(
 
 @router.post("/requests/{request_id}/match", response_model=RequestOut)
 async def find_technician(
-    request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
+    request_id: uuid.UUID,
+    me: HomeownerDep,
+    session: SessionDep,
+    c: ContainerDep,
+    body: MatchIn | None = None,
 ) -> RequestOut:
+    """Book the soonest qualified technician, or the company/technician the homeowner picked."""
     request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    if request.status in ("analyzed", "waitlisted"):
+        await ProviderService(session, c).set_choice(
+            request,
+            shop_id=body.shop_id if body else None,
+            technician_id=body.technician_id if body else None,
+        )
     await MatchingService(session, c).find_technician(request)
     return await _present(session, c, request)
 
@@ -206,5 +220,28 @@ async def rate_request(
     request_id: uuid.UUID, body: RatingIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
 ) -> RequestOut:
     request = await RequestService(session, c).get_for_homeowner(request_id, me)
-    await JobService(session, c).rate(request, body.rating)
+    await JobService(session, c).rate(
+        request,
+        technician_rating=body.technician_rating or body.rating,
+        shop_rating=body.shop_rating,
+        review=body.review,
+    )
     return await _present(session, c, request)
+
+
+@router.get("/requests/{request_id}/share")
+async def share_request(
+    request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> dict[str, Any]:
+    """Ready-to-send messages recommending this job's technician and company."""
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    return await ProviderService(session, c).share_for(request)
+
+
+@router.get("/requests/{request_id}/providers")
+async def list_providers(
+    request_id: uuid.UUID, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> dict[str, Any]:
+    """Companies and technicians who can take this request, soonest first."""
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    return await ProviderService(session, c).options_for(request)

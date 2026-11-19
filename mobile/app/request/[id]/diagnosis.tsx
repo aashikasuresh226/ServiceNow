@@ -79,7 +79,14 @@ export default function DiagnosisScreen() {
           <Body style={{ flex: 1, color: colors.amberInk }}>{unit.photo_feedback}</Body>
         </Card>
       ) : null}
-      {dx.ai_used === false ? (
+      {dx.ai_error ? (
+        <Card tone="amber" style={{ gap: 4 }}>
+          <Body style={{ color: colors.amberInk, fontWeight: '700' }}>Photo analysis didn't work this time</Body>
+          <Body style={{ color: colors.amberInk }}>Reason: {dx.ai_error}.</Body>
+          <Muted>You can still book: your photos and description go to the technician, who
+            diagnoses it on site.</Muted>
+        </Card>
+      ) : dx.ai_used === false ? (
         <Card tone="muted">
           <Muted>Photo analysis isn't switched on yet, so we haven't guessed the problem. Your
             photos and description go to the technician, who diagnoses it on site.</Muted>

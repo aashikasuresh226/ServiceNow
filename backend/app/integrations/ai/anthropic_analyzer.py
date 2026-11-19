@@ -62,24 +62,29 @@ SPEC_FIELDS: dict[str, str] = {
     "other": "Other",
 }
 
-SYSTEM_PROMPT = """You are an experienced residential HVAC technician triaging a service \
+FORMAT_RULES = """Output format: fill every field. Use "" for text that isn't printed or isn't \
+legible, 0 for an unknown manufacture_year or tonnage, and "unknown" for an unknown fuel."""
+
+
+SYSTEM_PROMPT = (
+    """You are an experienced residential HVAC technician triaging a service \
 request before a technician visits a home in the United States.
 
 You get photos from the homeowner (usually the unit's data plate / rating label, sometimes the \
 whole indoor or outdoor unit) and their description of the problem.
 
 Reading the data plate:
-- Copy brand, model number and serial number exactly as printed. Use null if a value isn't \
+- Copy brand, model number and serial number exactly as printed. Use "" if a value isn't \
 legible; never guess characters.
 - Copy every other value printed on the plate exactly as printed, including units (for \
 example "36,000 BTU/h", "208/230 V", "1", "60 Hz", "18.6", "R-410A", "7 lb 4 oz", "SEER2 \
-14.3"). Use null for anything not printed or not legible.
+14.3"). Use "" for anything not printed or not legible.
 - Manufacture year: use a date printed on the plate if there is one. Otherwise decode it from \
 the serial number only when you are confident of that brand's serial format (Carrier, Bryant, \
 Payne, Trane, American Standard, Lennox, Goodman, Amana, Daikin, Rheem, Ruud, York, Coleman \
-and others have documented formats). If unsure, null.
+and others have documented formats). If unsure, 0.
 - Tonnage: from the printed capacity (12,000 BTU/h = 1 ton) or the capacity digits in the \
-model number (e.g. "36" = 3 tons) when you're confident.
+model number (e.g. "36" = 3 tons) when you're confident; otherwise 0.
 - Equipment type: central AC condenser, heat pump, furnace, boiler, mini-split or packaged \
 unit. Model-number prefixes and label wording usually reveal it.
 
@@ -91,17 +96,20 @@ level. Use "general_diagnostic" when the evidence is thin.
 - Write a one-sentence, plain-language summary for the homeowner. No jargon, no prices.
 - If anything suggests a safety risk (gas smell, burning smell, sparking, scorched wiring, \
 carbon monoxide symptoms), set safety_warning to a short instruction (e.g. "Turn the system \
-off at the thermostat and the breaker").
+off at the thermostat and the breaker"); otherwise "".
 - If the photos don't show HVAC equipment or the plate can't be read, say how to retake them \
 in photo_feedback (e.g. "Move closer to the silver label on the side of the outdoor unit"). \
-Otherwise null."""
+Otherwise "".
+
+"""
+    + FORMAT_RULES
+)
 
 
-def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
-    return {"anyOf": [schema, {"type": "null"}]}
-
-
-_TEXT = _nullable({"type": "string"})
+# Structured outputs allow at most 16 nullable/union fields per request, so the
+# schema has none: every field is required, and "" / 0 / "unknown" mean "not on the
+# label". parse_analysis turns those back into None.
+_TEXT: dict[str, Any] = {"type": "string"}
 
 RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -111,46 +119,29 @@ RESPONSE_SCHEMA: dict[str, Any] = {
         "model_number": _TEXT,
         "serial_number": _TEXT,
         "equipment_type": {"type": "string", "enum": [e.value for e in EquipmentType]},
-        "manufacture_year": _nullable({"type": "integer"}),
-        "tonnage": _nullable({"type": "number"}),
-        "fuel": _nullable({"type": "string", "enum": list(FUELS)}),
+        "manufacture_year": {"type": "integer"},
+        "tonnage": {"type": "number"},
+        "fuel": {"type": "string", "enum": [*FUELS, "unknown"]},
         "specs": {
             "type": "object",
             "properties": {key: _TEXT for key in SPEC_FIELDS},
             "required": list(SPEC_FIELDS),
             "additionalProperties": False,
         },
-        "visible_issues": {"type": "array", "items": {"type": "string"}},
+        "visible_issues": {"type": "array", "items": _TEXT},
         "primary_issue": {"type": "string", "enum": [c.value for c in IssueCategory]},
         "alternatives": {
             "type": "array",
             "items": {"type": "string", "enum": [c.value for c in IssueCategory]},
         },
         "confidence": {"type": "string", "enum": [c.value for c in Confidence]},
-        "summary": {"type": "string"},
+        "summary": _TEXT,
         "safety_warning": _TEXT,
         "photo_feedback": _TEXT,
     },
-    "required": [
-        "photos_show_hvac_equipment",
-        "brand",
-        "model_number",
-        "serial_number",
-        "equipment_type",
-        "manufacture_year",
-        "tonnage",
-        "fuel",
-        "specs",
-        "visible_issues",
-        "primary_issue",
-        "alternatives",
-        "confidence",
-        "summary",
-        "safety_warning",
-        "photo_feedback",
-    ],
     "additionalProperties": False,
 }
+RESPONSE_SCHEMA["required"] = list(RESPONSE_SCHEMA["properties"])
 
 
 def prepare_image(photo: PhotoInput) -> tuple[bytes, str] | None:
@@ -228,44 +219,25 @@ class AnthropicUnitAnalyzer:
 
         async with self._slots:
             try:
-                response = await self._client.messages.create(
-                    model=self._model,
-                    max_tokens=8000,
-                    # Same instructions every time: cached, so repeat calls are cheaper/faster.
-                    system=cast(
-                        Any,
-                        [
-                            {
-                                "type": "text",
-                                "text": SYSTEM_PROMPT,
-                                "cache_control": {"type": "ephemeral"},
-                            }
-                        ],
-                    ),
-                    messages=cast(Any, [{"role": "user", "content": content}]),
-                    output_config=cast(
-                        Any,
-                        {
-                            "effort": self._effort,
-                            "format": {"type": "json_schema", "schema": RESPONSE_SCHEMA},
-                        },
-                    ),
-                )
-            except anthropic.AuthenticationError as exc:
-                log.error("Anthropic rejected the API key: %s", exc)
-                raise ExternalServiceError("Photo analysis isn't available right now") from exc
+                response = await self._create(content, structured=True)
+            except anthropic.BadRequestError as exc:
+                # Shouldn't happen, but never let a schema/parameter change in the API
+                # break diagnosis: retry once asking for plain JSON in the text.
+                log.warning("Structured analysis rejected (%s); retrying as plain JSON", exc)
+                try:
+                    response = await self._create(content, structured=False)
+                except anthropic.APIError as retry_exc:
+                    raise AnalysisFailed(_reason(retry_exc)) from retry_exc
             except anthropic.APIError as exc:
-                log.warning("AI analysis failed: %s", exc)
-                raise ExternalServiceError("Photo analysis is unavailable right now") from exc
+                raise AnalysisFailed(_reason(exc)) from exc
 
-        text = next(
-            (b.text for b in response.content if isinstance(b, anthropic.types.TextBlock)), ""
-        )
-        try:
-            data = json.loads(text)
-        except ValueError as exc:
-            log.warning("AI returned non-JSON (stop_reason=%s)", response.stop_reason)
-            raise ExternalServiceError("Photo analysis returned an unexpected response") from exc
+        text = "".join(b.text for b in response.content if isinstance(b, anthropic.types.TextBlock))
+        parsed = _extract_json(text)
+        if parsed is None:
+            log.warning(
+                "AI returned no usable JSON (stop_reason=%s): %.300s", response.stop_reason, text
+            )
+            raise AnalysisFailed("Claude's answer couldn't be read")
         usage = response.usage
         log.info(
             "AI analysis: %s photos, %s input + %s output tokens (cache read %s)",
@@ -274,7 +246,81 @@ class AnthropicUnitAnalyzer:
             usage.output_tokens,
             getattr(usage, "cache_read_input_tokens", 0),
         )
-        return parse_analysis(data, current_year=current_year)
+        return parse_analysis(parsed, current_year=current_year)
+
+    async def _create(self, content: list[dict[str, Any]], *, structured: bool) -> Any:
+        system = SYSTEM_PROMPT if structured else SYSTEM_PROMPT + PLAIN_JSON_RULES
+        extra: dict[str, Any] = {}
+        if structured:
+            extra["output_config"] = {
+                "effort": self._effort,
+                "format": {"type": "json_schema", "schema": RESPONSE_SCHEMA},
+            }
+        return await self._client.messages.create(
+            model=self._model,
+            max_tokens=8000,
+            # Same instructions every time: cached, so repeat calls are cheaper/faster.
+            system=cast(
+                Any, [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+            ),
+            messages=cast(Any, [{"role": "user", "content": content}]),
+            **extra,
+        )
+
+
+class AnalysisFailed(ExternalServiceError):
+    """Claude couldn't analyze the photo. `reason` is short and safe to show in the app."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Photo analysis failed: {reason}")
+        self.reason = reason
+
+
+def _reason(exc: anthropic.APIError) -> str:
+    """Turn an Anthropic error into a short, useful reason (and log the full one)."""
+    log.error("Anthropic API error: %s", exc)
+    text = str(exc).lower()
+    if isinstance(exc, anthropic.AuthenticationError):
+        return "the Anthropic API key was rejected (check HVAC_ANTHROPIC_API_KEY)"
+    if "credit balance" in text or "billing" in text:
+        return "the Anthropic account is out of credits (add credits in the Console)"
+    if isinstance(exc, anthropic.PermissionDeniedError):
+        return "the Anthropic key doesn't have access to this model"
+    if isinstance(exc, anthropic.NotFoundError):
+        return "the Claude model name isn't available (check HVAC_ANTHROPIC_MODEL)"
+    if isinstance(exc, anthropic.RateLimitError):
+        return "too many requests to Anthropic right now; try again in a minute"
+    if isinstance(exc, anthropic.APIConnectionError | anthropic.APITimeoutError):
+        return "couldn't reach Anthropic (check the internet connection)"
+    if isinstance(exc, anthropic.InternalServerError):
+        return "Anthropic is overloaded right now; try again shortly"
+    message = getattr(exc, "message", "") or str(exc)
+    return message[:160]
+
+
+def _extract_json(text: str) -> dict[str, Any] | None:
+    """The JSON object in the reply (tolerates code fences or text around it)."""
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+PLAIN_JSON_RULES = (
+    "\n\nReply with ONLY a JSON object (no code fences, no other text) with these keys: "
+    + ", ".join(RESPONSE_SCHEMA["properties"])
+    + ". specs is an object with these keys: "
+    + ", ".join(SPEC_FIELDS)
+    + ". equipment_type is one of: "
+    + ", ".join(e.value for e in EquipmentType)
+    + ". primary_issue and alternatives use: "
+    + ", ".join(c.value for c in IssueCategory)
+    + ". confidence is low, medium or high."
+)
 
 
 def parse_analysis(data: dict[str, Any], *, current_year: int) -> AnalysisResult:
@@ -292,7 +338,7 @@ def parse_analysis(data: dict[str, Any], *, current_year: int) -> AnalysisResult
         return float(value) if low <= value <= high else None
 
     year = data.get("manufacture_year")
-    year = year if isinstance(year, int) and 1960 <= year <= current_year else None
+    year = year if isinstance(year, int) and 1960 <= year <= current_year else None  # 0 = unknown
     age = current_year - year if year is not None else None
 
     specs_value = data.get("specs")

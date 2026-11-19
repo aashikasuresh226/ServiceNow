@@ -10,6 +10,9 @@ import type {
   Homeowner,
   Options,
   OtpStarted,
+  Providers,
+  PublicProvider,
+  ShareInfo,
   ServiceRequest,
   Tokens,
 } from './types';
@@ -162,12 +165,20 @@ export const api = {
   analyze: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/analyze`),
   updateUnit: (id: string, data: Partial<UnitUpdate>) =>
     request<ServiceRequest>('PATCH', `/requests/${id}/unit`, data),
-  match: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/match`),
+  /** Book the soonest technician, or the company / technician the homeowner picked. */
+  match: (id: string, choice?: { shop_id?: string; technician_id?: string }) =>
+    request<ServiceRequest>('POST', `/requests/${id}/match`, choice ?? {}),
+  providers: (id: string) => request<Providers>('GET', `/requests/${id}/providers`),
+  share: (id: string) => request<ShareInfo>('GET', `/requests/${id}/share`),
+  publicTechnician: (id: string) =>
+    request<PublicProvider>('GET', `/providers/technicians/${id}`, undefined, { auth: false }),
+  publicShop: (id: string) =>
+    request<PublicProvider>('GET', `/providers/shops/${id}`, undefined, { auth: false }),
   confirm: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/confirm`),
   approveQuote: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/approve-quote`),
   cancel: (id: string) => request<ServiceRequest>('POST', `/requests/${id}/cancel`),
-  rate: (id: string, rating: number) =>
-    request<ServiceRequest>('POST', `/requests/${id}/rating`, { rating }),
+  rate: (id: string, ratings: { technician_rating?: number; shop_rating?: number; review?: string }) =>
+    request<ServiceRequest>('POST', `/requests/${id}/rating`, ratings),
 };
 
 export type UnitUpdate = {

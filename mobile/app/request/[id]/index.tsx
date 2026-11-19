@@ -11,12 +11,13 @@ import { Icon } from '@/components/icons';
 import type { IconName } from '@/components/icons';
 import { Avatar, RouteMap, Ring } from '@/components/illustrations';
 import { colors } from '@/components/theme';
-import { Badge, Body, Button, Card, Checkbox, ErrorText, KeyValue, Loading, Muted, Row, Screen, StepHeader, TextLink, Title } from '@/components/ui';
+import { Badge, Body, Button, Card, Checkbox, ErrorText, Field, KeyValue, Loading, Muted, Row, Screen, Segmented, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { POLL_INTERVAL_MS } from '@/lib/config';
 import { clockTime, countdown, isScheduled, miles, minutesLabel, money, visitTime } from '@/lib/format';
 import { labelFor, useAction, useCountdown, useOptions, usePolling } from '@/lib/hooks';
-import type { ServiceRequest } from '@/lib/types';
+import { copyText, shareSheet, textMessage, whatsApp } from '@/lib/share';
+import type { ServiceRequest, ShareInfo } from '@/lib/types';
 import { decorative } from '@/components/a11y';
 
 const LIVE = new Set(['proposed', 'waitlisted', 'offered', 'dispatched', 'en_route', 'on_site',
@@ -357,9 +358,18 @@ function InProgress({ request }: Props) {
 }
 
 function Completed({ request, onChange }: Props) {
-  const rate = useAction(async (stars: number) => onChange(await api.rate(request.id, stars)));
+  const t = request.technician;
+  const [techStars, setTechStars] = useState(request.rating ?? 0);
+  const [shopStars, setShopStars] = useState(request.shop_rating ?? 0);
+  const [review, setReview] = useState('');
+  const rated = request.rating != null || request.shop_rating != null;
+  const rate = useAction(async () => onChange(await api.rate(request.id, {
+    technician_rating: techStars || undefined,
+    shop_rating: shopStars || undefined,
+    review: review.trim() || undefined,
+  })));
   return (
-    <Screen footer={<Button label="Done" onPress={() => router.replace('/home')} />}>
+    <Screen footer={<Button label="Done" variant={rated ? 'primary' : 'secondary'} onPress={() => router.replace('/home')} />}>
       <View style={{ alignItems: 'center', gap: 8, paddingTop: 12 }}>
         <View style={[styles.checkCircle, { width: 56, height: 56, borderRadius: 28 }]}>
           <Icon name="check" size={28} color="#FFF" strokeWidth={3} />
@@ -367,32 +377,103 @@ function Completed({ request, onChange }: Props) {
         <Title>Job complete</Title>
       </View>
       <Card>
-        <KeyValue k="Technician" v={request.technician?.name ?? '—'} />
+        <KeyValue k="Technician" v={t?.name ?? '—'} />
+        <KeyValue k="Company" v={t?.shop_name ?? '—'} />
         <KeyValue k="Work" v={request.diagnosis?.primary_issue_label ?? 'HVAC service'} />
         {request.payment.captured_cents != null
           ? <KeyValue k="Charged" v={money(request.payment.captured_cents)} />
           : <KeyValue k="Price" v={`${money(request.quote?.final_price_cents)} · pay the shop`} />}
         {request.completed_at ? <Muted>{new Date(request.completed_at).toLocaleString()}</Muted> : null}
       </Card>
-      <Card tone="soft" style={{ alignItems: 'center' }}>
-        <Body style={{ fontWeight: '700' }}>
-          {request.rating ? 'Thanks for your rating!' : `How was ${request.technician?.first_name}?`}
-        </Body>
-        <Row style={{ gap: 6 }}>
-          {[1, 2, 3, 4, 5].map((n) => (
-            <Pressable key={n} accessibilityRole="button" accessibilityLabel={`${n} star${n > 1 ? 's' : ''}`}
-              disabled={!!request.rating || rate.busy} onPress={() => rate.run(n)} hitSlop={6}>
-              <Svg width={34} height={34} viewBox="0 0 24 24">
-                <Path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"
-                  fill={n <= (request.rating ?? 0) ? colors.amber : '#FFFFFF'}
-                  stroke={colors.amber} strokeWidth={1.5} strokeLinejoin="round" />
-              </Svg>
-            </Pressable>
-          ))}
-        </Row>
+      <Card tone="soft" style={{ gap: 12 }}>
+        <Body style={{ fontWeight: '700' }}>{rated ? 'Thanks for your ratings!' : 'Rate your experience'}</Body>
+        <StarRow label={`${t?.first_name ?? 'Technician'} (technician)`} value={techStars}
+          locked={request.rating != null} onChange={setTechStars} />
+        <StarRow label={`${t?.shop_name ?? 'Company'} (company)`} value={shopStars}
+          locked={request.shop_rating != null} onChange={setShopStars} />
+        {!rated ? (
+          <>
+            <Field label="Anything to add? (optional)" value={review} onChangeText={setReview}
+              placeholder="On time, explained the fix..." maxLength={500} />
+            <Button label="Submit ratings" busy={rate.busy} disabled={!techStars && !shopStars}
+              onPress={() => rate.run()} />
+          </>
+        ) : null}
+        <ErrorText message={rate.error} />
       </Card>
-      <ErrorText message={rate.error} />
+      <SharePanel request={request} />
     </Screen>
+  );
+}
+
+function StarRow({ label, value, locked, onChange }: {
+  label: string; value: number; locked: boolean; onChange: (n: number) => void;
+}) {
+  return (
+    <View style={{ gap: 4 }}>
+      <Muted>{label}</Muted>
+      <Row style={{ gap: 6 }} >
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Pressable key={n} accessibilityRole="button"
+            accessibilityLabel={`${label}: ${n} star${n > 1 ? 's' : ''}`}
+            accessibilityState={{ selected: n <= value, disabled: locked }}
+            disabled={locked} onPress={() => onChange(n)} hitSlop={6}>
+            <Svg width={32} height={32} viewBox="0 0 24 24" {...decorative}>
+              <Path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"
+                fill={n <= value ? colors.amber : '#FFFFFF'}
+                stroke={colors.amber} strokeWidth={1.5} strokeLinejoin="round" />
+            </Svg>
+          </Pressable>
+        ))}
+      </Row>
+    </View>
+  );
+}
+
+/** Recommend the technician or company to a group chat or a friend. */
+function SharePanel({ request }: { request: ServiceRequest }) {
+  const [info, setInfo] = useState<ShareInfo | null>(null);
+  const [who, setWho] = useState<'technician' | 'shop'>('technician');
+  const [note, setNote] = useState<string | null>(null);
+  const load = useAction(async () => setInfo(await api.share(request.id)));
+  useEffect(() => { void load.run(); }, [request.id, request.rating, request.shop_rating]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!info) return load.error ? <ErrorText message={load.error} /> : null;
+  const target = info[who];
+  const act = async (fn: () => Promise<unknown>, done: string) => {
+    try {
+      const result = await fn();
+      setNote(result === 'copied' ? 'Copied. Paste it into your group chat.' : done);
+    } catch {
+      setNote("Couldn't open that app. Use Copy instead.");
+    }
+  };
+  return (
+    <Card style={{ gap: 10 }}>
+      <Row>
+        <Icon name="chat" size={18} color={colors.primary} />
+        <Body style={{ fontWeight: '700', flex: 1 }}>Share with friends or a group chat</Body>
+      </Row>
+      <Segmented value={who} onChange={(v) => { setWho(v as 'technician' | 'shop'); setNote(null); }}
+        options={[
+          { value: 'technician', label: request.technician?.first_name ?? 'Technician' },
+          { value: 'shop', label: 'Company' },
+        ]} />
+      <Card tone="muted"><Muted selectable>{target.message}</Muted></Card>
+      <Button label="Share…" icon="chat" onPress={() => act(() => shareSheet(target.message, target.title), 'Shared!')} />
+      <Row style={{ gap: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Button label="Text" variant="secondary" onPress={() => act(() => textMessage(target.message), '')} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Button label="WhatsApp" variant="secondary" onPress={() => act(() => whatsApp(target.message), '')} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Button label="Copy" variant="secondary"
+            onPress={() => act(async () => { await copyText(target.message); return 'copied'; }, '')} />
+        </View>
+      </Row>
+      {note ? <Muted accessibilityLiveRegion="polite">{note}</Muted> : null}
+    </Card>
   );
 }
 

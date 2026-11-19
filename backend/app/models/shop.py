@@ -41,6 +41,14 @@ class Shop(IdMixin, TimestampMixin, Base):
     scheduling_last_error: Mapped[str | None] = mapped_column(String(500))
     write_back_jobs: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Homeowners rate the company separately from the technician.
+    rating_sum: Mapped[int] = mapped_column(default=0, nullable=False)
+    rating_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    @property
+    def rating(self) -> float | None:
+        return round(self.rating_sum / self.rating_count, 1) if self.rating_count else None
+
     users = relationship("ShopUser", back_populates="shop", cascade="all, delete-orphan")
     technicians = relationship("Technician", back_populates="shop", cascade="all, delete-orphan")
 
