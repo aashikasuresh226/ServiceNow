@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, InvalidState, NotFound
 from app.domain.enums import Actor, RequestStatus
 from app.domain.state_machine import HOMEOWNER_CANCELABLE
-from app.models import Homeowner, ServiceRequest, Shop, Technician
+from app.models import Homeowner, JobOffer, ServiceRequest, Shop, Technician
 from app.services.calendar_service import CalendarService
 from app.services.lifecycle import clear_live_location, transition
 from app.services.matching_service import MatchingService
@@ -36,8 +36,8 @@ class JobService:
         request = await self.s.get(ServiceRequest, request_id)
         if (
             request is None
-            or request.shop_id != shop.id
             or request.status not in SHOP_VISIBLE_STATUSES
+            or (request.shop_id != shop.id and request.id not in await self._open_offer_ids(shop))
         ):
             raise NotFound("Job not found")
         return request
@@ -46,13 +46,41 @@ class JobService:
         self, shop: Shop, statuses: list[str] | None = None
     ) -> list[ServiceRequest]:
         wanted = statuses or SHOP_VISIBLE_STATUSES
+        offered = await self._open_offer_ids(shop)
         rows = await self.s.scalars(
             select(ServiceRequest)
-            .where(ServiceRequest.shop_id == shop.id, ServiceRequest.status.in_(wanted))
+            .where(
+                or_(
+                    ServiceRequest.shop_id == shop.id,
+                    and_(
+                        ServiceRequest.id.in_(offered),
+                        ServiceRequest.status == S.OFFERED.value,
+                    ),
+                ),
+                ServiceRequest.status.in_(wanted),
+            )
             .order_by(ServiceRequest.updated_at.desc())
             .limit(100)
         )
         return list(rows)
+
+    async def _open_offer_ids(self, shop: Shop) -> set[uuid.UUID]:
+        """Requests also offered to this shop (several shops offered at once)."""
+        rows = await self.s.scalars(
+            select(JobOffer.request_id).where(
+                JobOffer.shop_id == shop.id, JobOffer.status == "open"
+            )
+        )
+        return set(rows)
+
+    async def open_offer(self, request: ServiceRequest, shop: Shop) -> JobOffer | None:
+        return await self.s.scalar(
+            select(JobOffer).where(
+                JobOffer.request_id == request.id,
+                JobOffer.shop_id == shop.id,
+                JobOffer.status == "open",
+            )
+        )
 
     async def mark_en_route(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
         transition(self.s, request, S.EN_ROUTE, actor)

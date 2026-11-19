@@ -12,7 +12,7 @@ const NAV = [
   { to: '/jobs', icon: 'jobs', label: 'Jobs' },
   { to: '/technicians', icon: 'users', label: 'Technicians' },
   { to: '/availability', icon: 'calendar', label: 'Availability' },
-  { to: '/integrations', icon: 'plug', label: 'Scheduling software', optional: true },
+  { to: '/integrations', icon: 'plug', label: 'How you take jobs' },
   { to: '/settings', icon: 'settings', label: 'Shop & payouts' },
 ];
 

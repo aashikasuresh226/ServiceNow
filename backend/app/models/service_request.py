@@ -80,6 +80,16 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     review: Mapped[str | None] = mapped_column(String(500))
     # The assigned technician said they can't make it (shown to the office to reassign).
     technician_flag: Mapped[str | None] = mapped_column(String(200))
+    # False while the shop (its office or Housecall Pro dispatcher) hasn't picked the tech:
+    # technician_id is then only our estimate of who could come, used for timing.
+    technician_confirmed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Which round of offers this is (1, 2 = one shop at a time; later = several at once).
+    offer_round: Mapped[int] = mapped_column(default=0, nullable=False)
+    instant_booked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # The job in the shop's Housecall Pro account, once accepted.
+    external_job_id: Mapped[str | None] = mapped_column(String(64))
+    external_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    external_error: Mapped[str | None] = mapped_column(String(300))
 
     # Homeowner's choice when requesting: a company, a specific technician, or neither
     # (soonest qualified tech). Matching only considers that company / technician.
@@ -131,6 +141,30 @@ class RequestEvent(IdMixin, TimestampMixin, Base):
     actor: Mapped[str] = mapped_column(String(20), nullable=False)
     note: Mapped[str | None] = mapped_column(String(300))
     data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class JobOffer(IdMixin, TimestampMixin, Base):
+    """One shop's offer for a confirmed request. Usually one open offer at a time
+    (waterfall); after a few declines, several shops are offered at once and the first
+    to accept gets the job."""
+
+    __tablename__ = "job_offers"
+    __table_args__ = (
+        Index("ix_job_offers_request", "request_id"),
+        Index("ix_job_offers_shop_status", "shop_id", "status"),
+    )
+
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False
+    )
+    shop_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("shops.id"), nullable=False)
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    arrival_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    distance_km: Mapped[float] = mapped_column(Float, nullable=False)
+    round: Mapped[int] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    # open | accepted | declined | expired | withdrawn
+    status: Mapped[str] = mapped_column(String(10), default="open", nullable=False)
 
 
 class Message(IdMixin, TimestampMixin, Base):

@@ -5,9 +5,10 @@
 On-demand HVAC service, like Uber for HVAC. Homeowners describe the problem and snap a
 photo of their unit. Claude reads the data plate and the likely issue, the app shows a
 starting price, and books the qualified technician who can arrive soonest: free now, or at
-their next opening (e.g. tomorrow 8 AM) if everyone is busy or off shift. HVAC shops manage technicians and availability (from ServiceTitan or
-Housecall Pro later), accept jobs that land on each technician's calendar, and get paid
-through Stripe. Technicians are invited by their shop and get their own app: today's jobs,
+their next opening (e.g. tomorrow 8 AM) if everyone is busy or off shift. HVAC shops take
+jobs their way: we pick the technician, their office picks, or (if they use Housecall Pro)
+the job goes into Housecall Pro and their dispatcher assigns it there. Shops without any
+software run on the portal and the technician app alone, and get paid through Stripe. Technicians are invited by their shop and get their own app: today's jobs,
 accept/decline, live location to the customer while driving, chat and calls.
 
 | Part | Tech | Folder |
@@ -129,6 +130,7 @@ All settings live in `backend/.env`. Run `.venv\Scripts\python.exe -m app.cli ch
 | **Twilio Messaging** | Job-update texts (matched, on the way, done) | Updates show in the app only | `HVAC_TWILIO_FROM_NUMBER` or `HVAC_TWILIO_MESSAGING_SERVICE_SID` |
 | **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` or `HVAC_ANTHROPIC_API_KEY` |
 | **Firebase** (free) | Emails that prove an address is real: shop sign-up and technician invites | Development only: the link is shown on screen | `HVAC_FIREBASE_API_KEY`, `HVAC_FIREBASE_PROJECT_ID` |
+| **Housecall Pro** (per shop, MAX plan) | Accepted jobs go into the shop's Housecall Pro; its dispatcher assigns the tech | The shop runs on the portal and technician app | Entered by each shop in the portal (**How you take jobs**), stored encrypted |
 | **Neon** (free Postgres) | Hosted database with encrypted storage | A local SQLite file on your computer | `HVAC_DATABASE_URL` |
 | **Stripe** | Card on file, hold at booking, charge at completion, shop payouts (Connect) | No card needed; the homeowner pays the shop directly | `HVAC_STRIPE_SECRET_KEY`, `HVAC_STRIPE_PUBLISHABLE_KEY`, `HVAC_STRIPE_WEBHOOK_SECRET` |
 
@@ -250,6 +252,51 @@ requests as possible with the least total waiting, favoring whoever waited longe
 of letting the first request in line take the tech a later request needed more. It's checked
 against brute force in the tests.
 
+### Who gets the job: the tiered waterfall (`services/matching_service.py`)
+
+Unlike lead marketplaces (one lead sold to several contractors), each confirmed job goes to
+one shop at a time, ranked by the matching above:
+
+1. **The homeowner's pick**: a company or technician they chose (e.g. from a friend's link).
+2. **Their previous shop first**: a returning customer's last shop gets the first look if
+   it can arrive within 60 minutes of the soonest option (`HVAC_LOYALTY_MAX_DELAY_MINUTES`).
+3. **Instant book**: a shop that turned on instant book (in **How you take jobs**) and can
+   arrive within 30 minutes of the soonest is preferred, and the job is accepted
+   automatically, up to the shop's daily limit. The homeowner is confirmed in seconds.
+4. **Waterfall**: otherwise the soonest shop; on decline or no answer (2 minutes for jobs now,
+   until an hour before a scheduled visit), the next best shop, for 2 rounds
+   (`HVAC_WATERFALL_SINGLE_ROUNDS`).
+5. **Several at once**: then the best 3 remaining shops are offered the job together
+   (`HVAC_BROADCAST_SIZE`); the first to accept gets it and the others' offers are withdrawn.
+6. **Waitlist** if nobody can take it.
+
+### Shops with or without software
+
+Each shop chooses who picks the technician (**How you take jobs** in the portal):
+
+| Mode | Availability from | Who picks the tech | Customer sees |
+|---|---|---|---|
+| **HVAC Connect picks** (default) | Working hours, jobs booked here, time off | Soonest qualified tech; their app gets the offer if allowed | The technician right away |
+| **My office picks** | Same | The office, from a list sorted by soonest arrival, when accepting | The company until the office picks |
+| **Housecall Pro's dispatcher** | Housecall Pro's scheduled jobs (synced every 5 min) + working hours | The dispatcher, in Housecall Pro as usual | The company until it's assigned there |
+
+**Housecall Pro** (`integrations/scheduling/housecall_pro.py`, `services/external_jobs.py`):
+the shop pastes an API key (MAX plan; App Store → API) under **How you take jobs**. We check
+it, store it encrypted, and import employees (linking existing technicians by name or phone).
+When the shop accepts a job, we find or create the customer (matched by phone so repeat
+customers aren't duplicated) and create the job in Housecall Pro with the arrival window,
+notes (problem, the AI's read of the data plate, likely issue, the price shown) and photo
+links, unassigned. We then read the job back every minute: the assigned employee becomes
+the technician the homeowner sees, schedule changes update the arrival time, *in progress*
+marks the tech on site, and a deleted or canceled job cancels the visit and tells the
+homeowner. If the shop pastes our webhook URL into Housecall Pro, updates arrive instantly
+(the URL holds a secret per shop; we re-read the job rather than trusting the message).
+If the homeowner cancels, we add a note in Housecall Pro and remove the job from its
+schedule. Failed sends show on the job in the portal and are retried.
+
+**Time off**: on **Technicians → Edit**, add days off (vacation, appointments); matching
+skips those times.
+
 Two homeowners can't book the same slot: the tech's row is locked during reservation (on
 Postgres) and the slot is re-planned with fresh data before it's confirmed; requests use
 optimistic version checks so the API and the worker can't overwrite each other.
@@ -297,8 +344,8 @@ calendar feed (`.ics`) that they can subscribe to from Google Calendar, Apple Ca
 Outlook. Google Calendar fetches feeds from Google's servers, so it needs the API on a
 public URL; Apple Calendar and Outlook on the same computer work with localhost.
 
-ServiceTitan and Housecall Pro sync is optional and shows as *Coming soon* until API access
-is granted (`HVAC_SCHEDULING_INTEGRATIONS_ENABLED`). The adapters are in
+Housecall Pro is connected from the portal (see above). ServiceTitan shows as *Coming soon*
+until API access is granted (`HVAC_SCHEDULING_INTEGRATIONS_ENABLED`). The adapters are in
 `integrations/scheduling/`.
 
 ### Snap your unit (Claude)
@@ -428,8 +475,14 @@ host the portal's `dist/` and the Expo web build on a CDN.
 
 ## Known gaps / next steps
 
-- **ServiceTitan and Housecall Pro** show as *Coming soon*. The adapters follow their
-  published APIs but haven't been run against live accounts.
+- **Housecall Pro hasn't been run against a live account yet.** Its documentation site
+  couldn't be read from the build environment, so the endpoints and field names come from
+  Housecall Pro's help center and open-source integrations, and were tested against a
+  stand-in. The key header format (`Token` vs `Bearer`) is detected when connecting. Try it
+  with a MAX-plan account and check the first job it creates. **ServiceTitan** shows as
+  *Coming soon*.
+- **Calendar sync** (reading busy times from Google or Outlook calendars) isn't built yet;
+  shops without software use working hours, time off and the Availability board.
 - **Outside services were tested against stand-ins**, not live accounts: Google sign-in is
   tested with real signed tokens and key sets, Twilio Verify and the Census geocoder against
   their documented responses, and the Claude prompt/parser with sample outputs. Try each one

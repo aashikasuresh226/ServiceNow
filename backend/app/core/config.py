@@ -143,6 +143,15 @@ class Settings(BaseSettings):
     # --- Matching / marketplace tuning -----------------------------------------
     proposal_ttl_seconds: int = 180  # homeowner has this long to confirm a proposed tech
     offer_ttl_seconds: int = 120  # shop has this long to accept a job offer
+    # Tiered waterfall: one shop at a time for this many rounds, then several at once.
+    waterfall_single_rounds: int = 2
+    broadcast_size: int = 3
+    # A returning customer's previous shop gets the first look if it can arrive within
+    # this many minutes of the soonest option; instant-book shops within the second.
+    loyalty_max_delay_minutes: int = 60
+    instant_book_max_delay_minutes: int = 30
+    # How often accepted jobs are checked in Housecall Pro (assignment, schedule, status).
+    external_job_poll_seconds: int = 60
     match_horizon_days: int = 7  # how far ahead to look for a technician's next opening
     average_travel_speed_kmh: float = 40.0
     default_job_duration_minutes: int = 90

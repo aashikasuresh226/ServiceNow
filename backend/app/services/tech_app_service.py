@@ -11,13 +11,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, Forbidden, InvalidState, NotFound
 from app.domain.enums import Actor, RequestStatus
-from app.models import ServiceRequest, Shop, TechLocation, Technician
+from app.models import JobOffer, ServiceRequest, Shop, TechLocation, Technician
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.notifications import notify_homeowner
@@ -44,12 +44,21 @@ class TechAppService:
 
     async def board(self, tech: Technician) -> TechBoard:
         offers: list[ServiceRequest] = []
-        if tech.can_respond_offers:
+        shop = await self.s.get(Shop, tech.shop_id)
+        # Offers reach technicians only when we pick the tech; otherwise the office (or
+        # Housecall Pro's dispatcher) decides who goes.
+        if tech.can_respond_offers and shop is not None and shop.dispatch_mode == "platform":
+            offered = select(JobOffer.request_id).where(
+                JobOffer.technician_id == tech.id, JobOffer.status == "open"
+            )
             offers = list(
                 await self.s.scalars(
                     select(ServiceRequest)
                     .where(
-                        ServiceRequest.technician_id == tech.id,
+                        or_(
+                            ServiceRequest.technician_id == tech.id,
+                            ServiceRequest.id.in_(offered),
+                        ),
                         ServiceRequest.status == S.OFFERED.value,
                     )
                     .order_by(ServiceRequest.eta_at)
@@ -101,7 +110,7 @@ class TechAppService:
 
     async def accept(self, tech: Technician, shop: Shop, request: ServiceRequest) -> None:
         self._require(tech.can_respond_offers, "Your company accepts jobs for you")
-        await MatchingService(self.s, self.c).shop_accept(request, shop, None, Actor.TECHNICIAN)
+        await MatchingService(self.s, self.c).shop_accept(request, shop, tech.id, Actor.TECHNICIAN)
 
     async def decline(
         self, tech: Technician, shop: Shop, request: ServiceRequest, reason: str | None

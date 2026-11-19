@@ -177,3 +177,9 @@ textarea.input { min-height: 80px; resize: vertical; }
 .dialog { max-width: 520px; width: 100%; max-height: calc(100vh - 32px); overflow-y: auto; }
 .perm { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; }
 .perm input { margin-top: 3px; }
+
+/* Radio cards (dispatch mode, technician picker) */
+.choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; }
+.choice.selected { border-color: var(--primary); background: var(--primary-soft); }
+.choice input { margin-top: 3px; }

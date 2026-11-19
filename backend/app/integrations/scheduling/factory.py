@@ -41,6 +41,10 @@ def make_factory(http: httpx.AsyncClient) -> SchedulingClientFactory:
                 app_key=credentials["app_key"],
                 http=http,
             )
-        return HousecallProClient(api_key=credentials["api_key"], http=http)
+        return HousecallProClient(
+            api_key=credentials["api_key"],
+            http=http,
+            auth_scheme=credentials.get("auth_scheme", "Token"),
+        )
 
     return build

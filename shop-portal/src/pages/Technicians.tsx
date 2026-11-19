@@ -13,7 +13,7 @@ const DEFAULT_HOURS: WorkingHours = Object.fromEntries(
 );
 
 type Draft = Pick<Technician, 'name' | 'phone' | 'equipment_types' | 'certifications' |
-  'service_radius_km' | 'working_hours' | 'is_active'> & TechPermissions;
+  'service_radius_km' | 'working_hours' | 'is_active'> & TechPermissions & { external_id?: string | null };
 
 const DEFAULT_PERMISSIONS: TechPermissions = {
   can_respond_offers: true, can_contact_customers: true, schedule_view: 'full',
@@ -108,7 +108,8 @@ export function TechniciansPage() {
 }
 
 function TechnicianForm({ tech, onDone }: { tech: Technician | null; onDone: () => void }) {
-  const { options } = usePortal();
+  const { options, me } = usePortal();
+  const hcp = me?.shop.scheduling_provider === 'housecall_pro';
   const [draft, setDraft] = useState<Draft>(() => (tech ? { ...tech, phone: tech.phone ?? '' } : emptyDraft()));
   const phoneLocked = tech?.app_status === 'active';
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
@@ -186,12 +187,68 @@ function TechnicianForm({ tech, onDone }: { tech: Technician | null; onDone: () 
         </div>
       </fieldset>
       <PermissionFields value={draft} onChange={(p) => setDraft((d) => ({ ...d, ...p }))} />
+      {hcp ? (
+        <div className="field">
+          <label htmlFor="tech-hcp">Housecall Pro employee ID</label>
+          <input id="tech-hcp" className="input" value={draft.external_id ?? ''} placeholder="Filled in automatically when names match"
+            onChange={(e) => set('external_id', e.target.value)} />
+          <span className="small muted">Links this technician to the same person in Housecall Pro, so jobs assigned there show up here.</span>
+        </div>
+      ) : null}
+      {tech ? <TimeOffFields tech={tech} /> : null}
       <ErrorAlert message={save.error} />
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         <Button onClick={onDone}>Cancel</Button>
         <Button type="submit" variant="primary" busy={save.busy}>Save technician</Button>
       </div>
     </form>
+  );
+}
+
+/** Vacation, days off, appointments: no jobs are planned for them in this time. */
+function TimeOffFields({ tech }: { tech: Technician }) {
+  const list = useLiveData(() => api.timeOff(tech.id));
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [label, setLabel] = useState('');
+  const add = useAction(async () => {
+    // Whole days in your local time: from the start of the first day to the end of the last.
+    const start = new Date(`${from}T00:00`);
+    const end = new Date(`${to}T23:59`);
+    await api.addTimeOff(tech.id, start.toISOString(), end.toISOString(), label || 'Time off');
+    setLabel('');
+    await list.reload();
+  });
+  const remove = useAction(async (blockId: string) => {
+    await api.removeTimeOff(tech.id, blockId);
+    await list.reload();
+  });
+  const fmt = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return (
+    <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+      <legend className="label">Time off</legend>
+      {list.data?.length ? (
+        <ul className="stack" style={{ listStyle: 'none', padding: 0, margin: '0 0 8px', gap: 6 }}>
+          {list.data.map((b) => (
+            <li key={b.id} className="row between small" style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '6px 10px' }}>
+              <span><strong>{b.label ?? 'Time off'}</strong> · {fmt(b.starts_at)}{fmt(b.starts_at) !== fmt(b.ends_at) ? ` – ${fmt(b.ends_at)}` : ''}</span>
+              <Button size="small" busy={remove.busy} onClick={() => void remove.run(b.id)}>Remove</Button>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="small muted" style={{ margin: '0 0 8px' }}>None planned.</p>}
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <div className="field"><label htmlFor="off-from">From</label>
+          <input id="off-from" className="input" type="date" value={from} min={today} onChange={(e) => { setFrom(e.target.value); if (e.target.value > to) setTo(e.target.value); }} /></div>
+        <div className="field"><label htmlFor="off-to">To</label>
+          <input id="off-to" className="input" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="field spacer"><label htmlFor="off-label">Reason (optional)</label>
+          <input id="off-label" className="input" value={label} maxLength={60} placeholder="Vacation" onChange={(e) => setLabel(e.target.value)} /></div>
+        <Button busy={add.busy} onClick={() => void add.run()}>Add time off</Button>
+      </div>
+      <ErrorAlert message={add.error ?? remove.error} />
+    </fieldset>
   );
 }
 

@@ -22,6 +22,7 @@ from app.core.config import get_settings
 from app.domain.enums import RequestStatus, SchedulingProvider
 from app.models import ServiceRequest, Shop
 from app.services.availability_service import AvailabilityService
+from app.services.external_jobs import ExternalJobService
 from app.services.lifecycle import purge_stale_locations
 from app.services.matching_service import MatchingService
 
@@ -85,6 +86,9 @@ async def tick(container: Container) -> None:
         container, "process_waitlist", lambda s: MatchingService(s, container).process_waitlist()
     )
     await _run_step(container, "purge_locations", _purge_locations)
+    await _run_step(
+        container, "external_jobs", lambda s: ExternalJobService(s, container).sync_due()
+    )
 
 
 async def run_forever(container: Container, stop: asyncio.Event | None = None) -> None:

@@ -102,4 +102,8 @@ export const money = (cents: number | null | undefined) =>
 export const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-export const countdownLabel = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+/** 95 -> "1:35"; long waits (a visit booked for tomorrow) -> "14 h 53 min". */
+export const countdownLabel = (s: number) => {
+  if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};

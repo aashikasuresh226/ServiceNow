@@ -8,7 +8,7 @@ from datetime import timedelta
 from app.container import Container
 from app.domain.enums import RequestStatus
 from app.domain.pricing import platform_fee
-from app.models import Message, RequestPhoto, ServiceRequest, Technician
+from app.models import JobOffer, Message, RequestPhoto, ServiceRequest, Technician
 from app.schemas.api import (
     EstimateInfo,
     MessageOut,
@@ -62,7 +62,32 @@ def _technician_summary(
     if request.status == S.EN_ROUTE.value and live is not None:
         location = {"lat": live.lat, "lng": live.lng}
         location_at = live.recorded_at
-    contact = technician_can_contact(tech) and request.status in DISPATCHED_OR_LATER
+    # The shop picks the technician itself (its office, or its Housecall Pro dispatcher):
+    # until it has, show the company, not our planning guess of who might come.
+    assigned = request.technician_confirmed and not (
+        request.status in (S.PROPOSED.value, S.OFFERED.value)
+        and shop.dispatch_mode != "platform"
+        and request.preferred_technician_id != tech.id
+    )
+    contact = assigned and technician_can_contact(tech) and request.status in DISPATCHED_OR_LATER
+    if not assigned:
+        return TechnicianSummary(
+            id=tech.id,
+            name=f"{shop.name} technician",
+            first_name="Your technician",
+            photo_url=None,
+            rating=shop.rating,
+            rating_count=shop.rating_count,
+            certifications=[],
+            shop_name=shop.name,
+            shop_phone=shop.phone if request.status in DISPATCHED_OR_LATER else None,
+            distance_km=request.distance_km,
+            eta_minutes=eta,
+            arrival_at=request.eta_at,
+            location=location,
+            location_updated_at=location_at,
+            assigned=False,
+        )
     return TechnicianSummary(
         id=tech.id,
         name=tech.name,
@@ -132,14 +157,21 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
     )
 
 
-def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
-    """Before dispatch the shop sees the job but not the customer's contact details."""
+def shop_job_out(
+    container: Container,
+    request: ServiceRequest,
+    offer: JobOffer | None = None,
+    offer_technician: str | None = None,
+) -> ShopJobOut:
+    """Before dispatch the shop sees the job but not the customer's contact details.
+    `offer`: this shop's offer when several shops were offered the job at once."""
     revealed = request.status in DISPATCHED_OR_LATER
     homeowner = request.homeowner
     first_name = (homeowner.name or "").split()[0] if homeowner and homeowner.name else None
+    distance = offer.distance_km if offer else request.distance_km
     area = "Nearby"
-    if request.distance_km is not None:
-        area = f"{request.distance_km * 0.621371:.1f} mi away"
+    if distance is not None:
+        area = f"{distance * 0.621371:.1f} mi away"
     payout = None
     amount = request.captured_cents or request.final_price_cents or request.estimate_low_cents
     if amount:
@@ -148,12 +180,12 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
         id=request.id,
         status=request.status,
         created_at=request.created_at,
-        arrival_at=request.eta_at,
+        arrival_at=offer.arrival_at if offer else request.eta_at,
         customer_first_name=first_name,
         customer_phone=homeowner.phone if revealed and homeowner else None,
         address=request.address if revealed else None,
         area_label=area,
-        distance_km=request.distance_km,
+        distance_km=distance,
         symptoms=request.symptoms,
         description=request.description,
         photos=[photo_out(container, p) for p in request.photos],
@@ -162,8 +194,10 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
         estimate=EstimateInfo(
             diagnostic_fee_cents=request.diagnostic_fee_cents, low_cents=request.estimate_low_cents
         ),
-        technician_id=request.technician_id,
-        technician_name=request.technician.name if request.technician else None,
+        technician_id=offer.technician_id if offer else request.technician_id,
+        technician_name=offer_technician
+        if offer
+        else (request.technician.name if request.technician else None),
         offer_expires_at=request.offer_expires_at,
         quote=_quote(request),
         payment=PaymentInfo(
@@ -178,6 +212,12 @@ def shop_job_out(container: Container, request: ServiceRequest) -> ShopJobOut:
         technician_flag=request.technician_flag,
         chat_open=chat_open(request, container.clock.now()),
         driving=request.status == S.EN_ROUTE.value and request.live_location is not None,
+        technician_confirmed=request.technician_confirmed,
+        instant_booked=request.instant_booked,
+        offered_to_several=request.offer_round > container.settings.waterfall_single_rounds
+        and request.status == S.OFFERED.value,
+        external_job_id=request.external_job_id,
+        external_error=request.external_error,
     )
 
 

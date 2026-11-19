@@ -232,6 +232,8 @@ class TechnicianSummary(Model):
     # Direct number, only if the company lets this technician take customer calls.
     phone: str | None = None
     can_message: bool = False
+    # False while the company is still choosing the technician (name shows the company).
+    assigned: bool = True
 
 
 class WaitlistInfo(Model):
@@ -315,6 +317,40 @@ class ShopOut(Model):
     scheduling_last_synced_at: datetime | None
     scheduling_last_error: str | None
     write_back_jobs: bool
+    dispatch_mode: str = "platform"
+    instant_book: bool = False
+    instant_book_daily_limit: int = 3
+    # Paste into Housecall Pro > App Store > Webhooks (optional; polling works without it).
+    scheduling_webhook_url: str | None = None
+
+
+class DispatchSettingsIn(Model):
+    dispatch_mode: str | None = Field(None, pattern="^(platform|office|software)$")
+    instant_book: bool | None = None
+    instant_book_daily_limit: int | None = Field(None, ge=1, le=50)
+
+
+class TechOptionOut(Model):
+    technician_id: uuid.UUID
+    name: str
+    arrival_at: datetime | None
+    distance_km: float | None
+    available: bool
+    reason: str | None  # why not, in plain words
+    suggested: bool
+
+
+class TimeOffIn(Model):
+    starts_at: datetime
+    ends_at: datetime
+    label: str | None = Field(None, max_length=60)
+
+
+class TimeOffOut(Model):
+    id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    label: str | None
 
 
 class ShopMeOut(Model):
@@ -364,6 +400,8 @@ class TechnicianIn(Model):
     can_respond_offers: bool | None = None
     can_contact_customers: bool | None = None
     schedule_view: str | None = Field(None, pattern="^(full|next)$")
+    # The same person in Housecall Pro (employee id), to match its assignments.
+    external_id: str | None = Field(None, max_length=64)
 
 
 class TechInviteIn(Model):
@@ -471,6 +509,12 @@ class ShopJobOut(Model):
     technician_flag: str | None = None  # the technician said they can't make it
     chat_open: bool = False
     driving: bool = False  # the technician is sharing their location on the way
+    # False until the office / Housecall Pro dispatcher picks the technician.
+    technician_confirmed: bool = True
+    instant_booked: bool = False
+    offered_to_several: bool = False  # first shop to accept gets it
+    external_job_id: str | None = None  # the job in Housecall Pro
+    external_error: str | None = None  # why sending it to Housecall Pro failed
 
 
 # --- Technician app -------------------------------------------------------------------------

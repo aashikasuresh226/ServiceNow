@@ -1,5 +1,13 @@
-"""Orchestrates matching: propose → confirm (hold) → offer to shop → dispatch,
+"""Orchestrates matching: propose → confirm (hold) → offer to shops → dispatch,
 plus the waitlist and expiry/re-matching handled by the background worker.
+
+Who gets the job (a tiered waterfall):
+1. the homeowner's own pick (a company or technician) if they made one;
+2. otherwise a returning customer's previous shop, if it can come nearly as soon;
+3. an instant-book shop that can come nearly as soon (accepted automatically);
+4. otherwise the soonest qualified technician's shop;
+then on decline/no answer: the next best shop, one at a time, for a couple of rounds;
+then several shops at once (first to accept wins); then the waitlist.
 
 The algorithm itself is in domain/matching.py (earliest arrival per request, the
 Hungarian algorithm for a backlog)."""
@@ -8,9 +16,10 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
@@ -26,7 +35,7 @@ from app.domain.matching import (
     plan_option,
     plan_options,
 )
-from app.models import Homeowner, ServiceRequest, Shop, Technician
+from app.models import Homeowner, JobOffer, ServiceRequest, Shop, Technician
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
 from app.services.lifecycle import clear_assignment, clear_live_location, transition
@@ -87,10 +96,60 @@ class MatchingService:
             )
             if not options:
                 return None, report
-            best = options[0]
+            best = (await self._rank(request, options, now))[0]
             if await self._still_free(best, criteria, now):
                 return best, report
         return None, report
+
+    async def _rank(
+        self, request: ServiceRequest, options: list[Option], now: datetime
+    ) -> list[Option]:
+        """Soonest first, but give a returning customer's shop, then instant-book shops,
+        the first look when they can come nearly as soon."""
+        if len(options) < 2 or request.preferred_shop_id or request.preferred_technician_id:
+            return options
+        soonest = options[0].arrival_at
+        loyal = await self._previous_shops(request)
+        for shop_id in loyal:
+            pick = next((o for o in options if o.candidate.shop_id == shop_id), None)
+            if pick and pick.arrival_at - soonest <= timedelta(
+                minutes=self.settings.loyalty_max_delay_minutes
+            ):
+                return [pick, *[o for o in options if o is not pick]]
+        window = timedelta(minutes=self.settings.instant_book_max_delay_minutes)
+        for option in options:
+            if option.arrival_at - soonest > window:
+                break
+            shop = await self.s.get(Shop, option.candidate.shop_id)
+            if shop and await self._instant_book_open(shop, now):
+                return [option, *[o for o in options if o is not option]]
+        return options
+
+    async def _previous_shops(self, request: ServiceRequest) -> list[uuid.UUID]:
+        rows = await self.s.scalars(
+            select(ServiceRequest.shop_id)
+            .where(
+                ServiceRequest.homeowner_id == request.homeowner_id,
+                ServiceRequest.status == S.COMPLETED.value,
+                ServiceRequest.shop_id.is_not(None),
+            )
+            .order_by(ServiceRequest.completed_at.desc())
+            .limit(5)
+        )
+        return [r for r in dict.fromkeys(rows) if r is not None]
+
+    async def _instant_book_open(self, shop: Shop, now: datetime) -> bool:
+        if not shop.instant_book or not shop.is_live:
+            return False
+        day_start = now - timedelta(hours=24)
+        used = await self.s.scalar(
+            select(func.count(ServiceRequest.id)).where(
+                ServiceRequest.shop_id == shop.id,
+                ServiceRequest.instant_booked.is_(True),
+                ServiceRequest.confirmed_at >= day_start,
+            )
+        )
+        return int(used or 0) < shop.instant_book_daily_limit
 
     async def _still_free(self, option: Option, criteria: MatchCriteria, now: datetime) -> bool:
         # Row lock (Postgres) so concurrent bookings for this tech queue up, then
@@ -183,10 +242,41 @@ class MatchingService:
         request.confirmed_at = now
         request.proposal_expires_at = None
         request.offer_expires_at = self._offer_deadline(request, now)
+        request.offer_round = 1
+        self._record_offer(request, now)
         transition(self.s, request, S.OFFERED, Actor.HOMEOWNER)
         await self.calendar.book(request)
+        await self._maybe_instant_book(request, shop, now)
+
+    def _record_offer(self, request: ServiceRequest, now: datetime) -> None:
+        """The offer to the shop the request is currently assigned to."""
+        assert request.shop_id and request.technician_id and request.offer_expires_at
+        self.s.add(
+            JobOffer(
+                request_id=request.id,
+                shop_id=request.shop_id,
+                technician_id=request.technician_id,
+                arrival_at=request.eta_at or now,
+                distance_km=request.distance_km or 0.0,
+                round=request.offer_round,
+                expires_at=request.offer_expires_at,
+            )
+        )
+
+    async def _maybe_instant_book(self, request: ServiceRequest, shop: Shop, now: datetime) -> None:
+        if request.status == S.OFFERED.value and await self._instant_book_open(shop, now):
+            request.instant_booked = True
+            await self.s.flush()
+            await self.shop_accept(request, shop, None, Actor.SYSTEM)
 
     async def cancel(self, request: ServiceRequest, actor: Actor, reason: str) -> None:
+        if request.external_job_id and actor != Actor.SHOP and request.shop_id:
+            shop = await self.s.get(Shop, request.shop_id)
+            if shop is not None:
+                from app.services.external_jobs import ExternalJobService
+
+                await ExternalJobService(self.s, self.c).note_canceled(request, shop, reason)
+        await self._close_offers(request, accepted=None)
         await clear_live_location(self.s, request)
         await self.payments.release_hold(request)
         await self.calendar.release(request)
@@ -203,12 +293,24 @@ class MatchingService:
         actor: Actor = Actor.SHOP,
     ) -> None:
         now = self.c.clock.now()
-        self._ensure_open_offer(request, shop, now)
+        offer = await self._open_offer(request, shop, now)
+        if offer is not None and request.shop_id != shop.id:
+            # Several shops were offered the job at once: this one was first.
+            await self._switch_to_offer(request, shop, offer, now)
         if technician_id and technician_id != request.technician_id:
             await self._reassign_within_shop(request, shop, technician_id, now)
+        await self._close_offers(request, accepted=offer)
         request.offer_expires_at = None
         request.technician_flag = None
-        transition(self.s, request, S.DISPATCHED, actor)
+        # Shops whose Housecall Pro dispatcher assigns technicians pick the tech later
+        # (unless the homeowner chose a specific technician, or the office picked one now).
+        request.technician_confirmed = not (
+            shop.dispatch_mode == "software"
+            and not technician_id
+            and request.preferred_technician_id != request.technician_id
+        )
+        note = "Instant book" if request.instant_booked and actor == Actor.SYSTEM else None
+        transition(self.s, request, S.DISPATCHED, actor, note=note)
         await self.calendar.confirm(request)
         tech = await self.s.get(Technician, request.technician_id)
         homeowner = await self.s.get(Homeowner, request.homeowner_id)
@@ -217,22 +319,149 @@ class MatchingService:
                 self.c,
                 homeowner,
                 f"{tech.name} from {shop.name} accepted your HVAC request "
-                "and will head your way shortly.",
+                "and will head your way shortly."
+                if request.technician_confirmed
+                else f"{shop.name} accepted your HVAC request and is assigning a technician.",
             )
+        if shop.dispatch_mode == "software":
+            from app.services.external_jobs import ExternalJobService  # avoid import cycle
+
+            await ExternalJobService(self.s, self.c).push(request, shop)
 
     async def shop_decline(
         self, request: ServiceRequest, shop: Shop, reason: str = "Shop declined"
     ) -> None:
-        self._ensure_open_offer(request, shop, self.c.clock.now())
+        now = self.c.clock.now()
+        offer = await self._open_offer(request, shop, now)
+        others = [
+            o
+            for o in await self._offers(request, status="open")
+            if offer is None or o.id != offer.id
+        ]
+        if offer is not None:
+            offer.status = "declined"
+            declined = set(request.declined_technician_ids or [])
+            declined.add(str(offer.technician_id))
+            request.declined_technician_ids = sorted(declined)
+        if others:
+            # Other shops still have this offer open: wait for them.
+            if request.shop_id == shop.id:
+                await self._switch_to_offer(request, None, others[0], now)
+            return
         await self._offer_to_next(request, reason=reason[:300])
 
-    def _ensure_open_offer(self, request: ServiceRequest, shop: Shop, now: datetime) -> None:
-        if request.shop_id != shop.id:
-            raise Forbidden("This request isn't assigned to your shop")
+    async def _offers(
+        self, request: ServiceRequest, *, status: str | None = None
+    ) -> list[JobOffer]:
+        query = select(JobOffer).where(JobOffer.request_id == request.id)
+        if status:
+            query = query.where(JobOffer.status == status)
+        return list(await self.s.scalars(query.order_by(JobOffer.arrival_at)))
+
+    async def _open_offer(
+        self, request: ServiceRequest, shop: Shop, now: datetime
+    ) -> JobOffer | None:
+        """The shop's open offer for this request (raises if it has none)."""
         if request.status != S.OFFERED.value:
+            if request.shop_id != shop.id and not await self._had_offer(request, shop):
+                raise Forbidden("This request isn't assigned to your shop")
             raise InvalidState("This offer is no longer open")
         if request.offer_expires_at and request.offer_expires_at <= now:
             raise InvalidState("This offer expired", code="offer_expired")
+        offer = await self.s.scalar(
+            select(JobOffer).where(
+                JobOffer.request_id == request.id,
+                JobOffer.shop_id == shop.id,
+                JobOffer.status == "open",
+            )
+        )
+        if offer is None and request.shop_id != shop.id:
+            raise Forbidden("This request isn't assigned to your shop")
+        return offer
+
+    async def _had_offer(self, request: ServiceRequest, shop: Shop) -> bool:
+        found = await self.s.scalar(
+            select(JobOffer.id).where(
+                JobOffer.request_id == request.id, JobOffer.shop_id == shop.id
+            )
+        )
+        return found is not None
+
+    async def _switch_to_offer(
+        self, request: ServiceRequest, shop: Shop | None, offer: JobOffer, now: datetime
+    ) -> None:
+        """Move the request (hold, calendar) to the shop/tech of another open offer."""
+        target = shop or await self.s.get(Shop, offer.shop_id)
+        homeowner = await self.s.get(Homeowner, request.homeowner_id)
+        assert target and homeowner
+        await self.payments.release_hold(request)
+        await self.calendar.release(request)
+        request.technician_id = offer.technician_id
+        request.shop_id = offer.shop_id
+        request.eta_at = offer.arrival_at
+        request.distance_km = offer.distance_km
+        await self.payments.place_hold(request, homeowner, target, request.estimate_low_cents or 0)
+        await self.calendar.book(request)
+
+    async def _close_offers(self, request: ServiceRequest, *, accepted: JobOffer | None) -> None:
+        await self.s.execute(
+            update(JobOffer)
+            .where(JobOffer.request_id == request.id, JobOffer.status == "open")
+            .values(status="withdrawn")
+        )
+        if accepted is not None:
+            accepted.status = "accepted"
+
+    async def technician_options(
+        self, request: ServiceRequest, shop: Shop
+    ) -> list[tuple[Technician, Option | None, str | None]]:
+        """For the office choosing who goes: each of its technicians with their soonest
+        arrival for this job, or why they can't take it. Suggested tech first."""
+        now = self.c.clock.now()
+        offer = (
+            await self._open_offer(request, shop, now)
+            if request.status == S.OFFERED.value
+            else None
+        )
+        suggested = offer.technician_id if offer else request.technician_id
+        criteria = replace(
+            self.criteria_for(request), only_shop_id=shop.id, only_technician_id=None
+        )
+        pool = {
+            a.candidate.technician_id: a.candidate
+            for a in await self.availability.load_candidates(near=criteria.location, now=now)
+        }
+        techs = list(
+            await self.s.scalars(
+                select(Technician).where(Technician.shop_id == shop.id).order_by(Technician.name)
+            )
+        )
+        rows: list[tuple[Technician, Option | None, str | None]] = []
+        for tech in techs:
+            if tech.id == suggested:
+                rows.append((tech, None, None))  # already planned for this job
+                continue
+            candidate = pool.get(tech.id)
+            option = (
+                plan_option(candidate, criteria, now, self.plan_settings) if candidate else None
+            )
+            reason = None
+            if not tech.is_active:
+                reason = "Not active"
+            elif candidate is None:
+                reason = "Too far away or no working hours"
+            elif option is None:
+                reason = "Not qualified, or no opening in the next week"
+            rows.append((tech, option, reason))
+        far = now.replace(year=9999)
+        rows.sort(
+            key=lambda r: (
+                r[0].id != suggested,
+                r[1] is None and r[0].id != suggested,
+                r[1].arrival_at if r[1] else far,
+            )
+        )
+        return rows
 
     async def _reassign_within_shop(
         self, request: ServiceRequest, shop: Shop, technician_id: uuid.UUID, now: datetime
@@ -272,6 +501,16 @@ class MatchingService:
         clear_assignment(request)
         # A picked technician declined: try other techs at the same company, then anyone.
         request.preferred_technician_id = None
+        await self._close_offers(request, accepted=None)
+        if request.offer_round >= self.settings.waterfall_single_rounds:
+            # Several declines/no answers: offer to the best few shops at once.
+            request.preferred_shop_id = None
+            options, report = await self._broadcast_options(request, now)
+            if options:
+                await self._offer_confirmed(request, options[0], now, note=reason, also=options[1:])
+                return
+            await self._waitlist(request, now, report, reason)
+            return
         best, report = await self._pick_and_reserve(request, now)
         if best is None and request.preferred_shop_id:
             request.preferred_shop_id = None
@@ -281,18 +520,58 @@ class MatchingService:
         else:
             await self._waitlist(request, now, report, reason)
 
+    async def _broadcast_options(
+        self, request: ServiceRequest, now: datetime
+    ) -> tuple[list[Option], NoMatchReport]:
+        """The soonest option at each of the best few shops."""
+        criteria = self.criteria_for(request)
+        pool = await self.availability.load_candidates(near=criteria.location, now=now)
+        options, report = plan_options(
+            [a.candidate for a in pool], criteria, now, self.plan_settings
+        )
+        per_shop: dict[uuid.UUID, Option] = {}
+        for option in options:
+            per_shop.setdefault(option.candidate.shop_id, option)
+            if len(per_shop) >= self.settings.broadcast_size:
+                break
+        return list(per_shop.values()), report
+
     async def _offer_confirmed(
-        self, request: ServiceRequest, best: Option, now: datetime, note: str
+        self,
+        request: ServiceRequest,
+        best: Option,
+        now: datetime,
+        note: str,
+        also: list[Option] | None = None,
     ) -> None:
-        """Offer an already-confirmed request to a new tech (new hold for the new shop)."""
+        """Offer an already-confirmed request to a new tech (new hold for the new shop),
+        and to `also` (other shops offered at the same time)."""
         self._assign(request, best, now)
         shop = await self.s.get(Shop, request.shop_id)
         homeowner = await self.s.get(Homeowner, request.homeowner_id)
         assert shop and homeowner
         await self.payments.place_hold(request, homeowner, shop, request.estimate_low_cents or 0)
         request.offer_expires_at = self._offer_deadline(request, now)
+        request.offer_round += 1
+        self._record_offer(request, now)
+        for option in also or []:
+            self.s.add(
+                JobOffer(
+                    request_id=request.id,
+                    shop_id=option.candidate.shop_id,
+                    technician_id=option.candidate.technician_id,
+                    arrival_at=option.arrival_at,
+                    distance_km=round(option.distance_km, 1),
+                    round=request.offer_round,
+                    expires_at=request.offer_expires_at,
+                )
+            )
+        if also:
+            note = f"{note}; offered to {len(also) + 1} shops at once"
         transition(self.s, request, S.OFFERED, Actor.SYSTEM, note=note)
         await self.calendar.book(request)
+        if not also:
+            await self._maybe_instant_book(request, shop, now)
 
     # --- Background work (called by the worker) -----------------------------------------
     async def expire_proposals(self) -> int:
@@ -321,6 +600,11 @@ class MatchingService:
             )
         )
         for request in rows:
+            await self.s.execute(
+                update(JobOffer)
+                .where(JobOffer.request_id == request.id, JobOffer.status == "open")
+                .values(status="expired")
+            )
             await self._offer_to_next(request, reason="Shop didn't respond in time")
         return len(rows)
 

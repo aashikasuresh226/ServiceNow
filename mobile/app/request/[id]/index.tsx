@@ -148,9 +148,14 @@ function Proposed({ request, onChange }: Props) {
       {request.technician?.arrival_at && isScheduled(request.technician.arrival_at) ? (
         <Card tone="soft">
           <Body>No one is free right now, so this is the earliest opening:{' '}
-            <Text style={{ fontWeight: '700' }}>{visitTime(request.technician.arrival_at)}</Text>.
-            It goes on {request.technician.first_name}'s calendar when you confirm.</Body>
+            <Text style={{ fontWeight: '700' }}>{visitTime(request.technician.arrival_at)}</Text>.{' '}
+            {request.technician.assigned
+              ? `It goes on ${request.technician.first_name}'s calendar when you confirm.`
+              : 'The time is held for you when you confirm.'}</Body>
         </Card>
+      ) : null}
+      {request.technician && !request.technician.assigned ? (
+        <Muted>{request.technician.shop_name} chooses which of their technicians comes. We'll tell you who as soon as they do.</Muted>
       ) : null}
       <Card tone="muted">
         <KeyValue k="Estimate" v={`from ${money(request.estimate.low_cents)}`} />
@@ -160,7 +165,7 @@ function Proposed({ request, onChange }: Props) {
       </Card>
       {seconds != null ? (
         <Muted style={{ textAlign: 'center' }}>{seconds > 0
-          ? `${request.technician?.first_name} is held for you for ${countdown(seconds)}`
+          ? `${request.technician?.assigned === false ? 'This time' : request.technician?.first_name} is held for you for ${countdown(seconds)}`
           : 'Reservation expired'}</Muted>
       ) : null}
       <ErrorText message={confirm.error ?? cancel.error} />

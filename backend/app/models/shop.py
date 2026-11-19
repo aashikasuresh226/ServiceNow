@@ -41,6 +41,17 @@ class Shop(IdMixin, TimestampMixin, Base):
     scheduling_last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     scheduling_last_error: Mapped[str | None] = mapped_column(String(500))
     write_back_jobs: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Secret part of the webhook URL the shop pastes into Housecall Pro.
+    scheduling_webhook_token: Mapped[str | None] = mapped_column(String(64), unique=True)
+
+    # --- How this shop takes jobs -------------------------------------------------------
+    # platform: we pick the technician (soonest qualified)
+    # office:   the shop's office picks the technician when accepting
+    # software: the dispatcher assigns in Housecall Pro; we learn who from the sync
+    dispatch_mode: Mapped[str] = mapped_column(String(10), default="platform", nullable=False)
+    # Instant book: matching jobs are accepted automatically (up to a daily limit).
+    instant_book: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    instant_book_daily_limit: Mapped[int] = mapped_column(default=3, nullable=False)
 
     # Homeowners rate the company separately from the technician.
     rating_sum: Mapped[int] = mapped_column(default=0, nullable=False)

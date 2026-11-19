@@ -11,7 +11,9 @@ from fastapi import APIRouter, Query, status
 
 from app.api.deps import ContainerDep, SessionDep, ShopDep
 from app.api.presenters import message_out, shop_job_out
+from app.container import Container
 from app.core.errors import InvalidState, NotFound
+from app.domain.enums import SchedulingProvider
 from app.models import ServiceRequest, Technician
 from app.schemas.api import (
     AcceptIn,
@@ -20,6 +22,7 @@ from app.schemas.api import (
     CalendarLinkOut,
     CountOut,
     DashboardOut,
+    DispatchSettingsIn,
     EmailLinkOut,
     LinkOut,
     LiveIn,
@@ -37,6 +40,9 @@ from app.schemas.api import (
     TechInviteOut,
     TechnicianIn,
     TechnicianOut,
+    TechOptionOut,
+    TimeOffIn,
+    TimeOffOut,
 )
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
@@ -48,12 +54,14 @@ from app.services.shop_service import ShopService
 router = APIRouter(prefix="/shop", tags=["shop"])
 
 
-def _me(principal: ShopDep) -> ShopMeOut:
-    return ShopMeOut(
-        user_email=principal.user.email,
-        user_name=principal.user.name,
-        shop=ShopOut.model_validate(principal.shop),
-    )
+def _me(principal: ShopDep, c: Container | None = None) -> ShopMeOut:
+    shop = ShopOut.model_validate(principal.shop)
+    token = principal.shop.scheduling_webhook_token
+    if token and c is not None:
+        shop.scheduling_webhook_url = (
+            f"{c.settings.public_api_url}/v1/webhooks/housecall-pro/{token}"
+        )
+    return ShopMeOut(user_email=principal.user.email, user_name=principal.user.name, shop=shop)
 
 
 def _tech_out(tech: Technician) -> TechnicianOut:
@@ -62,8 +70,8 @@ def _tech_out(tech: Technician) -> TechnicianOut:
 
 # --- Profile, live switch, payouts --------------------------------------------------------------
 @router.get("/me", response_model=ShopMeOut)
-async def get_me(principal: ShopDep) -> ShopMeOut:
-    return _me(principal)
+async def get_me(principal: ShopDep, c: ContainerDep) -> ShopMeOut:
+    return _me(principal, c)
 
 
 @router.patch("/me", response_model=ShopMeOut)
@@ -77,7 +85,7 @@ async def update_shop(
         address=body.address,
         timezone=body.timezone,
     )
-    return _me(principal)
+    return _me(principal, c)
 
 
 @router.put("/live", response_model=ShopMeOut)
@@ -85,7 +93,7 @@ async def set_live(
     body: LiveIn, principal: ShopDep, session: SessionDep, c: ContainerDep
 ) -> ShopMeOut:
     await ShopService(session, c).set_live(principal.shop, body.is_live)
-    return _me(principal)
+    return _me(principal, c)
 
 
 @router.post("/payouts/onboarding-link", response_model=LinkOut)
@@ -97,7 +105,7 @@ async def payout_onboarding(principal: ShopDep, session: SessionDep, c: Containe
 @router.post("/payouts/refresh", response_model=ShopMeOut)
 async def refresh_payouts(principal: ShopDep, session: SessionDep, c: ContainerDep) -> ShopMeOut:
     await ShopService(session, c).refresh_payout_status(principal.shop)
-    return _me(principal)
+    return _me(principal, c)
 
 
 @router.put("/payouts/schedule", response_model=ShopMeOut)
@@ -105,7 +113,7 @@ async def payout_schedule(
     body: PayoutScheduleIn, principal: ShopDep, session: SessionDep, c: ContainerDep
 ) -> ShopMeOut:
     await ShopService(session, c).set_payout_schedule(principal.shop, body.schedule)
-    return _me(principal)
+    return _me(principal, c)
 
 
 # --- Scheduling software -------------------------------------------------------------------------
@@ -114,10 +122,10 @@ async def connect_scheduling(
     body: SchedulingConnectIn, principal: ShopDep, session: SessionDep, c: ContainerDep
 ) -> CountOut:
     """Verify credentials, store them encrypted, import technicians, run a first sync."""
-    if not c.settings.scheduling_integrations_enabled:
-        raise InvalidState(
-            "ServiceTitan and Housecall Pro connections are coming soon.", code="coming_soon"
-        )
+    if body.provider != SchedulingProvider.HOUSECALL_PRO and not (
+        c.settings.scheduling_integrations_enabled
+    ):
+        raise InvalidState("The ServiceTitan connection is coming soon.", code="coming_soon")
     imported = await ShopService(session, c).connect_scheduling(
         principal.shop, body.provider, body.credentials, body.write_back_jobs
     )
@@ -170,6 +178,57 @@ async def update_technician(
 @router.post("/technicians/import", response_model=CountOut)
 async def import_technicians(principal: ShopDep, session: SessionDep, c: ContainerDep) -> CountOut:
     return CountOut(count=await ShopService(session, c).import_technicians(principal.shop))
+
+
+@router.get("/technicians/{technician_id}/time-off", response_model=list[TimeOffOut])
+async def list_time_off(
+    technician_id: uuid.UUID, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> list[TimeOffOut]:
+    service = ShopService(session, c)
+    tech = await service.get_technician(principal.shop, technician_id)
+    return [TimeOffOut.model_validate(b) for b in await service.list_time_off(tech)]
+
+
+@router.post(
+    "/technicians/{technician_id}/time-off",
+    response_model=TimeOffOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_time_off(
+    technician_id: uuid.UUID,
+    body: TimeOffIn,
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> TimeOffOut:
+    service = ShopService(session, c)
+    tech = await service.get_technician(principal.shop, technician_id)
+    block = await service.add_time_off(tech, body.starts_at, body.ends_at, body.label)
+    return TimeOffOut.model_validate(block)
+
+
+@router.delete(
+    "/technicians/{technician_id}/time-off/{block_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def remove_time_off(
+    technician_id: uuid.UUID,
+    block_id: uuid.UUID,
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> None:
+    service = ShopService(session, c)
+    tech = await service.get_technician(principal.shop, technician_id)
+    await service.remove_time_off(tech, block_id)
+
+
+@router.patch("/dispatch", response_model=ShopMeOut)
+async def update_dispatch(
+    body: DispatchSettingsIn, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> ShopMeOut:
+    """How this shop takes jobs: who picks the technician, and instant book."""
+    await ShopService(session, c).set_dispatch(principal.shop, body.model_dump(exclude_unset=True))
+    return _me(principal, c)
 
 
 @router.post("/technicians/{technician_id}/busy", response_model=TechnicianOut)
@@ -273,15 +332,60 @@ async def list_jobs(
     c: ContainerDep,
     status_filter: list[str] | None = Query(None, alias="status"),
 ) -> list[ShopJobOut]:
-    jobs = await JobService(session, c).list_for_shop(principal.shop, status_filter)
-    return [shop_job_out(c, j) for j in jobs]
+    service = JobService(session, c)
+    jobs = await service.list_for_shop(principal.shop, status_filter)
+    return [await _present_for(session, c, principal, j, service) for j in jobs]
+
+
+async def _present_for(
+    session: SessionDep,
+    c: ContainerDep,
+    principal: ShopDep,
+    request: ServiceRequest,
+    service: JobService | None = None,
+) -> ShopJobOut:
+    """A job as this shop sees it (its own offer's timing when offered to several shops)."""
+    if request.shop_id == principal.shop.id:
+        return shop_job_out(c, request)
+    offer = await (service or JobService(session, c)).open_offer(request, principal.shop)
+    tech = await session.get(Technician, offer.technician_id) if offer else None
+    return shop_job_out(c, request, offer, tech.name if tech else None)
 
 
 @router.get("/jobs/{job_id}", response_model=ShopJobOut)
 async def get_job(
     job_id: uuid.UUID, principal: ShopDep, session: SessionDep, c: ContainerDep
 ) -> ShopJobOut:
-    return shop_job_out(c, await _job(session, c, principal, job_id))
+    return await _present_for(session, c, principal, await _job(session, c, principal, job_id))
+
+
+@router.get("/jobs/{job_id}/technician-options", response_model=list[TechOptionOut])
+async def technician_options(
+    job_id: uuid.UUID, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> list[TechOptionOut]:
+    """Who could go, soonest first, for the office choosing a technician."""
+    request = await _job(session, c, principal, job_id)
+    rows = await MatchingService(session, c).technician_options(request, principal.shop)
+    suggested_id = rows[0][0].id if rows else None
+    out = []
+    for tech, option, reason in rows:
+        is_suggested = tech.id == suggested_id and reason is None
+        out.append(
+            TechOptionOut(
+                technician_id=tech.id,
+                name=tech.name,
+                arrival_at=option.arrival_at
+                if option
+                else (request.eta_at if is_suggested else None),
+                distance_km=round(option.distance_km, 1)
+                if option
+                else (request.distance_km if is_suggested else None),
+                available=reason is None,
+                reason=reason,
+                suggested=is_suggested,
+            )
+        )
+    return out
 
 
 @router.post("/jobs/{job_id}/accept", response_model=ShopJobOut)

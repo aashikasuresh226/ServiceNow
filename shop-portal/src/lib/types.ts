@@ -57,7 +57,27 @@ export type Shop = {
   scheduling_last_synced_at: string | null;
   scheduling_last_error: string | null;
   write_back_jobs: boolean;
+  /** platform: we pick the tech · office: you pick when accepting · software: Housecall Pro's dispatcher */
+  dispatch_mode: DispatchMode;
+  instant_book: boolean;
+  instant_book_daily_limit: number;
+  /** Paste into Housecall Pro's webhook settings (optional; we also check every minute). */
+  scheduling_webhook_url: string | null;
 };
+
+export type DispatchMode = 'platform' | 'office' | 'software';
+
+export type TechOption = {
+  technician_id: string;
+  name: string;
+  arrival_at: string | null;
+  distance_km: number | null;
+  available: boolean;
+  reason: string | null;
+  suggested: boolean;
+};
+
+export type TimeOff = { id: string; starts_at: string; ends_at: string; label: string | null };
 
 export type ShopMe = { user_email: string; user_name: string | null; shop: Shop };
 
@@ -186,4 +206,11 @@ export type Job = {
   chat_open: boolean;
   /** The technician is on the way and sharing their location with the customer. */
   driving: boolean;
+  /** False until your office / Housecall Pro dispatcher picks who goes. */
+  technician_confirmed: boolean;
+  instant_booked: boolean;
+  /** Offered to several shops at once: the first to accept gets it. */
+  offered_to_several: boolean;
+  external_job_id: string | null;
+  external_error: string | null;
 };

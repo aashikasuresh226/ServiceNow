@@ -161,14 +161,22 @@ async def test_full_job_with_payments_and_ai_switched_off(
         assert r.status_code == 400 and r.json()["error"]["code"] == "payments_not_configured"
 
 
-async def test_scheduling_connect_is_coming_soon(
+async def test_servicetitan_connect_is_coming_soon(
     client: httpx.AsyncClient, shops: dict[str, SeededShop], clock: FrozenClock
 ) -> None:
     shop = await shop_login(client, shops["near"], clock)
     r = await client.put(
         "/shop/scheduling",
         headers=shop,
-        json={"provider": "housecall_pro", "credentials": {"api_key": "x"}},
+        json={
+            "provider": "servicetitan",
+            "credentials": {
+                "tenant_id": "1",
+                "client_id": "a",
+                "client_secret": "b",
+                "app_key": "c",
+            },
+        },
     )
     assert r.status_code == 409 and r.json()["error"]["code"] == "coming_soon"
 

@@ -105,6 +105,8 @@ export type TechnicianSummary = {
   /** The technician's own number, only if their company lets them take customer calls. */
   phone: string | null;
   can_message: boolean;
+  /** False while the company is still choosing which technician comes. */
+  assigned: boolean;
 };
 
 export type Message = {

@@ -115,6 +115,27 @@ async def public_shop(shop_id: uuid.UUID, session: SessionDep, c: ContainerDep) 
     return await ProviderService(session, c).public_shop(shop_id)
 
 
+@router.post("/webhooks/housecall-pro/{token}", status_code=200)
+async def housecall_pro_webhook(
+    token: str, request: Request, session: SessionDep, c: ContainerDep
+) -> dict[str, bool]:
+    """Housecall Pro calls this when a job changes (the shop pastes the URL into
+    Housecall Pro). The secret token identifies the shop; we then re-read the job from
+    Housecall Pro with the shop's key instead of trusting the payload."""
+    from app.services.external_jobs import ExternalJobService
+
+    try:
+        payload = await request.json()
+    except ValueError:
+        payload = {}
+    ok = await ExternalJobService(session, c).handle_webhook(
+        token, payload if isinstance(payload, dict) else {}
+    )
+    if not ok:
+        raise NotFound("Unknown webhook")
+    return {"received": True}
+
+
 @router.post("/webhooks/payments", status_code=200)
 async def payments_webhook(
     request: Request,

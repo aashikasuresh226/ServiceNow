@@ -7,7 +7,10 @@ import type {
   Job,
   LoginStep,
   Message,
+  Shop,
+  TechOption,
   TechPermissions,
+  TimeOff,
   Options,
   ShopMe,
   TechDay,
@@ -160,6 +163,8 @@ export const api = {
     request<{ count: number }>('PUT', '/shop/scheduling', { provider, credentials, write_back_jobs }),
   disconnectScheduling: () => request<void>('DELETE', '/shop/scheduling'),
   syncNow: () => request<{ count: number }>('POST', '/shop/scheduling/sync'),
+  setDispatch: (data: Partial<Pick<Shop, 'dispatch_mode' | 'instant_book' | 'instant_book_daily_limit'>>) =>
+    request<ShopMe>('PATCH', '/shop/dispatch', data),
 
   technicians: () => request<Technician[]>('GET', '/shop/technicians'),
   createTechnician: (data: Partial<Technician>) => request<Technician>('POST', '/shop/technicians', data),
@@ -172,6 +177,11 @@ export const api = {
     request<{ technician: Technician; email_link: EmailLink }>(
       'POST', `/shop/technicians/${id}/invite`, { email, ...permissions }),
   removeAppAccess: (id: string) => request<Technician>('DELETE', `/shop/technicians/${id}/app-access`),
+  timeOff: (id: string) => request<TimeOff[]>('GET', `/shop/technicians/${id}/time-off`),
+  addTimeOff: (id: string, starts_at: string, ends_at: string, label: string) =>
+    request<TimeOff>('POST', `/shop/technicians/${id}/time-off`, { starts_at, ends_at, label }),
+  removeTimeOff: (id: string, blockId: string) =>
+    request<void>('DELETE', `/shop/technicians/${id}/time-off/${blockId}`),
   importTechnicians: () => request<{ count: number }>('POST', '/shop/technicians/import'),
 
   calendarLink: (id: string, rotate = false) =>
@@ -184,6 +194,7 @@ export const api = {
 
   jobs: (status?: string[]) =>
     request<Job[]>('GET', `/shop/jobs${status?.length ? `?${status.map((s) => `status=${s}`).join('&')}` : ''}`),
+  technicianOptions: (id: string) => request<TechOption[]>('GET', `/shop/jobs/${id}/technician-options`),
   accept: (id: string, technician_id?: string) =>
     request<Job>('POST', `/shop/jobs/${id}/accept`, technician_id ? { technician_id } : {}),
   decline: (id: string) => request<void>('POST', `/shop/jobs/${id}/decline`),

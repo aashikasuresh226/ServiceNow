@@ -4,6 +4,7 @@ technicians and the availability board."""
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.container import Container
 from app.core.config import Environment
 from app.core.errors import AppError, InvalidState, NotFound
+from app.core.fieldcrypt import blind_index
 from app.domain.availability import (
     Block,
     earliest_window,
@@ -31,6 +33,7 @@ from app.domain.enums import (
     SchedulingProvider,
 )
 from app.integrations.payments.base import PaymentGateway
+from app.integrations.scheduling.base import ExternalTechnician
 from app.models import (
     AvailabilityBlock,
     RefreshToken,
@@ -42,11 +45,12 @@ from app.models import (
 from app.services.availability_service import AvailabilityService
 from app.services.email_check import check_email
 from app.services.email_proof import EmailLink, EmailProofService
-from app.services.phone import normalize_optional_phone
+from app.services.phone import normalize_optional_phone, normalize_phone
 from app.services.validation import validate_options
 
 PAYOUT_SCHEDULES = {"daily", "weekly", "manual"}
 MANUAL_SOURCE = "manual"
+TIME_OFF_SOURCE = "time_off"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +59,20 @@ class TechDay:
     blocks: list[Block]
     free_now: bool
     on_job: bool
+
+
+def _same_person(local: Technician, external: ExternalTechnician) -> bool:
+    def norm(text: str | None) -> str:
+        return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+
+    if norm(local.name) and norm(local.name) == norm(external.name):
+        return True
+    if external.phone and local.phone_hash:
+        try:
+            return blind_index("phone", normalize_phone(external.phone)) == local.phone_hash
+        except AppError:
+            return False
+    return False
 
 
 class ShopService:
@@ -159,7 +177,10 @@ class ShopService:
         client = self.c.scheduling(provider, credentials)  # validates required fields
         await client.verify()
         shop.scheduling_provider = provider.value
+        # Some clients learn which auth format the account accepts during verify().
+        credentials = {**credentials, **getattr(client, "learned_credentials", {})}
         shop.scheduling_credentials_encrypted = self.c.encryptor.encrypt(json.dumps(credentials))
+        shop.scheduling_webhook_token = shop.scheduling_webhook_token or secrets.token_urlsafe(24)
         shop.write_back_jobs = write_back
         shop.scheduling_last_error = None
         imported = await self.import_technicians(shop)
@@ -170,6 +191,9 @@ class ShopService:
         shop.scheduling_provider = SchedulingProvider.NONE.value
         shop.scheduling_credentials_encrypted = None
         shop.scheduling_last_synced_at = None
+        shop.scheduling_webhook_token = None
+        if shop.dispatch_mode == "software":
+            shop.dispatch_mode = "office"  # someone still has to pick the technician
 
     async def import_technicians(self, shop: Shop) -> int:
         """Create technicians that exist in the scheduling software but not here yet."""
@@ -178,16 +202,18 @@ class ShopService:
             raise InvalidState("Connect your scheduling software first")
         credentials = json.loads(self.c.encryptor.decrypt(shop.scheduling_credentials_encrypted))
         external = await self.c.scheduling(provider, credentials).list_technicians()
-        existing = set(
-            await self.s.scalars(
-                select(Technician.external_id).where(
-                    Technician.shop_id == shop.id, Technician.external_id.is_not(None)
-                )
-            )
-        )
+        local = list(await self.s.scalars(select(Technician).where(Technician.shop_id == shop.id)))
+        existing = {t.external_id for t in local if t.external_id}
+        unlinked = [t for t in local if not t.external_id]
         created = 0
         for tech in external:
             if tech.external_id in existing:
+                continue
+            # Someone already added here by hand: link them by name or phone.
+            same = next((t for t in unlinked if _same_person(t, tech)), None)
+            if same is not None:
+                same.external_id = tech.external_id
+                unlinked.remove(same)
                 continue
             self.s.add(
                 Technician(
@@ -253,7 +279,9 @@ class ShopService:
                     code="phone_locked",
                 )
             tech.phone = phone
-        for simple in ("photo_url", "external_id"):
+        if "external_id" in data:
+            tech.external_id = (data["external_id"] or "").strip() or None
+        for simple in ("photo_url",):
             if simple in data:
                 setattr(tech, simple, (data[simple] or None))
         if data.get("is_active") is not None:
@@ -305,6 +333,67 @@ class ShopService:
         for row in rows:
             row.revoked_at = now
         await self.s.flush()
+
+    # --- Dispatch settings --------------------------------------------------------------
+    async def set_dispatch(self, shop: Shop, data: dict[str, Any]) -> None:
+        mode = data.get("dispatch_mode")
+        if (
+            mode == "software"
+            and shop.scheduling_provider != SchedulingProvider.HOUSECALL_PRO.value
+        ):
+            raise InvalidState(
+                "Connect Housecall Pro first (Integrations) to let its dispatcher assign jobs",
+                code="not_connected",
+            )
+        if mode:
+            shop.dispatch_mode = mode
+        if data.get("instant_book") is not None:
+            shop.instant_book = bool(data["instant_book"])
+        if data.get("instant_book_daily_limit") is not None:
+            shop.instant_book_daily_limit = int(data["instant_book_daily_limit"])
+        await self.s.flush()
+
+    # --- Time off -----------------------------------------------------------------------
+    async def add_time_off(
+        self, tech: Technician, starts_at: datetime, ends_at: datetime, label: str | None
+    ) -> AvailabilityBlock:
+        """Vacation, a day off, a doctor's appointment: no jobs are planned in this time."""
+        now = self.c.clock.now()
+        if ends_at <= starts_at:
+            raise AppError("Time off must end after it starts", code="invalid_range")
+        if ends_at <= now:
+            raise AppError("That time is already in the past", code="invalid_range")
+        if ends_at - starts_at > timedelta(days=60):
+            raise AppError("Add time off in blocks of up to 60 days", code="invalid_range")
+        block = AvailabilityBlock(
+            technician_id=tech.id,
+            kind=AvailabilityKind.BUSY.value,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            source=TIME_OFF_SOURCE,
+            label=(label or "Time off").strip()[:60] or "Time off",
+        )
+        self.s.add(block)
+        await self.s.flush()
+        return block
+
+    async def list_time_off(self, tech: Technician) -> list[AvailabilityBlock]:
+        rows = await self.s.scalars(
+            select(AvailabilityBlock)
+            .where(
+                AvailabilityBlock.technician_id == tech.id,
+                AvailabilityBlock.source == TIME_OFF_SOURCE,
+                AvailabilityBlock.ends_at > self.c.clock.now(),
+            )
+            .order_by(AvailabilityBlock.starts_at)
+        )
+        return list(rows)
+
+    async def remove_time_off(self, tech: Technician, block_id: uuid.UUID) -> None:
+        block = await self.s.get(AvailabilityBlock, block_id)
+        if block is None or block.technician_id != tech.id or block.source != TIME_OFF_SOURCE:
+            raise NotFound("Time off not found")
+        await self.s.delete(block)
 
     async def mark_busy(self, tech: Technician, minutes: int) -> None:
         """Dispatcher blocks a tech's time by hand (lunch, a job booked by phone, etc.)."""

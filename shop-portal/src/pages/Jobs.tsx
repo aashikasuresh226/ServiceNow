@@ -5,7 +5,7 @@ import { Avatar, Icon } from '../components/Icon';
 import { Button, Empty, ErrorAlert } from '../components/ui';
 import { api } from '../lib/api';
 import { countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal, visitTime } from '../lib/hooks';
-import type { Job, Message } from '../lib/types';
+import type { Job, Message, TechOption } from '../lib/types';
 
 /** +14045550199 -> (404) 555-0199 */
 function prettyPhone(e164: string): string {
@@ -66,13 +66,18 @@ function JobSummary({ job }: { job: Job }) {
 }
 
 export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void }) {
-  const { options } = usePortal();
+  const { options, me } = usePortal();
+  const mode = me?.shop.dispatch_mode ?? 'platform';
   const seconds = useCountdown(job.offer_expires_at);
-  const techs = useLiveData(() => api.availability());
+  const techs = useLiveData(() => (mode === 'software' ? Promise.resolve([] as TechOption[]) : api.technicianOptions(job.id)));
   const [techId, setTechId] = useState<string>('');
-  const accept = useAction(async () => { await api.accept(job.id, techId || undefined); onChanged(); });
+  const chosen = techId || techs.data?.find((t) => t.suggested)?.technician_id || '';
+  const accept = useAction(async () => {
+    const suggested = techs.data?.find((t) => t.suggested)?.technician_id;
+    await api.accept(job.id, chosen && chosen !== suggested ? chosen : undefined);
+    onChanged();
+  });
   const decline = useAction(async () => { await api.decline(job.id); onChanged(); });
-  const freeTechs = (techs.data ?? []).filter((d) => d.free_now && d.technician.id !== job.technician_id);
 
   return (
     <section className="card offer" aria-label="New job offer">
@@ -80,33 +85,54 @@ export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void 
         <h2>New request · {job.area_label}</h2>
         <span className="badge amber">Respond in {seconds != null ? countdownLabel(seconds) : '—'}</span>
       </div>
+      {job.offered_to_several ? (
+        <p className="notice small" role="status"><strong>Offered to a few nearby shops at once.</strong> The first to accept gets it.</p>
+      ) : null}
       <JobSummary job={job} />
       {job.arrival_at && new Date(job.arrival_at).getTime() - Date.now() > 2 * 3600_000 ? (
-        <p className="notice small">Scheduled visit: <strong>{visitTime(job.arrival_at)}</strong> (the
-          technician's earliest opening). It's already on their calendar.</p>
+        <p className="notice small">Scheduled visit: <strong>{visitTime(job.arrival_at)}</strong> (your earliest
+          opening). It's held on the calendar until you respond.</p>
       ) : null}
-      <div className="row" style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12 }}>
-        <Avatar name={job.technician_name ?? ''} />
-        <div className="spacer">
-          <strong>Suggested: {techId ? freeTechs.find((d) => d.technician.id === techId)?.technician.name : job.technician_name}</strong>
-          <p className="small muted">Free now · qualified · closest match</p>
-        </div>
-        <label className="sr-only" htmlFor={`reassign-${job.id}`}>Reassign technician</label>
-        <select id={`reassign-${job.id}`} className="input" style={{ width: 'auto' }} value={techId}
-          onChange={(e) => setTechId(e.target.value)}>
-          <option value="">Keep suggested tech</option>
-          {freeTechs.map((d) => <option key={d.technician.id} value={d.technician.id}>Reassign to {d.technician.name}</option>)}
-        </select>
-      </div>
+      {mode === 'software' ? (
+        <p className="small" style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12 }}>
+          <Icon name="plug" size={14} /> Accepting creates this job in <strong>Housecall Pro</strong> for{' '}
+          {job.arrival_at ? visitTime(job.arrival_at) : 'the earliest opening'}, with the photos and notes. Assign the
+          technician there; the customer is told who's coming as soon as you do.
+        </p>
+      ) : (
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
+          <legend className="label" style={{ marginBottom: 6 }}>
+            {mode === 'office' ? 'Who should go?' : 'Technician (suggested: soonest qualified)'}
+          </legend>
+          {techs.data === null ? <p className="small muted">Checking who's free…</p> : null}
+          {techs.data?.map((t) => (
+            <label key={t.technician_id} className={`choice ${chosen === t.technician_id ? 'selected' : ''}`}
+              style={{ opacity: t.available ? 1 : 0.55 }}>
+              <input type="radio" name={`tech-${job.id}`} checked={chosen === t.technician_id} disabled={!t.available}
+                onChange={() => setTechId(t.technician_id)} />
+              <span className="spacer">
+                <strong>{t.name}</strong>{t.suggested ? <span className="badge primary small" style={{ marginLeft: 6 }}>Suggested</span> : null}<br />
+                <span className="small muted">
+                  {t.available
+                    ? `Arrives ${t.arrival_at ? visitTime(t.arrival_at) : 'soon'}${t.distance_km != null ? ` · ${(t.distance_km * 0.621371).toFixed(1)} mi away` : ''}`
+                    : t.reason}
+                </span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       {options?.features.payments ? (
         <p className="small muted">You'll receive {money(job.payout_cents)} after the platform fee (based on the estimate; final price set on site).</p>
       ) : (
         <p className="small muted">Accepting adds the job and customer details to the technician's calendar. You set the final price on site and collect payment directly.</p>
       )}
-      <ErrorAlert message={accept.error ?? decline.error} />
+      <ErrorAlert message={accept.error ?? decline.error ?? techs.error} />
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         <Button busy={decline.busy} onClick={() => decline.run()}>Decline</Button>
-        <Button variant="primary" icon="truck" busy={accept.busy} onClick={() => accept.run()}>Accept & dispatch</Button>
+        <Button variant="primary" icon="truck" busy={accept.busy} onClick={() => accept.run()}>
+          {mode === 'software' ? 'Accept & send to Housecall Pro' : 'Accept & dispatch'}
+        </Button>
       </div>
     </section>
   );
@@ -126,7 +152,7 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
         <div className="row">
           <Avatar name={job.technician_name ?? ''} size={32} />
           <div>
-            <strong>{job.technician_name}</strong>
+            <strong>{job.technician_confirmed ? job.technician_name : 'Technician not assigned yet'}</strong>
             <p className="small muted">{job.customer_first_name ?? 'Customer'} · {job.address ?? job.area_label}</p>
           </div>
         </div>
@@ -139,6 +165,20 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
           <Icon name="alert" size={18} />
           <span><strong>{job.technician_name} can't make this job:</strong> “{job.technician_flag}”. Call the
             customer or reassign it.</span>
+        </div>
+      ) : null}
+      {job.instant_booked || job.external_job_id ? (
+        <p className="row small">
+          {job.instant_booked ? <span className="badge success">Instant book</span> : null}
+          {job.external_job_id ? <span className="badge neutral"><Icon name="plug" size={12} /> In Housecall Pro</span> : null}
+          {job.external_job_id && !job.technician_confirmed ? (
+            <span className="muted">Assign the technician in Housecall Pro; the customer is updated automatically.</span>
+          ) : null}
+        </p>
+      ) : null}
+      {job.external_error ? (
+        <div className="alert" role="alert"><Icon name="alert" size={18} />
+          <span><strong>Couldn't send this job to Housecall Pro:</strong> {job.external_error}. We'll retry every minute.</span>
         </div>
       ) : null}
       {job.driving ? (

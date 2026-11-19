@@ -9,6 +9,7 @@ from app.models.identity import (
     ShopUser,
 )
 from app.models.service_request import (
+    JobOffer,
     Message,
     ProcessedWebhook,
     RequestEvent,
@@ -23,6 +24,7 @@ __all__ = [
     "AvailabilityBlock",
     "EmailChallenge",
     "Homeowner",
+    "JobOffer",
     "Message",
     "PhoneOtp",
     "ProcessedWebhook",
