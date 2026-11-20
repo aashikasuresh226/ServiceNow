@@ -4,6 +4,7 @@ export type Option = { value: string; label: string };
 
 export type Options = {
   symptoms: Option[];
+  issues: Option[]; // what the technician actually found
   urgency: Option[];
   equipment_types: Option[];
   certifications: Option[];
@@ -18,7 +19,7 @@ export type Features = {
   stripe_publishable_key: string | null;
   photo_analysis: boolean;
   /** 'twilio' = codes arrive by text; 'development' = codes are shown on screen. */
-  texts: 'twilio' | 'development';
+  sign_in: 'authenticator';
   scheduling_integrations: boolean;
   /** Emailed links (technician invites): sent by Firebase, or shown on screen in development. */
   email_links: 'firebase' | 'development';
@@ -246,7 +247,6 @@ export type CardSetup = {
   ephemeral_key_secret: string | null;
 };
 
-export type OtpStarted = { phone: string; resend_after_seconds: number; dev_code: string | null };
 
 export type ProviderShop = {
   id: string;

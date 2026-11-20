@@ -135,11 +135,7 @@ def check(settings: Settings) -> None:
         "HVAC_GOOGLE_CLIENT_IDS" if not settings.google_client_ids else "",
     )
     twilio = settings.resolved_sms_provider == "twilio"
-    line(
-        "Texted sign-in codes",
-        twilio,
-        "Twilio Verify" if twilio else "dev mode: codes shown on screen (set HVAC_TWILIO_*)",
-    )
+    line("Sign-in", True, "authenticator app (free, no texts) or Google")
     line(
         "Job update texts",
         twilio and bool(settings.twilio_from_number or settings.twilio_messaging_service_sid),

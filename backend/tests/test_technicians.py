@@ -17,11 +17,13 @@ from app.core.passwords import breach_count
 from app.integrations.ai.base import AnalysisResult
 from app.models import TechLocation
 from tests.conftest import (
+    STATE,
     SeededShop,
     analyzed_request,
     homeowner_login,
     shop_login,
     token_from_link,
+    totp_code,
 )
 
 TECH_PHONE = "(404) 555-0177"
@@ -50,22 +52,31 @@ async def join_as_technician(
     assert info["technician_name"] == "Nina Near" and info["email"] == "nina@tech.example.com"
     # The link alone isn't enough: the email must be proven first (Firebase in production).
     r = await client.post(
-        "/auth/technician/invite/phone", json={"token": token, "claim": "x" * 20, "phone": phone}
+        "/auth/technician/invite/authenticator", json={"token": token, "claim": "x" * 20}
     )
     assert r.status_code == 401
     claim = (
         await client.post("/auth/technician/invite/verify-email", json={"token": token})
     ).json()["claim"]
-    started = (
+    setup = (
         await client.post(
-            "/auth/technician/invite/phone", json={"token": token, "claim": claim, "phone": phone}
+            "/auth/technician/invite/authenticator", json={"token": token, "claim": claim}
         )
     ).json()
     r = await client.post(
         "/auth/technician/invite/accept",
-        json={"token": token, "claim": claim, "phone": phone, "code": started["dev_code"]},
+        json={
+            "token": token,
+            "claim": claim,
+            "phone": phone,
+            "setup_token": setup["setup_token"],
+            "code": totp_code(setup["secret"]),
+        },
     )
     assert r.status_code == 200, r.text
+    assert len(r.json()["backup_codes"]) == 8
+    STATE["secrets"]["tech:" + phone] = setup["secret"]
+    STATE["secrets"]["tech-backup:" + phone] = r.json()["backup_codes"]
     # The invite works once.
     assert (await client.get(f"/auth/technician/invite/{token}")).status_code == 404
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
@@ -97,15 +108,26 @@ async def test_technician_invite_accept_drive_chat_complete(
     techs = (await client.get("/shop/technicians", headers=shop)).json()
     assert techs[0]["app_status"] == "active"
 
-    # Sign in again later with a texted code.
-    clock.advance(seconds=31)  # resend cooldown after the invite's code
-    started = (await client.post("/auth/technician/otp/start", json={"phone": TECH_PHONE})).json()
+    # Sign in again later: phone or email, plus the authenticator code (or a backup code).
+    secret = STATE["secrets"]["tech:" + TECH_PHONE]
     r = await client.post(
-        "/auth/technician/otp/verify", json={"phone": TECH_PHONE, "code": started["dev_code"]}
+        "/auth/technician/login", json={"login": TECH_PHONE, "code": totp_code(secret)}
     )
-    assert r.status_code == 200
-    unknown = await client.post("/auth/technician/otp/start", json={"phone": "(404) 555-0166"})
-    assert unknown.json()["error"]["code"] == "no_technician_account"
+    assert r.status_code == 200, r.text
+    r = await client.post(
+        "/auth/technician/login",
+        json={"login": "nina@tech.example.com", "code": totp_code(secret)},
+    )
+    assert r.status_code == 200, r.text
+    backup = STATE["secrets"]["tech-backup:" + TECH_PHONE][0]
+    r = await client.post("/auth/technician/login", json={"login": TECH_PHONE, "code": backup})
+    assert r.status_code == 200, r.text
+    r = await client.post("/auth/technician/login", json={"login": TECH_PHONE, "code": backup})
+    assert r.status_code == 401  # each backup code works once
+    unknown = await client.post(
+        "/auth/technician/login", json={"login": "(404) 555-0166", "code": "123456"}
+    )
+    assert unknown.status_code == 401
 
     home = await homeowner_login(client)
     rid = await booked_request(client, home)
@@ -277,7 +299,7 @@ async def test_personal_data_is_encrypted_at_rest(
 
 
 async def test_invalid_phone_numbers_are_rejected(client: httpx.AsyncClient) -> None:
-    r = await client.post("/auth/homeowner/otp/start", json={"phone": "(999) 123-4567"})
+    r = await client.post("/auth/homeowner/start", json={"phone": "(999) 123-4567"})
     assert r.json()["error"]["code"] == "invalid_phone"
 
 

@@ -41,6 +41,45 @@ class TokensOut(Model):
 
 class HomeownerSessionOut(TokensOut):
     needs_profile: bool
+    backup_codes: list[str] = []  # only right after setting up the authenticator
+
+
+class TechSessionOut(TokensOut):
+    backup_codes: list[str] = []
+
+
+class AuthenticatorSetupOut(Model):
+    setup_token: str
+    secret: str  # to type into the authenticator app
+    otpauth_uri: str  # QR code / "add to authenticator" link
+
+
+class PhoneIn(Model):
+    phone: str = Field(min_length=7, max_length=20)
+
+
+class HomeownerStartOut(Model):
+    account: str  # existing: enter your code | new: set up an authenticator
+    setup: AuthenticatorSetupOut | None
+
+
+class HomeownerSignupIn(PhoneIn):
+    setup_token: str = Field(min_length=20, max_length=1000)
+    code: str = Field(min_length=6, max_length=8)
+
+
+class HomeownerLoginIn(PhoneIn):
+    code: str = Field(min_length=6, max_length=12)  # authenticator or backup code
+
+
+class TechLoginIn(Model):
+    login: str = Field(min_length=5, max_length=254)  # phone number or email
+    code: str = Field(min_length=6, max_length=12)
+
+
+class InviteAuthenticatorIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+    claim: str = Field(min_length=10, max_length=200)
 
 
 class RefreshIn(Model):
@@ -109,6 +148,7 @@ class InviteAcceptIn(Model):
     token: str = Field(min_length=10, max_length=200)
     claim: str = Field(min_length=10, max_length=200)
     phone: str | None = Field(None, max_length=20)
+    setup_token: str | None = Field(None, max_length=1000)
     code: str | None = Field(None, max_length=8)
     google_id_token: str | None = Field(None, max_length=4096)
 
@@ -268,6 +308,7 @@ class EstimateInfo(Model):
 class QuoteInfo(Model):
     final_price_cents: int
     notes: str | None
+    actual_issue: str | None = None
 
 
 class PaymentInfo(Model):
@@ -494,7 +535,8 @@ class AcceptIn(Model):
 
 class QuoteIn(Model):
     final_price_cents: int = Field(gt=0, le=50_000_00)
-    notes: str | None = Field(None, max_length=1000)
+    notes: str | None = Field(None, max_length=1000)  # what was fixed
+    actual_issue: str | None = Field(None, max_length=40)  # what was actually wrong
 
 
 class ShopJobOut(Model):
@@ -618,6 +660,7 @@ class OutsideJobDetailOut(OutsideJobOut):
 class OutsideStepIn(Model):
     step: str = Field(pattern="^(on_my_way|arrived|started|finished)$")
     summary: str | None = Field(None, max_length=2000)
+    actual_issue: str | None = Field(None, max_length=40)  # what was wrong (at finish)
 
 
 class OutsideLineItemIn(Model):

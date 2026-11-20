@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.deps import ContainerDep, SessionDep
 from app.core.errors import NotFound
 from app.domain import enums
-from app.domain.pricing import DIAGNOSTIC_FEE_CENTS
+from app.domain.pricing import DIAGNOSTIC_FEE_CENTS, PRICE_BOOK
 from app.models import Homeowner, ProcessedWebhook, RequestPhoto, Shop
 from app.schemas.api import InviteOut
 from app.services.customer_service import CustomerService
@@ -66,6 +66,8 @@ async def health() -> dict[str, str]:
 async def options(c: ContainerDep) -> dict[str, object]:
     return {
         "symptoms": _options(enums.Symptom),
+        # What the technician actually found (recorded with the price; see the quote step).
+        "issues": [{"value": i.value, "label": PRICE_BOOK[i].label} for i in enums.IssueCategory],
         "urgency": _options(enums.Urgency),
         "equipment_types": _options(enums.EquipmentType),
         "certifications": _options(enums.Certification),
@@ -76,7 +78,7 @@ async def options(c: ContainerDep) -> dict[str, object]:
             "payments": c.payments is not None,
             "stripe_publishable_key": c.payments.publishable_key if c.payments else None,
             "photo_analysis": c.analyzer is not None,
-            "texts": "twilio" if c.phone_verify is not None else "development",
+            "sign_in": "authenticator",  # no texted codes: authenticator app or Google
             "scheduling_integrations": c.settings.scheduling_integrations_enabled,
             # Email links (shop sign-up, technician invites): sent by Firebase, or shown
             # on screen in development.

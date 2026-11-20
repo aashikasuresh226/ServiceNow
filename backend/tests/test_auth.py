@@ -16,43 +16,88 @@ from tests.conftest import (
     homeowner_login,
     signup_shop,
     token_from_link,
+    totp_code,
 )
 
 
-async def test_wrong_otp_then_lockout(client: httpx.AsyncClient) -> None:
-    phone = "4045550111"
-    await client.post("/auth/homeowner/otp/start", json={"phone": phone})
-    for _ in range(5):
-        r = await client.post("/auth/homeowner/otp/verify", json={"phone": phone, "code": "000000"})
-        assert r.json()["error"]["code"] in {"otp_invalid"}
-    r = await client.post("/auth/homeowner/otp/verify", json={"phone": phone, "code": "000000"})
-    assert r.json()["error"]["code"] == "otp_locked"
-
-
-async def test_otp_resend_cooldown(client: httpx.AsyncClient, clock: FrozenClock) -> None:
-    await client.post("/auth/homeowner/otp/start", json={"phone": "4045550112"})
-    r = await client.post("/auth/homeowner/otp/start", json={"phone": "4045550112"})
-    assert r.status_code == 429
-    clock.advance(seconds=31)
-    r = await client.post("/auth/homeowner/otp/start", json={"phone": "4045550112"})
-    assert r.status_code == 200
-
-
-async def test_refresh_rotation_and_reuse_detection(client: httpx.AsyncClient) -> None:
+async def test_authenticator_sign_up_sign_in_and_backup_codes(
+    client: httpx.AsyncClient, clock: FrozenClock
+) -> None:
     phone = "4045550113"
-    code = (await client.post("/auth/homeowner/otp/start", json={"phone": phone})).json()
-    tokens = (
-        await client.post(
-            "/auth/homeowner/otp/verify", json={"phone": phone, "code": code["dev_code"]}
-        )
-    ).json()
+    start = (await client.post("/auth/homeowner/start", json={"phone": phone})).json()
+    assert start["account"] == "new"
+    setup = start["setup"]
+    assert setup["otpauth_uri"].startswith("otpauth://totp/HVAC%20Connect:%2B14045550113")
+    # A wrong first code creates nothing.
+    bad = await client.post(
+        "/auth/homeowner/signup",
+        json={"phone": phone, "setup_token": setup["setup_token"], "code": "000000"},
+    )
+    assert bad.status_code == 401
+    # The setup only works for the number it was made for.
+    other = await client.post(
+        "/auth/homeowner/signup",
+        json={
+            "phone": "4045550114",
+            "setup_token": setup["setup_token"],
+            "code": totp_code(setup["secret"]),
+        },
+    )
+    assert other.status_code == 400 and other.json()["error"]["code"] == "setup_invalid"
+    r = await client.post(
+        "/auth/homeowner/signup",
+        json={
+            "phone": phone,
+            "setup_token": setup["setup_token"],
+            "code": totp_code(setup["secret"]),
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["needs_profile"] is True and len(body["backup_codes"]) == 8
+    tokens = body
+
+    # Next time: the number is known, so it's straight to the code.
+    assert (await client.post("/auth/homeowner/start", json={"phone": phone})).json() == {
+        "account": "existing",
+        "setup": None,
+    }
+    clock.advance(seconds=30)
+    r = await client.post(
+        "/auth/homeowner/login", json={"phone": phone, "code": totp_code(setup["secret"])}
+    )
+    assert r.status_code == 200 and r.json()["backup_codes"] == []
+    backup = body["backup_codes"][0]
+    r = await client.post("/auth/homeowner/login", json={"phone": phone, "code": backup.lower()})
+    assert r.status_code == 200, r.text
+    r = await client.post("/auth/homeowner/login", json={"phone": phone, "code": backup})
+    assert r.status_code == 401  # used up
+    # Signing up again with the same number isn't possible.
+    again = (await client.post("/auth/homeowner/start", json={"phone": phone})).json()
+    assert again["account"] == "existing"
+
+    # Refresh tokens still rotate, and reuse revokes the family.
     first = tokens["refresh_token"]
     rotated = (await client.post("/auth/refresh", json={"refresh_token": first})).json()
     assert rotated["refresh_token"] != first
-    # Reusing the old token is treated as theft: the whole session family is revoked.
     assert (await client.post("/auth/refresh", json={"refresh_token": first})).status_code == 401
     r = await client.post("/auth/refresh", json={"refresh_token": rotated["refresh_token"]})
     assert r.status_code == 401
+
+
+async def test_wrong_codes_are_capped(client: httpx.AsyncClient) -> None:
+    await homeowner_login(client, "4045550111", with_card=False)
+    statuses = []
+    for _ in range(11):
+        r = await client.post(
+            "/auth/homeowner/login", json={"phone": "4045550111", "code": "000000"}
+        )
+        statuses.append(r.status_code)
+    assert statuses[-1] == 429  # brute force stopped
+    unknown = await client.post(
+        "/auth/homeowner/login", json={"phone": "4045550199", "code": "123456"}
+    )
+    assert unknown.status_code == 401  # no hint whether the number exists
 
 
 async def test_homeowners_cannot_see_each_others_requests(

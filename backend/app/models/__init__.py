@@ -1,6 +1,12 @@
 """Import all models so SQLAlchemy metadata (and Alembic) see every table."""
 
-from app.models.customers import ExternalJob, ExternalJobEvent, IntegrationLog, ShopCustomer
+from app.models.customers import (
+    ExternalJob,
+    ExternalJobEvent,
+    IntegrationLog,
+    ShopCustomer,
+    StoredFile,
+)
 from app.models.identity import (
     AuthNonce,
     EmailChallenge,
@@ -41,6 +47,7 @@ __all__ = [
     "Shop",
     "ShopCustomer",
     "ShopUser",
+    "StoredFile",
     "TechLocation",
     "Technician",
 ]

@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, File, Request, UploadFile, status
+from fastapi import APIRouter, File, UploadFile, status
 from sqlalchemy import select
 
-from app.api.deps import ContainerDep, HomeownerDep, SessionDep, client_ip
+from app.api.deps import ContainerDep, HomeownerDep, SessionDep
 from app.api.presenters import message_out, request_out
 from app.models import Complaint, ServiceRequest, Shop
 from app.schemas.api import (
@@ -26,9 +26,7 @@ from app.schemas.api import (
     MessageIn,
     MessageOut,
     NotificationsOut,
-    OtpStartOut,
     PhoneStartIn,
-    PhoneVerifyIn,
     ProfileSuggestionsOut,
     RatingIn,
     RequestCreateIn,
@@ -89,24 +87,12 @@ async def accept_invite(
     return InviteOut(shop_name=info.shop_name, shop_phone=info.shop_phone)
 
 
-@router.post("/me/phone/start", response_model=OtpStartOut)
-async def start_add_phone(
-    body: PhoneStartIn, request: Request, me: HomeownerDep, session: SessionDep, c: ContainerDep
-) -> OtpStartOut:
-    """Google users add a mobile number (verified with a texted code)."""
-    started = await AuthService(session, c).start_add_phone(me, body.phone, ip=client_ip(request))
-    return OtpStartOut(
-        phone=started.phone,
-        resend_after_seconds=started.resend_after_seconds,
-        dev_code=started.dev_code,
-    )
-
-
-@router.post("/me/phone/verify", response_model=HomeownerOut)
-async def finish_add_phone(
-    body: PhoneVerifyIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
+@router.post("/me/phone", response_model=HomeownerOut)
+async def set_phone(
+    body: PhoneStartIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
 ) -> HomeownerOut:
-    await AuthService(session, c).finish_add_phone(me, body.phone, body.code)
+    """Google users add a mobile number (so the company can call; nothing is texted)."""
+    await AuthService(session, c).set_phone(me, body.phone)
     return HomeownerOut.model_validate(me)
 
 

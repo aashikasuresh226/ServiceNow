@@ -27,7 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, InvalidState, NotFound
-from app.integrations.storage import sniff_image_type
+from app.domain.enums import IssueCategory
+from app.integrations.storage import normalize_photo, sniff_image_type
 from app.models import ExternalJob, ExternalJobEvent, Homeowner, Shop, ShopCustomer, Technician
 from app.services import integration_log
 from app.services.notifications import notify_homeowner
@@ -72,7 +73,12 @@ class OutsideJobActions:
         return job
 
     async def step(
-        self, tech: Technician, job_id: uuid.UUID, step: str, summary: str | None = None
+        self,
+        tech: Technician,
+        job_id: uuid.UUID,
+        step: str,
+        summary: str | None = None,
+        actual_issue: str | None = None,
     ) -> ExternalJob:
         job = await self._job(tech, job_id)
         if step not in STEPS:
@@ -80,6 +86,10 @@ class OutsideJobActions:
         status, allowed, _label = STEPS[step]
         if job.app_status not in allowed:
             raise InvalidState("That step was already done or doesn't apply now.")
+        if actual_issue is not None:
+            if actual_issue not in IssueCategory._value2member_map_:
+                raise AppError("Choose what was actually wrong", code="invalid_issue")
+            job.actual_issue = actual_issue
         now = self.c.clock.now()
         job.app_status = status
         setattr(job, STAMP[step], now)
@@ -121,6 +131,12 @@ class OutsideJobActions:
         content_type = sniff_image_type(data)
         if content_type is None:
             raise AppError("Please upload a JPEG, PNG, WebP or GIF photo", code="invalid_photo")
+        try:
+            data, content_type = normalize_photo(data)
+        except (OSError, ValueError) as exc:
+            raise AppError(
+                "We couldn't read that photo. Try another.", code="invalid_photo"
+            ) from exc
         key = await self.c.storage.save(data, content_type)
         await self._queue(job, tech, "photo", json.dumps({"key": key, "type": content_type}))
 

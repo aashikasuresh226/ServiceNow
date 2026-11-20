@@ -4,6 +4,7 @@ export type Option = { value: string; label: string };
 
 export type Options = {
   symptoms: Option[];
+  issues: Option[]; // what the technician actually found
   equipment_types: Option[];
   certifications: Option[];
   features: Features;

@@ -32,16 +32,9 @@ export default function Profile() {
 
   const save = useAction(async () => {
     // The address is looked up for real; an address that can't be found is rejected.
-    const updated = await api.updateMe({ name, address, sms_opt_in: sms });
+    let updated = await api.updateMe({ name, address, sms_opt_in: sms });
+    if (!updated.phone) updated = await api.setPhone(phone);
     setMe(updated);
-    if (!updated.phone) {
-      const started = await api.startAddPhone(phone);
-      router.push({
-        pathname: '/verify',
-        params: { phone: started.phone, devCode: started.dev_code ?? '', purpose: 'add' },
-      });
-      return;
-    }
     const next = nextOnboardingRoute(updated, options);
     router.replace(next === '/profile' ? '/home' : next);
   });
@@ -65,12 +58,12 @@ export default function Profile() {
           <Field label="Mobile number" value={phone} onChangeText={setPhone}
             placeholder="(404) 555-0123" keyboardType="phone-pad" autoComplete="tel"
             textContentType="telephoneNumber" />
-          <Muted style={{ marginTop: -8 }}>We'll text a code to confirm it. Your technician uses it to reach you.</Muted>
+          <Muted style={{ marginTop: -8 }}>Your technician uses it to reach you.</Muted>
         </>
       ) : (
         <Row>
           <Icon name="phone" size={16} color={colors.muted} />
-          <Muted>{formatPhone(me?.phone)} (verified)</Muted>
+          <Muted>{formatPhone(me?.phone)}</Muted>
         </Row>
       )}
       <Card tone="muted">

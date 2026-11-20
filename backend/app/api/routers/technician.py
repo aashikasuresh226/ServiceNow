@@ -136,7 +136,9 @@ async def outside_step(
     job_id: uuid.UUID, body: OutsideStepIn, principal: TechDep, session: SessionDep, c: ContainerDep
 ) -> OutsideJobDetailOut:
     """On my way / Arrived / Started / Finished: written to the Housecall Pro job as notes."""
-    await OutsideJobActions(session, c).step(principal.tech, job_id, body.step, body.summary)
+    await OutsideJobActions(session, c).step(
+        principal.tech, job_id, body.step, body.summary, body.actual_issue
+    )
     return await _detail(session, c, principal.tech, job_id)
 
 
@@ -268,7 +270,9 @@ async def quote(
     job_id: uuid.UUID, body: QuoteIn, principal: TechDep, session: SessionDep, c: ContainerDep
 ) -> TechJobOut:
     request = await _job(principal, session, c, job_id)
-    await TechAppService(session, c).quote(request, body.final_price_cents, body.notes)
+    await TechAppService(session, c).quote(
+        request, body.final_price_cents, body.notes, body.actual_issue
+    )
     return await _present(principal, session, c, request)
 
 

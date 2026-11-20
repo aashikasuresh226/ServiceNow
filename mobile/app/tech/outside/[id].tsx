@@ -8,11 +8,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Linking, Platform, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icons';
+import { IssuePicker } from '@/components/IssuePicker';
 import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, Loading, Muted, Row, Screen, StepHeader, Title } from '@/components/ui';
 import { techApi } from '@/lib/api';
 import { money, visitTime } from '@/lib/format';
-import { useAction } from '@/lib/hooks';
+import { useAction, useOptions } from '@/lib/hooks';
 import type { OutsideJobDetail, OutsideStep } from '@/lib/types';
 
 function goToday() {
@@ -48,6 +49,8 @@ export default function OutsideJobScreen() {
   const [note, setNote] = useState('');
   const [summary, setSummary] = useState('');
   const [finishing, setFinishing] = useState(false);
+  const [issue, setIssue] = useState<string | null>(null);
+  const options = useOptions();
 
   const load = useCallback(() => {
     techApi.outsideJob(id).then(setJob).catch(() => setMissing(true));
@@ -55,7 +58,9 @@ export default function OutsideJobScreen() {
   useEffect(load, [load]);
 
   const step = useAction(async (next: OutsideStep) => {
-    setJob(await techApi.outsideStep(id, next, next === 'finished' ? summary : undefined));
+    setJob(await techApi.outsideStep(
+      id, next, next === 'finished' ? summary : undefined, next === 'finished' ? issue ?? undefined : undefined,
+    ));
     if (next === 'finished') setFinishing(false);
   });
   const addItem = useAction(async () => {
@@ -106,7 +111,8 @@ export default function OutsideJobScreen() {
     <Screen footer={
       finished ? <Button label="Back to today" onPress={goToday} />
         : finishing ? (
-          <Button label="Finish job" icon="check" busy={step.busy} onPress={() => step.run('finished')} />
+          <Button label="Finish job" icon="check" busy={step.busy} disabled={!issue || !summary.trim()}
+            onPress={() => step.run('finished')} />
         ) : working ? (
           <View style={{ gap: 8 }}>
             {(NEXT[job.app_status] ?? []).map((n) => (
@@ -152,6 +158,7 @@ export default function OutsideJobScreen() {
       {finishing && !finished ? (
         <Card tone="soft" style={{ gap: 8 }}>
           <Body style={{ fontWeight: '700' }}>Finish the job</Body>
+          <IssuePicker options={options?.issues ?? []} value={issue} onChange={setIssue} />
           <Field label="What did you do? (added to the job in Housecall Pro)" value={summary} onChangeText={setSummary}
             multiline maxLength={2000} placeholder="Replaced the run capacitor, tested cooling…" />
           <Muted>{job.line_items ? `Line items total ${money(itemsTotal)}. ` : ''}The office sends the invoice from Housecall Pro.</Muted>

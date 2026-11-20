@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import AppError, InvalidState, NotFound
-from app.domain.enums import Actor, RequestStatus
+from app.domain.enums import Actor, IssueCategory, RequestStatus
 from app.domain.state_machine import HOMEOWNER_CANCELABLE
 from app.models import Homeowner, JobOffer, ServiceRequest, Shop, Technician
 from app.services.calendar_service import CalendarService
@@ -99,10 +99,15 @@ class JobService:
         *,
         final_price_cents: int,
         notes: str | None,
+        actual_issue: str | None = None,
         actor: Actor = Actor.SHOP,
     ) -> None:
         if not 0 < final_price_cents <= MAX_QUOTE_CENTS:
             raise AppError("Enter a valid price", code="invalid_price")
+        if actual_issue is not None:
+            if actual_issue not in IssueCategory._value2member_map_:
+                raise AppError("Choose what was actually wrong", code="invalid_issue")
+            request.actual_issue = actual_issue
         request.final_price_cents = final_price_cents
         request.quote_notes = (notes or "").strip()[:1000] or None
         transition(self.s, request, S.QUOTED, actor)

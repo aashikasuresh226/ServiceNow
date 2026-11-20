@@ -120,7 +120,11 @@ def _technician_summary(
 def _quote(request: ServiceRequest) -> QuoteInfo | None:
     if request.final_price_cents is None:
         return None
-    return QuoteInfo(final_price_cents=request.final_price_cents, notes=request.quote_notes)
+    return QuoteInfo(
+        final_price_cents=request.final_price_cents,
+        notes=request.quote_notes,
+        actual_issue=request.actual_issue,
+    )
 
 
 def request_out(container: Container, request: ServiceRequest) -> RequestOut:

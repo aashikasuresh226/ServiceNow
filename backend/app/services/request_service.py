@@ -30,7 +30,7 @@ from app.integrations.ai.base import (
     PriceContext,
     UnitInfo,
 )
-from app.integrations.storage import sniff_image_type
+from app.integrations.storage import normalize_photo, sniff_image_type
 from app.models import Homeowner, RequestPhoto, ServiceRequest
 from app.services.lifecycle import transition
 from app.services.validation import validate_options
@@ -114,6 +114,12 @@ class RequestService:
         content_type = sniff_image_type(data)
         if content_type is None:
             raise AppError("Please upload a JPEG, PNG, WebP or GIF photo", code="invalid_photo")
+        try:
+            data, content_type = normalize_photo(data)
+        except (OSError, ValueError) as exc:
+            raise AppError(
+                "We couldn't read that photo. Try another.", code="invalid_photo"
+            ) from exc
         key = await self.c.storage.save(data, content_type)
         photo = RequestPhoto(
             request_id=request.id, storage_key=key, content_type=content_type, size_bytes=len(data)

@@ -25,7 +25,16 @@ import type {
   Tokens,
 } from './types';
 
-export const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1').replace(/\/$/, '');
+/** The API's address. On a host like Render this can be just the API's host name
+ * (e.g. hvac-api.onrender.com): https:// and /v1 are added. */
+function apiUrl(value: string | undefined): string {
+  const raw = (value ?? '').trim().replace(/\/$/, '');
+  if (!raw) return 'http://localhost:8000/v1';
+  if (raw.includes('://')) return raw;
+  return `https://${raw}/v1`;
+}
+
+export const API_URL = apiUrl(import.meta.env.VITE_API_URL);
 const STORAGE_KEY = 'hvac.shop.session';
 
 export class ApiError extends Error {
@@ -225,8 +234,8 @@ export const api = {
   decline: (id: string) => request<void>('POST', `/shop/jobs/${id}/decline`),
   enRoute: (id: string) => request<Job>('POST', `/shop/jobs/${id}/en-route`),
   onSite: (id: string) => request<Job>('POST', `/shop/jobs/${id}/on-site`),
-  quote: (id: string, final_price_cents: number, notes: string) =>
-    request<Job>('POST', `/shop/jobs/${id}/quote`, { final_price_cents, notes }),
+  quote: (id: string, final_price_cents: number, notes: string, actual_issue?: string) =>
+    request<Job>('POST', `/shop/jobs/${id}/quote`, { final_price_cents, notes, actual_issue: actual_issue || undefined }),
   complete: (id: string) => request<Job>('POST', `/shop/jobs/${id}/complete`),
   messages: (id: string) => request<Message[]>('GET', `/shop/jobs/${id}/messages`),
   sendMessage: (id: string, body: string) =>
@@ -274,4 +283,9 @@ export const adminApi = {
   updateComplaint: (id: string, note: string | null, status?: 'open' | 'resolved') =>
     adminRequest<AdminComplaint>('PATCH', `/complaints/${id}`, { note, status }),
   reviews: () => adminRequest<AdminReview[]>('GET', '/reviews'),
+  trainingData: async (): Promise<Blob> => {
+    const r = await fetch(`${API_URL}/admin/training-data`, { headers: { 'X-Admin-Key': getAdminKey() ?? '' } });
+    if (!r.ok) throw new ApiError(r.status, 'error', `Download failed (${r.status})`);
+    return r.blob();
+  },
 };

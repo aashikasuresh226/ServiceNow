@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
@@ -29,9 +29,6 @@ from app.core.security import (
     Role,
     TokenClaims,
     TokenType,
-    constant_time_equals,
-    generate_otp_code,
-    hash_otp,
     hash_password,
     hash_token,
     new_refresh_token,
@@ -41,7 +38,8 @@ from app.core.security import (
     verify_totp,
 )
 from app.integrations.google_auth import GoogleIdentity
-from app.models import AuthNonce, Homeowner, PhoneOtp, RefreshToken, Shop, ShopUser, Technician
+from app.models import AuthNonce, Homeowner, RefreshToken, Shop, ShopUser, Technician
+from app.services import authenticator
 from app.services.customer_service import CustomerService
 from app.services.email_check import check_email
 from app.services.email_proof import EmailLink, EmailProofService
@@ -162,131 +160,93 @@ class AuthService:
                 "sign_in", ip, limit=SIGN_IN_ATTEMPTS_PER_IP_PER_15_MIN, window_seconds=900
             )
 
-    # --- Phone one-time codes -----------------------------------------------------------
+    # --- Homeowners: phone number + authenticator app ---------------------------------
     def _normalize_allowed(self, raw_phone: str) -> str:
         phone = normalize_phone(raw_phone)
         allowed = self.settings.sms_allowed_country_codes
         if allowed and not any(phone.startswith(code) for code in allowed):
-            raise AppError("We can only text US numbers right now", code="phone_not_supported")
+            raise AppError("Only US numbers for now", code="phone_not_supported")
         return phone
 
-    async def start_phone_otp(self, raw_phone: str, *, ip: str | None = None) -> OtpStarted:
+    async def homeowner_start(
+        self, raw_phone: str, *, ip: str | None = None
+    ) -> tuple[str, authenticator.Setup | None]:
+        """("existing", None): ask for the authenticator code. ("new", setup): set one up."""
+        self.limit_ip(ip, "otp")  # per-IP cap on starts (number lookups)
         phone = self._normalize_allowed(raw_phone)
-        self.limit_ip(ip, "otp")
-        now = self.c.clock.now()
-        key = _phone_key(phone)
-        latest = await self.s.scalar(
-            select(PhoneOtp).where(PhoneOtp.phone == key).order_by(PhoneOtp.created_at.desc())
-        )
-        cooldown = self.settings.otp_resend_cooldown_seconds
-        if latest and (wait := cooldown - (now - latest.created_at).total_seconds()) > 0:
-            raise RateLimited(f"Please wait {int(wait) + 1} seconds before requesting a new code")
-        sent_last_hour = await self.s.scalar(
-            select(func.count())
-            .select_from(PhoneOtp)
-            .where(PhoneOtp.phone == key, PhoneOtp.created_at > now - timedelta(hours=1))
-        )
-        if (sent_last_hour or 0) >= self.settings.otp_max_per_hour:
-            raise RateLimited("Too many codes requested. Please try again later.")
-
-        record = PhoneOtp(
-            phone=key,
-            expires_at=now + timedelta(minutes=self.settings.otp_ttl_minutes),
-            created_at=now,  # rate limits compare against the injected clock
-        )
-        dev_code: str | None = None
-        if self.c.phone_verify is not None:
-            await self.c.phone_verify.start(phone)  # Twilio generates and texts the code
-        else:
-            # Development without Twilio: generate locally, store only a keyed hash.
-            dev_code = generate_otp_code()
-            record.code_hash = hash_otp(
-                dev_code, phone, self.settings.jwt_secret.get_secret_value()
+        homeowner = await self._homeowner_by_phone(phone)
+        if homeowner is not None and homeowner.totp_secret_encrypted:
+            return "existing", None
+        if homeowner is not None and self.settings.environment == Environment.PROD:
+            # An account from before authenticator sign-in: we can't prove it's theirs.
+            if homeowner.google_sub:
+                raise Conflict("Sign in with Google for this account.", code="use_google")
+            raise Conflict(
+                "This number already has an account. Contact support to reset its sign-in.",
+                code="needs_reset",
             )
-            if self.c.sms is not None:
-                await self.c.sms.send(
-                    to=phone, body=f"{dev_code} is your {APP_NAME} code. It expires in 10 minutes."
-                )
-        self.s.add(record)
+        setup = authenticator.start(self.c, account=phone, subject=f"homeowner:{phone}")
+        return "new", setup
+
+    async def homeowner_signup(
+        self, raw_phone: str, setup_token: str, code: str, *, ip: str | None = None
+    ) -> tuple[Homeowner, SessionTokens, bool, list[str]]:
+        self.limit_ip(ip)
+        phone = self._normalize_allowed(raw_phone)
+        secret = authenticator.finish(self.c, setup_token, code, subject=f"homeowner:{phone}")
+        homeowner = await self._homeowner_by_phone(phone)
+        if homeowner is not None and homeowner.totp_secret_encrypted:
+            raise Conflict("This number already has an account: sign in instead.", code="exists")
+        if homeowner is not None and self.settings.environment == Environment.PROD:
+            raise Conflict("This number already has an account.", code="needs_reset")
+        if homeowner is None:
+            homeowner = Homeowner(phone=phone)
+            self.s.add(homeowner)
+        codes, hashes = authenticator.new_backup_codes()
+        homeowner.totp_secret_encrypted = self.c.encryptor.encrypt(secret)
+        homeowner.backup_codes = hashes
         await self.s.flush()
-        return OtpStarted(phone, cooldown, dev_code)
-
-    async def _check_phone_code(self, phone: str, code: str) -> None:
-        """Raises unless `code` is the current code for `phone`."""
-        now = self.c.clock.now()
-        code = code.strip()
-        otp = await self.s.scalar(
-            select(PhoneOtp)
-            .where(
-                PhoneOtp.phone == _phone_key(phone),
-                PhoneOtp.consumed_at.is_(None),
-                PhoneOtp.expires_at > now,
-            )
-            .order_by(PhoneOtp.created_at.desc())
+        tokens = await self.issue_session(
+            TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
         )
-        if otp is None:
-            raise Unauthorized(
-                "That code has expired. Please request a new one.", code="otp_expired"
-            )
-        otp.attempts += 1
-        if otp.attempts > self.settings.otp_max_attempts:
-            otp.consumed_at = now
-            await self.s.commit()
-            raise Unauthorized("Too many attempts. Please request a new code.", code="otp_locked")
-        if not code.isdigit() or len(code) != 6:
-            await self.s.commit()
-            raise Unauthorized("That code isn't right", code="otp_invalid")
-        if self.c.phone_verify is not None and otp.code_hash is None:
-            try:
-                approved = await self.c.phone_verify.check(phone, code)
-            except AppError as exc:
-                if exc.code == "otp_expired":
-                    otp.consumed_at = now
-                    await self.s.commit()
-                    raise Unauthorized(exc.message, code="otp_expired") from exc
-                raise
-        else:
-            expected = hash_otp(code, phone, self.settings.jwt_secret.get_secret_value())
-            approved = otp.code_hash is not None and constant_time_equals(expected, otp.code_hash)
-        if not approved:
-            await self.s.commit()  # persist the failed attempt before raising
-            raise Unauthorized("That code isn't right", code="otp_invalid")
-        otp.consumed_at = now
+        return homeowner, tokens, needs_profile(homeowner), codes
 
-    async def verify_phone_otp(
+    async def homeowner_login(
         self, raw_phone: str, code: str, *, ip: str | None = None
     ) -> tuple[Homeowner, SessionTokens, bool]:
         self.limit_ip(ip)
         phone = self._normalize_allowed(raw_phone)
-        await self._check_phone_code(phone, code)
-        homeowner = await self.s.scalar(
-            select(Homeowner).where(Homeowner.phone_hash == _phone_key(phone))
+        homeowner = await self._homeowner_by_phone(phone)
+        if homeowner is None or not homeowner.totp_secret_encrypted:
+            raise Unauthorized("That code isn't right", code="mfa_invalid")
+        updated = authenticator.check(
+            self.c,
+            secret_encrypted=homeowner.totp_secret_encrypted,
+            backup_codes=homeowner.backup_codes,
+            code=code,
+            key=f"homeowner:{homeowner.id}",
         )
-        if homeowner is None:
-            homeowner = Homeowner(phone=phone)
-            self.s.add(homeowner)
-            await self.s.flush()
+        if updated is not None:
+            homeowner.backup_codes = updated
         await CustomerService(self.s, self.c).link_homeowner(homeowner)
         tokens = await self.issue_session(
             TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
         )
         return homeowner, tokens, needs_profile(homeowner)
 
-    async def start_add_phone(
-        self, homeowner: Homeowner, raw_phone: str, *, ip: str | None = None
-    ) -> OtpStarted:
-        """Signed-in homeowner (e.g. via Google) adds a mobile number."""
-        phone = self._normalize_allowed(raw_phone)
-        await self._ensure_phone_free(homeowner, phone)
-        return await self.start_phone_otp(phone, ip=ip)
+    async def _homeowner_by_phone(self, phone: str) -> Homeowner | None:
+        return await self.s.scalar(
+            select(Homeowner).where(Homeowner.phone_hash == _phone_key(phone))
+        )
 
-    async def finish_add_phone(self, homeowner: Homeowner, raw_phone: str, code: str) -> Homeowner:
+    async def set_phone(self, homeowner: Homeowner, raw_phone: str) -> Homeowner:
+        """A Google user adds their mobile number (for the company to call; not texted)."""
         phone = self._normalize_allowed(raw_phone)
         await self._ensure_phone_free(homeowner, phone)
-        await self._check_phone_code(phone, code)
-        homeowner.phone = phone
+        if phone != homeowner.phone:
+            homeowner.phone = phone
+            homeowner.phone_verified = False
         await self.s.flush()
-        await CustomerService(self.s, self.c).link_homeowner(homeowner)
         return homeowner
 
     async def _ensure_phone_free(self, homeowner: Homeowner, phone: str) -> None:
@@ -295,8 +255,8 @@ class AuthService:
         )
         if owner is not None and owner != homeowner.id:
             raise Conflict(
-                "This number belongs to another account. Sign out and continue with your "
-                "phone number instead.",
+                "This number belongs to another account. Sign out and sign in with your "
+                "phone number and authenticator instead.",
                 code="phone_taken",
             )
 
@@ -531,15 +491,13 @@ class AuthService:
         await self.invite_info(token)
         return await EmailProofService(self.s, self.c).prove(token, "tech_invite")
 
-    async def start_invite_phone(
-        self, token: str, claim: str, raw_phone: str, *, ip: str | None
-    ) -> OtpStarted:
+    async def invite_authenticator(self, token: str, claim: str) -> authenticator.Setup:
         tech, *_ = await self.invite_info(token)
         proof = EmailProofService(self.s, self.c)
         proof.check_claim(await proof.get(token, "tech_invite"), claim)
-        phone = self._normalize_allowed(raw_phone)
-        await self._ensure_tech_phone_free(tech, phone)
-        return await self.start_phone_otp(phone, ip=ip)
+        return authenticator.start(
+            self.c, account=tech.phone or tech.name, subject=f"tech:{tech.id}"
+        )
 
     async def accept_invite(
         self,
@@ -547,10 +505,11 @@ class AuthService:
         claim: str,
         *,
         phone: str | None = None,
+        setup_token: str | None = None,
         code: str | None = None,
         google_id_token: str | None = None,
         ip: str | None = None,
-    ) -> SessionTokens:
+    ) -> tuple[SessionTokens, list[str]]:
         self.limit_ip(ip)
         tech, _shop, email, _ = await self.invite_info(token)
         proof = EmailProofService(self.s, self.c)
@@ -568,21 +527,27 @@ class AuthService:
             if other is not None and other != tech.id:
                 raise Conflict("This Google account is already used by another technician")
             tech.google_sub = identity.subject
-        elif phone and code:
-            normalized = self._normalize_allowed(phone)
-            await self._ensure_tech_phone_free(tech, normalized)
-            await self._check_phone_code(normalized, code)
-            tech.phone = normalized
+        elif setup_token and code:
+            secret = authenticator.finish(self.c, setup_token, code, subject=f"tech:{tech.id}")
+            tech.totp_secret_encrypted = self.c.encryptor.encrypt(secret)
         else:
             raise AppError("Choose how you'll sign in", code="missing_sign_in")
+        if phone:
+            normalized = self._normalize_allowed(phone)
+            await self._ensure_tech_phone_free(tech, normalized)
+            tech.phone = normalized
+        codes: list[str] = []
+        if tech.totp_secret_encrypted:
+            codes, tech.backup_codes = authenticator.new_backup_codes()
         await proof.consume(token, "tech_invite", claim)
         tech.email = email
         tech.app_status = "active"
         tech.joined_at = self.c.clock.now()
         await self.s.flush()
-        return await self.issue_session(
+        tokens = await self.issue_session(
             TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
         )
+        return tokens, codes
 
     async def _ensure_tech_phone_free(self, tech: Technician, phone: str) -> None:
         other = await self.s.scalar(
@@ -595,32 +560,34 @@ class AuthService:
         if other is not None:
             raise Conflict("Another technician account uses this number", code="phone_taken")
 
-    async def _active_tech_by_phone(self, phone: str) -> Technician:
+    async def tech_login(self, login: str, code: str, *, ip: str | None) -> SessionTokens:
+        """Phone number or email, plus the authenticator code (or a backup code)."""
+        self.limit_ip(ip)
+        login = login.strip()
+        if "@" in login:
+            condition = Technician.email_hash == blind_index("email", login.lower())
+        else:
+            condition = Technician.phone_hash == _phone_key(self._normalize_allowed(login))
         tech = await self.s.scalar(
             select(Technician).where(
-                Technician.phone_hash == _phone_key(phone),
-                Technician.app_status == "active",
-                Technician.is_active.is_(True),
+                condition, Technician.app_status == "active", Technician.is_active.is_(True)
             )
         )
-        if tech is None:
-            raise NotFound(
-                "No technician account uses this number. Ask your company to invite you.",
-                code="no_technician_account",
+        if tech is None or not tech.totp_secret_encrypted:
+            raise Unauthorized(
+                "That code isn't right, or there's no technician account for this. Ask your "
+                "company to invite you.",
+                code="mfa_invalid",
             )
-        return tech
-
-    async def start_tech_otp(self, raw_phone: str, *, ip: str | None) -> OtpStarted:
-        phone = self._normalize_allowed(raw_phone)
-        self.limit_ip(ip, "otp")
-        await self._active_tech_by_phone(phone)
-        return await self.start_phone_otp(phone, ip=ip)
-
-    async def verify_tech_otp(self, raw_phone: str, code: str, *, ip: str | None) -> SessionTokens:
-        self.limit_ip(ip)
-        phone = self._normalize_allowed(raw_phone)
-        tech = await self._active_tech_by_phone(phone)
-        await self._check_phone_code(phone, code)
+        updated = authenticator.check(
+            self.c,
+            secret_encrypted=tech.totp_secret_encrypted,
+            backup_codes=tech.backup_codes,
+            code=code,
+            key=f"tech:{tech.id}",
+        )
+        if updated is not None:
+            tech.backup_codes = updated
         return await self.issue_session(
             TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
         )

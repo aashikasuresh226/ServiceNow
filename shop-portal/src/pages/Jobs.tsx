@@ -148,6 +148,7 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
   const paymentsOn = options?.features.payments ?? false;
   const [price, setPrice] = useState('');
   const [notes, setNotes] = useState('');
+  const [issue, setIssue] = useState('');
   const act = useAction(async (fn: () => Promise<unknown>) => { await fn(); onChanged(); });
   const cents = Math.round(parseFloat(price || '0') * 100);
 
@@ -204,18 +205,25 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
       ) : null}
       {job.status === 'on_site' ? (
         <form className="grid-2" style={{ alignItems: 'end' }}
-          onSubmit={(e) => { e.preventDefault(); void act.run(() => api.quote(job.id, cents, notes)); }}>
+          onSubmit={(e) => { e.preventDefault(); void act.run(() => api.quote(job.id, cents, notes, issue)); }}>
           <div className="field">
             <label htmlFor={`price-${job.id}`}>Final price ($)</label>
             <input id={`price-${job.id}`} className="input" inputMode="decimal" value={price}
               placeholder={((job.estimate.low_cents ?? 0) / 100).toFixed(0)} onChange={(e) => setPrice(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor={`notes-${job.id}`}>What was wrong / what you'll do</label>
+            <label htmlFor={`issue-${job.id}`}>What was actually wrong?</label>
+            <select id={`issue-${job.id}`} className="input" value={issue} onChange={(e) => setIssue(e.target.value)}>
+              <option value="">Choose…</option>
+              {(options?.issues ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`notes-${job.id}`}>What you fixed / will do</label>
             <input id={`notes-${job.id}`} className="input" value={notes} onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g. Replaced run capacitor" />
           </div>
-          <Button type="submit" variant="primary" busy={act.busy} disabled={cents <= 0}>Send price to homeowner</Button>
+          <Button type="submit" variant="primary" busy={act.busy} disabled={cents <= 0 || !issue || !notes.trim()}>Send price to homeowner</Button>
         </form>
       ) : null}
       {job.status === 'quoted' ? (

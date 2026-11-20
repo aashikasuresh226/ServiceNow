@@ -1,0 +1,101 @@
+# Render Blueprint: deploys the whole app on Render's free plan.
+#   Render dashboard > New > Blueprint > pick this GitHub repo > fill in the values it asks
+#   for (marked sync: false below) > Apply.
+# Three services:
+#   hvac-api     the API + background worker (free web service; sleeps after 15 minutes
+#                without visits, so point a free monitor at /v1/health: see docs/DEPLOY.md)
+#   hvac-app     homeowner + technician app (static site; QR codes and invites point here)
+#   hvac-portal  shop portal (static site)
+# The services find each other's addresses automatically (fromService ... host).
+
+services:
+  - type: web
+    name: hvac-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install .
+    # Applies database migrations, then starts the API (with the worker inside it).
+    startCommand: python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /v1/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: HVAC_ENVIRONMENT
+        value: prod
+      # Render's free disk is wiped on every restart: keep photos in the database.
+      - key: HVAC_STORAGE_BACKEND
+        value: database
+      - key: HVAC_RUN_WORKER_IN_PROCESS
+        value: "true"
+      # Your Neon connection string (Neon dashboard > Connect), e.g.
+      # postgresql://user:password@ep-xxxx-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
+      - key: HVAC_DATABASE_URL
+        sync: false
+      # Random secrets, generated once by Render. Never change HVAC_ENCRYPTION_KEY after
+      # data exists: it decrypts customer data and photos.
+      - key: HVAC_JWT_SECRET
+        generateValue: true
+      - key: HVAC_ENCRYPTION_KEY
+        generateValue: true
+      # Your key for /admin in the shop portal (read it in Render > hvac-api > Environment).
+      - key: HVAC_ADMIN_TOKEN
+        generateValue: true
+      # Free Gemini key(s), comma-separated (aistudio.google.com/apikey).
+      - key: HVAC_GEMINI_API_KEY
+        sync: false
+      # Firebase Web API key (verification emails). Required in production.
+      - key: HVAC_FIREBASE_API_KEY
+        sync: false
+      # Where the apps live (filled in from the other services).
+      - key: HVAC_API_HOST
+        fromService:
+          type: web
+          name: hvac-api
+          property: host
+      - key: HVAC_APP_HOST
+        fromService:
+          type: web
+          name: hvac-app
+          property: host
+      - key: HVAC_PORTAL_HOST
+        fromService:
+          type: web
+          name: hvac-portal
+          property: host
+
+  - type: web
+    name: hvac-app
+    runtime: static
+    rootDir: mobile
+    buildCommand: npm ci && npx expo export --platform web
+    staticPublishPath: dist
+    # Every path (e.g. /join/ABCD2345 from a QR code) opens the app, which shows the screen.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: EXPO_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: hvac-api
+          property: host
+
+  - type: web
+    name: hvac-portal
+    runtime: static
+    rootDir: shop-portal
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: hvac-api
+          property: host

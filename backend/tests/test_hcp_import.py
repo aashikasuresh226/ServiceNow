@@ -300,6 +300,12 @@ async def test_customer_using_both_sees_the_housecall_pro_visit_in_the_app(
     await tick(c)
 
     rosa = await homeowner_login(client, "(404) 555-0123")  # the number the shop has on file
+    # A number typed at sign-up isn't proof it's hers (no code is texted): nothing yet.
+    assert (await client.get("/me/visits", headers=rosa)).json() == []
+    # Her personal invite link (sent by the shop to that number) + the same number: linked.
+    customers = (await client.get("/shop/customers", headers=shop)).json()["customers"]
+    code = next(x for x in customers if x["name"] == "Rosa Diaz")["invite_url"].rsplit("/", 1)[1]
+    await client.post("/me/invite", headers=rosa, json={"code": code})
     [visit] = (await client.get("/me/visits", headers=rosa)).json()
     assert visit["shop_name"] == "Near HVAC" and visit["technician_first_name"] == "Nina"
     assert visit["status"] == "scheduled" and visit["description"] == "AC not cooling upstairs"

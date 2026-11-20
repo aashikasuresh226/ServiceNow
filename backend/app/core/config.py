@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from enum import StrEnum
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -38,6 +38,11 @@ class Settings(BaseSettings):
         ]
     )
     public_api_url: str = "http://localhost:8000"
+    # Hosting (e.g. Render): the bare host names of the API, the homeowner/technician app and
+    # the shop portal. When set they fill in public_api_url, public_app_url and CORS.
+    api_host: str = ""
+    app_host: str = ""
+    portal_host: str = ""
 
     # SQLite by default so the demo runs on any laptop with no database install.
     # Production uses Postgres: postgresql+asyncpg://user:pass@host:5432/hvac
@@ -136,6 +141,9 @@ class Settings(BaseSettings):
     scheduling_integrations_enabled: bool = False
 
     storage_dir: str = "./var/uploads"
+    # local: files in storage_dir. database: in Postgres (hosts whose disk is wiped, e.g.
+    # Render's free plan).
+    storage_backend: Literal["local", "database"] = "local"
     max_photo_bytes: int = 10 * 1024 * 1024
     max_photos_per_request: int = 5
 
@@ -177,6 +185,30 @@ class Settings(BaseSettings):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
+    @field_validator("encryption_key", mode="before")
+    @classmethod
+    def _urlsafe_key(cls, value: Any) -> Any:
+        """Accept a key in standard base64 too (e.g. one a host generated): + / -> - _."""
+        raw = value.get_secret_value() if isinstance(value, SecretStr) else value
+        if isinstance(raw, str):
+            return raw.strip().replace("+", "-").replace("/", "_")
+        return value
+
+    @model_validator(mode="after")
+    def _hosts(self) -> Settings:
+        def url(host: str) -> str:
+            host = host.strip().rstrip("/")
+            return host if "://" in host else f"https://{host}"
+
+        if self.api_host.strip():
+            object.__setattr__(self, "public_api_url", url(self.api_host))
+        if self.app_host.strip():
+            object.__setattr__(self, "public_app_url", url(self.app_host))
+        extra = [url(h) for h in (self.app_host, self.portal_host) if h.strip()]
+        if extra:
+            object.__setattr__(self, "cors_origins", [*self.cors_origins, *extra])
+        return self
+
     @model_validator(mode="after")
     def _ignore_old_demo_values(self) -> Settings:
         """Older .env files set the demo stand-ins ("fake"). Outside tests, treat them as
@@ -193,13 +225,12 @@ class Settings(BaseSettings):
         return self
 
     def validate_providers(self) -> None:
-        """Test doubles are only allowed in tests; on-screen codes only outside prod."""
+        """Test doubles are only allowed in tests. (Texts are optional: sign-in uses an
+        authenticator app, so production runs without Twilio; job texts are then off.)"""
         problems: list[str] = []
         for name in ("ai_provider", "payments_provider", "geocoding_provider", "sms_provider"):
             if getattr(self, name) == "fake" and self.environment != Environment.TEST:
                 problems.append(f"HVAC_{name.upper()}=fake is only for automated tests")
-        if self.resolved_sms_provider == "console" and self.environment == Environment.PROD:
-            problems.append("Twilio must be configured in prod")
         if self.ai_provider == "anthropic" and not self.anthropic_api_key:
             problems.append("HVAC_ANTHROPIC_API_KEY is required for HVAC_AI_PROVIDER=anthropic")
         if self.ai_provider == "gemini" and not self.gemini_api_key:
@@ -227,8 +258,6 @@ class Settings(BaseSettings):
         for name in ("ai_provider", "payments_provider", "sms_provider", "geocoding_provider"):
             if getattr(self, name) in ("fake", "console"):
                 problems.append(f"HVAC_{name.upper()} can't be '{getattr(self, name)}' in prod")
-        if self.sms_twilio_ready is False:
-            problems.append("Twilio (HVAC_TWILIO_*) must be configured in prod")
         if self.payments_enabled and not self.stripe_webhook_secret:
             problems.append("HVAC_STRIPE_WEBHOOK_SECRET must be set")
         if not self.firebase_enabled:

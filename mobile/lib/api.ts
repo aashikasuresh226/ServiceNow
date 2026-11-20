@@ -5,13 +5,13 @@
 import { Platform } from 'react-native';
 
 import { API_URL } from './config';
+import type { AuthenticatorSetupData } from '@/components/AuthenticatorSetup';
 import type {
   CardSetup,
   Homeowner,
   InviteInfo,
   Message,
   Options,
-  OtpStarted,
   OutsideJob,
   OutsideJobDetail,
   OutsideStep,
@@ -126,15 +126,15 @@ export const api = {
   options: () => request<Options>('GET', '/meta/options', undefined, { auth: false }),
 
   // Auth
-  startOtp: (phone: string) =>
-    request<OtpStarted>('POST', '/auth/homeowner/otp/start', { phone }, { auth: false }),
-  verifyOtp: (phone: string, code: string) =>
+  homeownerStart: (phone: string) =>
+    request<{ account: 'existing' | 'new'; setup: AuthenticatorSetupData | null }>(
+      'POST', '/auth/homeowner/start', { phone }, { auth: false }),
+  homeownerSignup: (phone: string, setup_token: string, code: string) =>
+    request<Tokens & { needs_profile: boolean; backup_codes: string[] }>(
+      'POST', '/auth/homeowner/signup', { phone, setup_token, code }, { auth: false }),
+  homeownerLogin: (phone: string, code: string) =>
     request<Tokens & { needs_profile: boolean }>(
-      'POST',
-      '/auth/homeowner/otp/verify',
-      { phone, code },
-      { auth: false },
-    ),
+      'POST', '/auth/homeowner/login', { phone, code }, { auth: false }),
   googleNonce: () =>
     request<{ nonce: string }>('POST', '/auth/google/nonce', undefined, { auth: false }),
   googleSignIn: (idToken: string) =>
@@ -162,9 +162,7 @@ export const api = {
     request<{ shop_name: string; shop_phone: string | null }>('POST', '/me/invite', { code }),
   updateMe: (data: Partial<Pick<Homeowner, 'name' | 'address' | 'sms_opt_in'>>) =>
     request<Homeowner>('PATCH', '/me', data),
-  startAddPhone: (phone: string) => request<OtpStarted>('POST', '/me/phone/start', { phone }),
-  verifyAddPhone: (phone: string, code: string) =>
-    request<Homeowner>('POST', '/me/phone/verify', { phone, code }),
+  setPhone: (phone: string) => request<Homeowner>('POST', '/me/phone', { phone }),
   startCardSetup: () => request<CardSetup>('POST', '/me/payment-methods/setup'),
   finishCardSetup: (setupIntentId: string) =>
     request<Homeowner>('POST', '/me/payment-methods/finish', { setup_intent_id: setupIntentId }),
@@ -214,22 +212,21 @@ export const techApi = {
   verifyInviteEmail: (token: string) =>
     request<{ claim: string }>('POST', '/auth/technician/invite/verify-email',
       { token }, { auth: false }),
-  invitePhone: (token: string, claim: string, phone: string) =>
-    request<OtpStarted>('POST', '/auth/technician/invite/phone', { token, claim, phone }, { auth: false }),
-  acceptInvite: (data: { token: string; claim: string; phone?: string; code?: string; google_id_token?: string }) =>
-    request<Tokens>('POST', '/auth/technician/invite/accept', data, { auth: false }),
-  startOtp: (phone: string) =>
-    request<OtpStarted>('POST', '/auth/technician/otp/start', { phone }, { auth: false }),
-  verifyOtp: (phone: string, code: string) =>
-    request<Tokens>('POST', '/auth/technician/otp/verify', { phone, code }, { auth: false }),
+  inviteAuthenticator: (token: string, claim: string) =>
+    request<AuthenticatorSetupData>('POST', '/auth/technician/invite/authenticator', { token, claim }, { auth: false }),
+  acceptInvite: (data: {
+    token: string; claim: string; phone?: string; setup_token?: string; code?: string; google_id_token?: string;
+  }) => request<Tokens & { backup_codes: string[] }>('POST', '/auth/technician/invite/accept', data, { auth: false }),
+  login: (login: string, code: string) =>
+    request<Tokens>('POST', '/auth/technician/login', { login, code }, { auth: false }),
   google: (id_token: string) =>
     request<Tokens>('POST', '/auth/technician/google', { id_token }, { auth: false }),
 
   me: () => request<TechMe>('GET', '/tech/me'),
   board: () => request<TechBoard>('GET', '/tech/jobs'),
   outsideJob: (id: string) => request<OutsideJobDetail>('GET', `/tech/outside-jobs/${id}`),
-  outsideStep: (id: string, step: OutsideStep, summary?: string) =>
-    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/step`, { step, summary }),
+  outsideStep: (id: string, step: OutsideStep, summary?: string, actual_issue?: string) =>
+    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/step`, { step, summary, actual_issue }),
   outsideLineItem: (id: string, name: string, quantity: number, unit_price_cents: number) =>
     request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/line-items`, { name, quantity, unit_price_cents }),
   outsideNote: (id: string, body: string) =>
@@ -254,8 +251,8 @@ export const techApi = {
   location: (id: string, lat: number, lng: number, accuracy_m?: number | null) =>
     request<void>('PUT', `/tech/jobs/${id}/location`, { lat, lng, accuracy_m: accuracy_m ?? null }),
   arrived: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/arrived`),
-  quote: (id: string, final_price_cents: number, notes: string) =>
-    request<TechJob>('POST', `/tech/jobs/${id}/quote`, { final_price_cents, notes }),
+  quote: (id: string, final_price_cents: number, notes: string, actual_issue?: string) =>
+    request<TechJob>('POST', `/tech/jobs/${id}/quote`, { final_price_cents, notes, actual_issue }),
   complete: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/complete`),
   messages: (id: string) => request<Message[]>('GET', `/tech/jobs/${id}/messages`),
   sendMessage: (id: string, body: string) =>

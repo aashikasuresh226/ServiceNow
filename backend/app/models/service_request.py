@@ -43,6 +43,9 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     diagnostic_fee_cents: Mapped[int | None] = mapped_column(Integer)
     estimate_low_cents: Mapped[int | None] = mapped_column(Integer)  # visit + low repair
     estimate_high_cents: Mapped[int | None] = mapped_column(Integer)  # None: priced on site
+    # What the technician actually found (an IssueCategory), next to the AI's guess in
+    # `diagnosis`: with the photos and quote_notes (the fix), it's training data.
+    actual_issue: Mapped[str | None] = mapped_column(String(40))
 
     # Matching preferences
 

@@ -77,12 +77,29 @@ function Dashboard({ onSignOut }: { onSignOut: () => void }) {
     if (error && /admin key/i.test(error)) onSignOut();
   }, [error, onSignOut]);
   const open = complaints.data?.filter((c) => c.status === 'open').length ?? 0;
+  const download = useAction(async () => {
+    const blob = await adminApi.trainingData();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hvac-training-${new Date().toISOString().slice(0, 10)}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
   return (
     <main className="content" style={{ margin: '0 auto' }}>
       <div className="row between">
         <h1>HVAC Connect admin</h1>
-        <Button size="small" onClick={() => { setAdminKey(null); onSignOut(); }}>Sign out</Button>
+        <div className="row" style={{ gap: 8 }}>
+          <Button size="small" icon="download" busy={download.busy} onClick={() => download.run()}>Download training data</Button>
+          <Button size="small" onClick={() => { setAdminKey(null); onSignOut(); }}>Sign out</Button>
+        </div>
       </div>
+      <p className="small muted">
+        Training data: every finished job's photos (location data removed), what the homeowner reported, the AI's
+        guess, and what the technician actually found and fixed. No names, phone numbers or addresses.
+      </p>
+      <ErrorAlert message={download.error} />
       <div className="tabs" role="tablist">
         <button type="button" role="tab" className="tab" aria-selected={tab === 'complaints'} onClick={() => setTab('complaints')}>
           Complaints{open ? ` (${open} open)` : ''}

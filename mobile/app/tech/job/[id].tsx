@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Image, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icons';
+import { IssuePicker } from '@/components/IssuePicker';
 import { colors, radius } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, KeyValue, Loading, Muted, Row, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { techApi } from '@/lib/api';
@@ -159,6 +160,8 @@ function Actions({ job, act, sharing, canRespond }: {
   const [asking, setAsking] = useState(false);
   const [price, setPrice] = useState('');
   const [notes, setNotes] = useState('');
+  const [issue, setIssue] = useState<string | null>(null);
+  const options = useOptions();
   const cents = Math.round(parseFloat(price || '0') * 100);
 
   if (job.status === 'offered' && canRespond) {
@@ -222,9 +225,10 @@ function Actions({ job, act, sharing, canRespond }: {
         <Row style={{ gap: 8 }}>
           <View style={{ flex: 1 }}><Field label="Final price ($)" value={price} onChangeText={setPrice} keyboardType="decimal-pad" placeholder="185" /></View>
         </Row>
-        <Field label="What you found / will do" value={notes} onChangeText={setNotes} placeholder="Replaced run capacitor" />
-        <Button label="Send price to customer" busy={act.busy} disabled={cents <= 0}
-          onPress={() => act.run(() => techApi.quote(job.id, cents, notes))} />
+        <IssuePicker options={options?.issues ?? []} value={issue} onChange={setIssue} />
+        <Field label="What you fixed / will do" value={notes} onChangeText={setNotes} placeholder="Replaced run capacitor" />
+        <Button label="Send price to customer" busy={act.busy} disabled={cents <= 0 || !issue || !notes.trim()}
+          onPress={() => act.run(() => techApi.quote(job.id, cents, notes, issue ?? undefined))} />
       </View>
     );
   }

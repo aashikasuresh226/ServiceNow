@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Float, ForeignKey, Index, String, Uuid
+from sqlalchemy import Boolean, Float, ForeignKey, Index, String, Text, Uuid, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db import Base, UTCDateTime
@@ -25,6 +25,14 @@ class Homeowner(IdMixin, TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(EncryptedText)
     email_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
+    # Sign-in with an authenticator app (see services/authenticator.py).
+    totp_secret_encrypted: Mapped[str | None] = mapped_column(String(512))
+    backup_codes: Mapped[str | None] = mapped_column(Text)  # JSON list of hashes
+    # True only when the number was confirmed by a texted code (none are sent right now):
+    # unconfirmed numbers never unlock a shop's customer record.
+    phone_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     name: Mapped[str | None] = mapped_column(EncryptedText)
     address: Mapped[str | None] = mapped_column(EncryptedText)
     lat: Mapped[float | None] = mapped_column(Float)

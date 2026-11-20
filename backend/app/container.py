@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core import fieldcrypt
 from app.core.clock import Clock, SystemClock
-from app.core.config import Settings
+from app.core.config import Environment, Settings
 from app.core.db import create_engine, create_session_factory
 from app.core.ratelimit import RateLimiter
 from app.core.security import Encryptor, TokenService, UrlSigner
@@ -30,7 +30,7 @@ from app.integrations.google_auth import GoogleTokenVerifier
 from app.integrations.payments.base import PaymentGateway
 from app.integrations.scheduling.factory import SchedulingClientFactory, make_factory
 from app.integrations.sms import ConsoleSmsSender, SmsSender, TwilioSmsSender, TwilioVerifyClient
-from app.integrations.storage import FileStorage, LocalFileStorage
+from app.integrations.storage import DatabaseFileStorage, FileStorage, LocalFileStorage
 
 
 @dataclass
@@ -129,6 +129,7 @@ def build_container(settings: Settings) -> Container:
     settings.validate_for_production()
     fieldcrypt.configure(settings.encryption_key.get_secret_value())
     engine = create_engine(settings.database_url)
+    session_factory = create_session_factory(engine)
     http = httpx.AsyncClient(timeout=httpx.Timeout(20.0))
 
     phone_verify: TwilioVerifyClient | None = None
@@ -149,8 +150,9 @@ def build_container(settings: Settings) -> Container:
                 messaging_service_sid=settings.twilio_messaging_service_sid,
                 http=http,
             )
-    else:
-        sms = ConsoleSmsSender()
+    elif settings.environment != Environment.PROD:
+        sms = ConsoleSmsSender()  # development: texts are printed in the API window
+    # Production without Twilio: no texts (and no phone numbers or messages in the logs).
 
     google = (
         GoogleTokenVerifier(client_ids=settings.google_client_ids, http=http)
@@ -161,7 +163,7 @@ def build_container(settings: Settings) -> Container:
     return Container(
         settings=settings,
         engine=engine,
-        session_factory=create_session_factory(engine),
+        session_factory=session_factory,
         http=http,
         clock=SystemClock(),
         tokens=TokenService(settings.jwt_secret.get_secret_value(), settings.jwt_issuer),
@@ -169,7 +171,9 @@ def build_container(settings: Settings) -> Container:
         url_signer=UrlSigner(settings.jwt_secret.get_secret_value()),
         rate_limiter=RateLimiter(),
         geocoder=_build_geocoder(settings, http),
-        storage=LocalFileStorage(settings.storage_dir),
+        storage=DatabaseFileStorage(session_factory)
+        if settings.storage_backend == "database"
+        else LocalFileStorage(settings.storage_dir),
         scheduling=make_factory(http),
         analyzer=_build_analyzer(settings),
         payments=_build_payments(settings),

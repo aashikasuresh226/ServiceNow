@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pyotp
@@ -59,9 +60,20 @@ class PinnedGeocoder:
         return GeocodeResult(LatLng(*HOME), address.strip())
 
 
+# The test clock and authenticator secrets for this test, so helpers can make codes.
+STATE: dict[str, Any] = {"clock": None, "secrets": {}}
+
+
 @pytest.fixture
 def clock() -> FrozenClock:
-    return FrozenClock(datetime(2026, 7, 15, 16, 0, tzinfo=UTC))
+    frozen = FrozenClock(datetime(2026, 7, 15, 16, 0, tzinfo=UTC))
+    STATE["clock"] = frozen
+    STATE["secrets"] = {}
+    return frozen
+
+
+def totp_code(secret: str) -> str:
+    return pyotp.TOTP(secret).at(STATE["clock"].now())
 
 
 ADMIN_KEY = "test-admin-key-0123456789"
@@ -185,10 +197,26 @@ async def shops(container: Container) -> dict[str, SeededShop]:
 async def homeowner_login(
     client: httpx.AsyncClient, phone: str = "(404) 555-0199", *, with_card: bool = True
 ) -> dict[str, str]:
-    start = (await client.post("/auth/homeowner/otp/start", json={"phone": phone})).json()
-    verify = await client.post(
-        "/auth/homeowner/otp/verify", json={"phone": phone, "code": start["dev_code"]}
-    )
+    start = await client.post("/auth/homeowner/start", json={"phone": phone})
+    assert start.status_code == 200, start.text
+    body = start.json()
+    key = "".join(ch for ch in phone if ch.isdigit())[-10:]
+    if body["account"] == "new":
+        secret = body["setup"]["secret"]
+        verify = await client.post(
+            "/auth/homeowner/signup",
+            json={
+                "phone": phone,
+                "setup_token": body["setup"]["setup_token"],
+                "code": totp_code(secret),
+            },
+        )
+        STATE["secrets"][key] = secret
+    else:
+        verify = await client.post(
+            "/auth/homeowner/login",
+            json={"phone": phone, "code": totp_code(STATE["secrets"][key])},
+        )
     assert verify.status_code == 200, verify.text
     headers = {"Authorization": f"Bearer {verify.json()['access_token']}"}
     r = await client.patch(

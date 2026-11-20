@@ -1,5 +1,5 @@
 """Sign in with Google (real ID-token verification against a test key set) and
-phone codes through Twilio Verify (against a stand-in for Twilio's HTTP API)."""
+the homeowner phone-number checks."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from app.container import Container
 from app.core.clock import FrozenClock
 from app.integrations.google_auth import GoogleTokenVerifier
-from app.integrations.sms import TwilioVerifyClient
 from app.main import create_app
 
 CLIENT_ID = "test-client.apps.googleusercontent.com"
@@ -90,14 +89,8 @@ async def test_google_homeowner_sign_in_then_add_phone(
         r = await client.post("/auth/homeowner/google", json={"id_token": token})
         assert r.status_code == 401
 
-        # Add a mobile number, verified with a texted code.
-        start = await client.post("/me/phone/start", headers=auth, json={"phone": "4045550150"})
-        assert start.status_code == 200, start.text
-        r = await client.post(
-            "/me/phone/verify",
-            headers=auth,
-            json={"phone": "4045550150", "code": start.json()["dev_code"]},
-        )
+        # Add a mobile number (for the company to call; nothing is texted).
+        r = await client.post("/me/phone", headers=auth, json={"phone": "4045550150"})
         assert r.status_code == 200 and r.json()["phone"] == "+14045550150"
 
         # Signing in with Google again finds the same account.
@@ -185,68 +178,12 @@ async def test_google_disabled_without_client_id(client: httpx.AsyncClient) -> N
     assert r.json()["error"]["code"] == "google_not_configured"
 
 
-class FakeTwilio:
-    """Speaks Twilio Verify's HTTP API: one pending code per number."""
-
-    def __init__(self) -> None:
-        self.codes: dict[str, str] = {}
-        self.requests: list[httpx.Request] = []
-
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        form = dict(httpx.QueryParams(request.content.decode()))
-        to = form["To"]
-        if request.url.path.endswith("/Verifications"):
-            if to.startswith("+1555"):
-                return httpx.Response(400, json={"code": 60200, "message": "Invalid parameter"})
-            self.codes[to] = "246810"
-            return httpx.Response(201, json={"status": "pending", "to": to})
-        if to not in self.codes:
-            return httpx.Response(404, json={"code": 20404, "message": "Not found"})
-        ok = form["Code"] == self.codes[to]
-        if ok:
-            del self.codes[to]
-        return httpx.Response(200, json={"status": "approved" if ok else "pending"})
-
-
-async def test_phone_sign_in_through_twilio_verify(container: Container) -> None:
-    twilio = FakeTwilio()
-    verify = TwilioVerifyClient(
-        account_sid="AC123",
-        auth_token="secret",
-        service_sid="VA123",
-        http=httpx.AsyncClient(transport=httpx.MockTransport(twilio.handler)),
-    )
-    built = replace(container, phone_verify=verify)
-    app = create_app(built.settings, built)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test/v1"
-    ) as client:
-        r = await client.post("/auth/homeowner/otp/start", json={"phone": "(404) 555-0177"})
-        assert r.status_code == 200, r.text
-        assert r.json()["dev_code"] is None  # with Twilio the code only goes by text
-        assert twilio.requests[0].url.path == "/v2/Services/VA123/Verifications"
-
-        r = await client.post(
-            "/auth/homeowner/otp/verify", json={"phone": "4045550177", "code": "111111"}
-        )
-        assert r.status_code == 401 and r.json()["error"]["code"] == "otp_invalid"
-        r = await client.post(
-            "/auth/homeowner/otp/verify", json={"phone": "4045550177", "code": "246810"}
-        )
-        assert r.status_code == 200, r.text
-
-        # Twilio rejects the number: a friendly message, not a 500.
-        r = await client.post("/auth/homeowner/otp/start", json={"phone": "5555550100"})
-        assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_phone"
-
-
 async def test_only_us_numbers_and_per_ip_limit(client: httpx.AsyncClient) -> None:
-    r = await client.post("/auth/homeowner/otp/start", json={"phone": "+44 20 7930 4832"})
+    r = await client.post("/auth/homeowner/start", json={"phone": "+44 20 7930 4832"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "phone_not_supported"
     statuses = []
     for i in range(22):
-        r = await client.post("/auth/homeowner/otp/start", json={"phone": f"40455502{i:02d}"})
+        r = await client.post("/auth/homeowner/start", json={"phone": f"40455502{i:02d}"})
         statuses.append(r.status_code)
-    assert statuses[:20] == [200] * 20
+    assert statuses[:19] == [200] * 19  # 20 starts per IP per hour (the UK number counted)
     assert statuses[-1] == 429

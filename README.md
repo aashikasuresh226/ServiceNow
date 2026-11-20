@@ -54,8 +54,8 @@ shop portal, homeowner app) and two browser tabs:
 | | URL | |
 |---|---|---|
 | Shop portal | http://localhost:5173 | **Create account** with Google or email + password, confirm the email link, then scan the QR code with your authenticator app |
-| Homeowner app | http://localhost:8081 | **Continue with Google** or with a mobile number |
-| Technician app | http://localhost:8081/tech/sign-in | Opened from the shop's invite email; later sign in with a texted code or Google |
+| Homeowner app | http://localhost:8081 | **Continue with Google** or with a mobile number + an authenticator app |
+| Technician app | http://localhost:8081/tech/sign-in | Opened from the shop's invite email; sign in with an authenticator-app code (or Google) |
 
 To stop, close the three PowerShell windows. To delete **all** accounts and requests and
 start over, close the API window and run `scripts\windows\reset-database.ps1`.
@@ -75,11 +75,14 @@ There is no demo data. Create real accounts with real addresses:
 2. **Technician (optional):** on **Technicians**, click **Invite to app**, enter their email
    and choose what they may do (accept/decline jobs, message and call customers, full day or
    next job only). Until Firebase is set up, the invite link is shown for you to send or open.
-   The technician opens it on their phone, which confirms the email, and signs in with their
-   mobile number (or Google). Use a private/incognito window to test it next to the homeowner.
-3. **Homeowner (right window):** Continue with Google or a mobile number → enter a name and a
-   real home address near the shop (within the tech's service radius, 25 km by default).
-   Google users also confirm a mobile number with a texted code.
+   The technician opens it on their phone, which confirms the email, adds the account to an
+   authenticator app and saves 8 backup codes. Later they sign in with their mobile number or
+   email plus the 6-digit code (or Google). Use a private/incognito window to test it next to the homeowner.
+3. **Homeowner (right window):** Continue with Google, or enter a mobile number → add the
+   account to a free authenticator app (Google Authenticator, Microsoft Authenticator, or the
+   iPhone Passwords app) by tapping the button, scanning the QR code, or typing the key →
+   type the 6-digit code → save the backup codes → enter a name and a real home address near
+   the shop (within the tech's service radius, 25 km by default).
 4. Start a request and book. The job appears in the shop's **Jobs**, on the tech's
    calendar (**Availability**) and in the technician app, where they accept it, tap **Start
    driving** (the homeowner sees a live map only from then until **Arrived**), chat, quote and
@@ -87,10 +90,10 @@ There is no demo data. Create real accounts with real addresses:
 
 Addresses are looked up with the free US Census geocoder, so made-up addresses are rejected.
 For more homeowners, sign out (**Account → Sign out**) and use another number or Google
-account. Until Twilio is connected, codes are shown on screen (**TEST MODE**), so any real
-US number works. Numbers are checked with Google's libphonenumber, so impossible numbers
-(e.g. area code 999) are rejected. With a Twilio *trial* account, codes only reach numbers you've verified in
-Twilio.
+account. No texts are sent, so sign-in costs nothing. Numbers are checked with Google's
+libphonenumber, so impossible numbers (e.g. area code 999) are rejected. A number is not
+proof of identity here (nothing is texted to it), so it only connects a homeowner to a
+shop's customer record together with that customer's personal invite link.
 
 ### Troubleshooting
 
@@ -126,7 +129,6 @@ All settings live in `backend/.env`. Run `.venv\Scripts\python.exe -m app.cli ch
 | Service | What it powers | Without it | Settings |
 |---|---|---|---|
 | **Google** (free) | "Continue with Google" for homeowners and shops | Only phone (homeowners) and email + password (shops) | `HVAC_GOOGLE_CLIENT_IDS` |
-| **Twilio Verify** | Texted sign-in codes | Development only: the code is shown on screen | `HVAC_TWILIO_ACCOUNT_SID`, `HVAC_TWILIO_AUTH_TOKEN`, `HVAC_TWILIO_VERIFY_SERVICE_SID` |
 | **Twilio Messaging** | Job-update texts (matched, on the way, done) | Updates show in the app only | `HVAC_TWILIO_FROM_NUMBER` or `HVAC_TWILIO_MESSAGING_SERVICE_SID` |
 | **Gemini** (free tier) or **Anthropic** | "Snap your unit": AI reads the data plate and looks for visible problems | Photos go to the tech; no automatic diagnosis | `HVAC_GEMINI_API_KEY` (several keys, comma-separated, take turns; make each in a different Google Cloud project) or `HVAC_ANTHROPIC_API_KEY` |
 | **Firebase** (free) | Emails that prove an address is real: shop sign-up and technician invites | Development only: the link is shown on screen | `HVAC_FIREBASE_API_KEY` |
@@ -139,11 +141,8 @@ add your email as a test user) → *Credentials* → *Create credentials* → *O
 *Web application*. Add `http://localhost:8081` and `http://localhost:5173` under *Authorized
 JavaScript origins* (add your real domains later). Copy the client ID.
 
-**Twilio:** create an account → *Verify* → *Services* → *Create* → copy the Service SID
-(`VA…`), plus your Account SID and Auth Token from the console home page. Only US (+1)
-numbers can request codes (blocks SMS-pumping fraud; change with
-`HVAC_SMS_ALLOWED_COUNTRY_CODES`). Sending job-update texts from a US number requires A2P 10DLC
-registration in Twilio.
+**Twilio (optional):** only for job-update texts; sign-in doesn't use texts. Sending from a
+US number requires A2P 10DLC registration in Twilio.
 
 **Gemini (free):** sign in at https://aistudio.google.com/apikey with a Google account,
 create a key, then run `powershell -ExecutionPolicy Bypass -File scripts\windows\set-gemini-key.ps1`
@@ -484,10 +483,10 @@ keep the key in a secrets manager.
 - **Live location** is accepted only while that job is *en route*, readable only by that
   job's homeowner, stored as a single encrypted position (no history) and deleted on arrival
   or cancel; a background job removes any leftovers.
-- **Phone codes** are generated, sent and checked by Twilio Verify, with a resend cooldown,
-  an hourly cap per number, an attempt limit, a per-IP limit and a US-only allowlist. Numbers
-  are validated with libphonenumber. (Without Twilio, in development only, codes are
-  generated locally and only a keyed hash is stored, keyed by the number's blind index.)
+- **Authenticator sign-in** (homeowners and technicians): standard TOTP (RFC 6238, 30 s,
+  ±1 step), secret stored encrypted, 10 attempts per 15
+  minutes per account plus a per-IP limit. 8 single-use backup codes, stored hashed. The
+  secret is only saved once the person types a working code from their app.
 - **Google sign-in** verifies the ID token's signature, issuer, audience, expiry, a verified
   email and a single-use nonce. **Firebase** emails are sent from our server; a link
   counts only when its single-use token matches and Firebase reports the address verified.
@@ -540,6 +539,10 @@ the file, then `python -m app.cli migrate`.
 Type-checks for the apps: `npx tsc --noEmit` in `mobile/` and `shop-portal/`.
 
 ### Production
+
+**Free hosting on Render (all three apps, real https addresses for QR codes): see
+[docs/DEPLOY.md](docs/DEPLOY.md).** It uses `render.yaml` (Blueprint), Neon for the
+database, photos stored encrypted in the database, and cron-job.org to keep the API awake.
 
 `docker compose up --build` runs Postgres, the API and the worker as separate processes,
 which is how production should run (`HVAC_RUN_WORKER_IN_PROCESS=false`). Before going live:

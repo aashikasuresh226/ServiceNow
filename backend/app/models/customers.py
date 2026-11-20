@@ -6,7 +6,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.core.db import Base, UTCDateTime
@@ -96,6 +105,7 @@ class ExternalJob(IdMixin, TimestampMixin, Base):
     arrived_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    actual_issue: Mapped[str | None] = mapped_column(String(40))  # IssueCategory, at finish
 
 
 class ExternalJobEvent(IdMixin, TimestampMixin, Base):
@@ -137,3 +147,15 @@ class IntegrationLog(IdMixin, TimestampMixin, Base):
     action: Mapped[str] = mapped_column(String(200), nullable=False)
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     detail: Mapped[str | None] = mapped_column(String(400))
+
+
+class StoredFile(TimestampMixin, Base):
+    """A photo kept in the database (see integrations/storage.DatabaseFileStorage),
+    encrypted. Used when the server's own disk doesn't survive restarts."""
+
+    __tablename__ = "stored_files"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

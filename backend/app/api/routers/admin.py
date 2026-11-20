@@ -7,9 +7,10 @@ X-Admin-Key header by the portal's /admin page. Switched off when the token isn'
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy import select
 
 from app.api.deps import ContainerDep, SessionDep
@@ -19,6 +20,7 @@ from app.models import Complaint, ServiceRequest, Shop, Technician
 from app.schemas.api import AdminComplaintIn, AdminComplaintOut, AdminReviewOut
 from app.services.complaint_service import ComplaintService
 from app.services.complaints_view import complaint_views
+from app.services.training_data import build_zip
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -94,6 +96,21 @@ async def update_complaint(
         shop_id=row.shop_id,
         shop_name=shop.name if shop else "",
         admin_note=row.admin_note,
+    )
+
+
+@router.get("/training-data", dependencies=[AdminDep])
+async def training_data(
+    session: SessionDep, c: ContainerDep, since: datetime | None = None
+) -> Response:
+    """A zip of finished jobs: photos + reported symptoms + AI guess + actual issue and fix
+    (labels.jsonl + images/). No names, phone numbers, emails or street addresses."""
+    data = await build_zip(session, c, since)
+    stamp = c.clock.now().strftime("%Y-%m-%d")
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="hvac-training-{stamp}.zip"'},
     )
 
 

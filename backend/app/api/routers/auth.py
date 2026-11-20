@@ -7,29 +7,34 @@ from app.core.errors import Forbidden, Unauthorized
 from app.core.security import Role, TokenType
 from app.models import ShopUser
 from app.schemas.api import (
+    AuthenticatorSetupOut,
     ClaimOut,
     EmailLinkOut,
     EmailProofIn,
     EmailProofInfoOut,
     GoogleHomeownerIn,
     GoogleShopIn,
+    HomeownerLoginIn,
     HomeownerSessionOut,
+    HomeownerSignupIn,
+    HomeownerStartOut,
     InviteAcceptIn,
+    InviteAuthenticatorIn,
     InviteInfoOut,
-    InvitePhoneIn,
     MfaCodeIn,
     MfaEnrollOut,
     MfaLoginIn,
     NonceOut,
-    OtpStartIn,
-    OtpStartOut,
-    OtpVerifyIn,
+    PhoneIn,
     RefreshIn,
     ShopLoginIn,
     ShopLoginOut,
     ShopSignupIn,
+    TechLoginIn,
+    TechSessionOut,
     TokensOut,
 )
+from app.services import authenticator
 from app.services.auth_service import AuthService, SessionTokens, ShopStep
 from app.services.email_proof import EmailProofService
 
@@ -61,31 +66,44 @@ def _tokens(tokens: SessionTokens) -> TokensOut:
 
 
 # --- Homeowners -----------------------------------------------------------------------------
-@router.post("/homeowner/otp/start", response_model=OtpStartOut)
-async def start_otp(
-    body: OtpStartIn, request: Request, session: SessionDep, c: ContainerDep
-) -> OtpStartOut:
-    started = await AuthService(session, c).start_phone_otp(body.phone, ip=client_ip(request))
-    return OtpStartOut(
-        phone=started.phone,
-        resend_after_seconds=started.resend_after_seconds,
-        dev_code=started.dev_code,
+def _setup_out(setup: authenticator.Setup) -> AuthenticatorSetupOut:
+    return AuthenticatorSetupOut(
+        setup_token=setup.token, secret=setup.secret, otpauth_uri=setup.uri
     )
 
 
-@router.post("/homeowner/otp/verify", response_model=HomeownerSessionOut)
-async def verify_otp(
-    body: OtpVerifyIn, request: Request, session: SessionDep, c: ContainerDep
+@router.post("/homeowner/start", response_model=HomeownerStartOut)
+async def homeowner_start(
+    body: PhoneIn, request: Request, session: SessionDep, c: ContainerDep
+) -> HomeownerStartOut:
+    """Phone number entered: existing accounts enter their authenticator code; new ones
+    set up an authenticator app. No texts are sent."""
+    account, setup = await AuthService(session, c).homeowner_start(
+        body.phone, ip=client_ip(request)
+    )
+    return HomeownerStartOut(account=account, setup=_setup_out(setup) if setup else None)
+
+
+@router.post("/homeowner/signup", response_model=HomeownerSessionOut)
+async def homeowner_signup(
+    body: HomeownerSignupIn, request: Request, session: SessionDep, c: ContainerDep
 ) -> HomeownerSessionOut:
-    _, tokens, needs_profile = await AuthService(session, c).verify_phone_otp(
-        body.phone, body.code, ip=client_ip(request)
+    _, tokens, needs_profile, codes = await AuthService(session, c).homeowner_signup(
+        body.phone, body.setup_token, body.code, ip=client_ip(request)
     )
     return HomeownerSessionOut(
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        expires_in=tokens.expires_in,
-        needs_profile=needs_profile,
+        **_tokens(tokens).model_dump(), needs_profile=needs_profile, backup_codes=codes
     )
+
+
+@router.post("/homeowner/login", response_model=HomeownerSessionOut)
+async def homeowner_login(
+    body: HomeownerLoginIn, request: Request, session: SessionDep, c: ContainerDep
+) -> HomeownerSessionOut:
+    _, tokens, needs_profile = await AuthService(session, c).homeowner_login(
+        body.phone, body.code, ip=client_ip(request)
+    )
+    return HomeownerSessionOut(**_tokens(tokens).model_dump(), needs_profile=needs_profile)
 
 
 # --- Sign in with Google ---------------------------------------------------------------------
@@ -251,54 +269,37 @@ async def invite_verify_email(
     return ClaimOut(claim=await service.verify_invite_email(body.token))
 
 
-@router.post("/technician/invite/phone", response_model=OtpStartOut)
-async def invite_phone(
-    body: InvitePhoneIn, request: Request, session: SessionDep, c: ContainerDep
-) -> OtpStartOut:
-    started = await AuthService(session, c).start_invite_phone(
-        body.token, body.claim, body.phone, ip=client_ip(request)
-    )
-    return OtpStartOut(
-        phone=started.phone,
-        resend_after_seconds=started.resend_after_seconds,
-        dev_code=started.dev_code,
-    )
+@router.post("/technician/invite/authenticator", response_model=AuthenticatorSetupOut)
+async def invite_authenticator(
+    body: InviteAuthenticatorIn, request: Request, session: SessionDep, c: ContainerDep
+) -> AuthenticatorSetupOut:
+    service = AuthService(session, c)
+    service.limit_ip(client_ip(request))
+    return _setup_out(await service.invite_authenticator(body.token, body.claim))
 
 
-@router.post("/technician/invite/accept", response_model=TokensOut)
+@router.post("/technician/invite/accept", response_model=TechSessionOut)
 async def invite_accept(
     body: InviteAcceptIn, request: Request, session: SessionDep, c: ContainerDep
-) -> TokensOut:
-    tokens = await AuthService(session, c).accept_invite(
+) -> TechSessionOut:
+    tokens, codes = await AuthService(session, c).accept_invite(
         body.token,
         body.claim,
         phone=body.phone,
+        setup_token=body.setup_token,
         code=body.code,
         google_id_token=body.google_id_token,
         ip=client_ip(request),
     )
-    return _tokens(tokens)
+    return TechSessionOut(**_tokens(tokens).model_dump(), backup_codes=codes)
 
 
-@router.post("/technician/otp/start", response_model=OtpStartOut)
-async def tech_otp_start(
-    body: OtpStartIn, request: Request, session: SessionDep, c: ContainerDep
-) -> OtpStartOut:
-    started = await AuthService(session, c).start_tech_otp(body.phone, ip=client_ip(request))
-    return OtpStartOut(
-        phone=started.phone,
-        resend_after_seconds=started.resend_after_seconds,
-        dev_code=started.dev_code,
-    )
-
-
-@router.post("/technician/otp/verify", response_model=TokensOut)
-async def tech_otp_verify(
-    body: OtpVerifyIn, request: Request, session: SessionDep, c: ContainerDep
+@router.post("/technician/login", response_model=TokensOut)
+async def tech_login(
+    body: TechLoginIn, request: Request, session: SessionDep, c: ContainerDep
 ) -> TokensOut:
-    tokens = await AuthService(session, c).verify_tech_otp(
-        body.phone, body.code, ip=client_ip(request)
-    )
+    """Phone number or email, plus the code from the authenticator app."""
+    tokens = await AuthService(session, c).tech_login(body.login, body.code, ip=client_ip(request))
     return _tokens(tokens)
 
 

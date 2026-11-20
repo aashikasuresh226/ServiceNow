@@ -106,6 +106,8 @@ class Technician(IdMixin, TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(EncryptedText)
     email_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
+    totp_secret_encrypted: Mapped[str | None] = mapped_column(String(512))
+    backup_codes: Mapped[str | None] = mapped_column(Text)  # JSON list of hashes
     invited_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     joined_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # What the company lets this technician do in the app (enforced by the API).

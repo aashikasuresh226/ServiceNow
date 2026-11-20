@@ -11,6 +11,7 @@ import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { APP_NAME } from '@/lib/config';
 import { useAction, useOptions } from '@/lib/hooks';
 import { getPendingInvite } from '@/lib/invite';
+import { setPendingSetup } from '@/lib/pendingSetup';
 
 export default function Welcome() {
   const options = useOptions();
@@ -22,11 +23,13 @@ export default function Welcome() {
   useEffect(() => { void getPendingInvite().then((i) => setInvitedBy(i?.shopName ?? null)); }, []);
 
   const start = useAction(async (value: string) => {
-    const result = await api.startOtp(value);
-    router.push({
-      pathname: '/verify',
-      params: { phone: result.phone, devCode: result.dev_code ?? '' },
-    });
+    const result = await api.homeownerStart(value);
+    if (result.account === 'existing' || !result.setup) {
+      router.push({ pathname: '/verify', params: { phone: value } });
+    } else {
+      setPendingSetup({ phone: value, setup: result.setup });
+      router.push('/authenticator');
+    }
   });
   const submit = (value: string) => {
     if (value.replace(/\D/g, '').length < 10) {
@@ -44,7 +47,6 @@ export default function Welcome() {
   const getNonce = useCallback(async () => (await api.googleNonce()).nonce, []);
   const googleClientId = options?.features.google_client_id;
   const showGoogle = Boolean(googleClientId) && googleSignInAvailable();
-  const devTexts = options?.features.texts === 'development';
 
   return (
     <Screen
@@ -52,7 +54,7 @@ export default function Welcome() {
         <>
           <Button label="Continue with phone" icon="phone" busy={start.busy} onPress={() => submit(phone)} />
           <Muted style={{ textAlign: 'center', fontSize: 11 }}>
-            By continuing you agree to the Terms and Privacy Policy. Message and data rates may apply.
+            By continuing you agree to the Terms and Privacy Policy.
           </Muted>
         </>
       }
@@ -98,14 +100,7 @@ export default function Welcome() {
         returnKeyType="go"
       />
       <ErrorText message={start.error} />
-      {devTexts ? (
-        <Row>
-          <Badge label="TEST MODE" tone="amber" />
-          <Muted style={{ flex: 1 }}>Texting isn't set up yet, so your code is shown on screen.</Muted>
-        </Row>
-      ) : (
-        <Muted>We'll text you a 6-digit code. No password needed.</Muted>
-      )}
+      <Muted>No password: you'll sign in with a free authenticator app on your phone (we'll help you set it up).</Muted>
     </Screen>
   );
 }

@@ -132,9 +132,19 @@ class TechAppService:
     async def arrived(self, request: ServiceRequest) -> None:
         await JobService(self.s, self.c).mark_on_site(request, Actor.TECHNICIAN)
 
-    async def quote(self, request: ServiceRequest, cents: int, notes: str | None) -> None:
+    async def quote(
+        self,
+        request: ServiceRequest,
+        cents: int,
+        notes: str | None,
+        actual_issue: str | None = None,
+    ) -> None:
         await JobService(self.s, self.c).submit_quote(
-            request, final_price_cents=cents, notes=notes, actor=Actor.TECHNICIAN
+            request,
+            final_price_cents=cents,
+            notes=notes,
+            actual_issue=actual_issue,
+            actor=Actor.TECHNICIAN,
         )
 
     async def complete(self, request: ServiceRequest) -> None:

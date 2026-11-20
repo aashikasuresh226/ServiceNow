@@ -1,19 +1,18 @@
 /**
  * Opened from the invite email: proves the technician owns the invited address
- * (Firebase email link), then they choose how to sign in (phone code or Google).
+ * (Firebase email link), then they set up sign-in (authenticator app, or Google).
  */
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 
-import { CodeInput } from '@/components/CodeInput';
+import { AuthenticatorSetup, BackupCodes, type AuthenticatorSetupData } from '@/components/AuthenticatorSetup';
 import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
 import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, Loading, Muted, Row, Screen, Title } from '@/components/ui';
 import { api, techApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { formatPhone } from '@/lib/format';
 import { useAction, useOptions } from '@/lib/hooks';
 import type { InviteInfo } from '@/lib/types';
 
@@ -25,9 +24,9 @@ export default function JoinAsTechnician() {
   const [claim, setClaim] = useState<string | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
-  const [sentTo, setSentTo] = useState<string | null>(null);
-  const [devCode, setDevCode] = useState<string | null>(null);
+  const [setup, setSetup] = useState<AuthenticatorSetupData | null>(null);
   const [code, setCode] = useState('');
+  const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const ran = useRef(false);
 
   // Opening the emailed link is the proof: confirm it right away.
@@ -46,14 +45,13 @@ export default function JoinAsTechnician() {
   }, [options, token]);
 
   const start = useAction(async () => {
-    const started = await techApi.invitePhone(token, claim!, phone);
-    setSentTo(started.phone);
-    setDevCode(started.dev_code);
-    setCode(started.dev_code ?? '');
+    if (phone.replace(/\D/g, '').length < 10) throw new Error('Enter your 10-digit mobile number');
+    setSetup(await techApi.inviteAuthenticator(token, claim!));
   });
   const accept = useAction(async () => {
-    await signInTech(await techApi.acceptInvite({ token, claim: claim!, phone: sentTo!, code }));
-    router.replace('/tech');
+    const session = await techApi.acceptInvite({ token, claim: claim!, phone, setup_token: setup!.setup_token, code });
+    await signInTech(session);
+    setBackupCodes(session.backup_codes);
   });
   const google = useAction(async (idToken: string) => {
     await signInTech(await techApi.acceptInvite({ token, claim: claim!, google_id_token: idToken }));
@@ -72,14 +70,25 @@ export default function JoinAsTechnician() {
   }
   if (!info || !claim) return <Loading label="Confirming your invite…" />;
 
+  if (backupCodes) {
+    return (
+      <Screen footer={<Button label="I saved my backup codes" onPress={() => router.replace('/tech')} />}>
+        <Title sub="You're in. Next time: your number or email, plus the code from your authenticator app.">
+          Save your backup codes
+        </Title>
+        <BackupCodes codes={backupCodes} />
+      </Screen>
+    );
+  }
+
   const googleClientId = options?.features.google_client_id;
   const devEmail = options?.features.email_links === 'development';
   return (
     <Screen footer={
-      sentTo ? (
+      setup ? (
         <Button label="Verify and start" busy={accept.busy} disabled={code.length !== 6} onPress={() => accept.run()} />
       ) : (
-        <Button label="Text me a code" icon="phone" busy={start.busy} onPress={() => start.run()} />
+        <Button label="Set up sign-in" icon="shield" busy={start.busy} onPress={() => start.run()} />
       )
     }>
       <Title sub={`${info.shop_name} added you to their team.`}>Join {info.shop_name}</Title>
@@ -96,11 +105,9 @@ export default function JoinAsTechnician() {
         <Muted>{info.can_contact_customers ? '✓ Message and call customers' : '• The office talks to customers'}</Muted>
         <Muted>{info.schedule_view === 'full' ? '✓ See your full day' : '• See your next job'}</Muted>
       </Card>
-      {sentTo ? (
-        <>
-          <CodeInput value={code} onChange={setCode} devCode={devCode} phoneLabel={formatPhone(sentTo)} />
-          <ErrorText message={accept.error} />
-        </>
+      {setup ? (
+        <AuthenticatorSetup setup={setup} code={code} onCode={(v) => { accept.setError(null); setCode(v); }}
+          error={accept.error} />
       ) : (
         <View style={{ gap: 12 }}>
           <Body style={{ fontWeight: '700' }}>How will you sign in?</Body>
@@ -113,6 +120,7 @@ export default function JoinAsTechnician() {
           ) : null}
           <Field label="Mobile number" value={phone} onChangeText={setPhone} placeholder="(404) 555-0123"
             keyboardType="phone-pad" autoComplete="tel" onSubmitEditing={() => start.run()} />
+          <Muted>Customers and the office reach you on it. You'll sign in with a free authenticator app (no texts).</Muted>
           <ErrorText message={start.error} />
           <Muted>Location is shared only while you're driving to a job, and only with that customer.</Muted>
         </View>

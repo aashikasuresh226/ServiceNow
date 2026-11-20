@@ -618,7 +618,10 @@ async def submit_quote(
 ) -> ShopJobOut:
     request = await _job(session, c, principal, job_id)
     await JobService(session, c).submit_quote(
-        request, final_price_cents=body.final_price_cents, notes=body.notes
+        request,
+        final_price_cents=body.final_price_cents,
+        notes=body.notes,
+        actual_issue=body.actual_issue,
     )
     return await _present(session, c, request)
 

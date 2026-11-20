@@ -88,6 +88,9 @@ export default function Photo() {
     }>
       <StepHeader step={2} />
       <Title sub="Show the label with the model and serial number if you can.">Snap your unit</Title>
+      <Muted style={{ fontSize: 12 }}>
+        Photos and the repair details are kept to improve our diagnoses (location data is removed; never shared with your name or address).
+      </Muted>
       <View style={styles.viewfinder}><Viewfinder width={230} /></View>
       <Row style={{ gap: 8 }}>
         {photos.map((p) => (

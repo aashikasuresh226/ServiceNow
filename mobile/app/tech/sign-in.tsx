@@ -1,34 +1,26 @@
-/** Technician sign-in: texted code or Google. Accounts are created only by a company invite. */
+/** Technician sign-in: phone number or email + authenticator code, or Google.
+ * Accounts are created only by a company invite. */
 import { router } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { View } from 'react-native';
 
-import { CodeInput } from '@/components/CodeInput';
+import { CodeInput, codeReady } from '@/components/CodeInput';
 import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
 import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
 import { Button, Card, ErrorText, Field, Muted, Row, Screen, TextLink, Title } from '@/components/ui';
 import { api, techApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { formatPhone } from '@/lib/format';
 import { useAction, useOptions } from '@/lib/hooks';
 
 export default function TechSignIn() {
   const options = useOptions();
   const { signInTech } = useAuth();
-  const [phone, setPhone] = useState('');
-  const [sentTo, setSentTo] = useState<string | null>(null);
-  const [devCode, setDevCode] = useState<string | null>(null);
+  const [login, setLogin] = useState('');
   const [code, setCode] = useState('');
 
-  const start = useAction(async () => {
-    const started = await techApi.startOtp(phone);
-    setSentTo(started.phone);
-    setDevCode(started.dev_code);
-    setCode(started.dev_code ?? '');
-  });
-  const verify = useAction(async () => {
-    await signInTech(await techApi.verifyOtp(sentTo!, code));
+  const signIn = useAction(async () => {
+    await signInTech(await techApi.login(login, code));
     router.replace('/tech');
   });
   const google = useAction(async (idToken: string) => {
@@ -40,11 +32,8 @@ export default function TechSignIn() {
 
   return (
     <Screen footer={
-      sentTo ? (
-        <Button label="Sign in" busy={verify.busy} disabled={code.length !== 6} onPress={() => verify.run()} />
-      ) : (
-        <Button label="Text me a code" icon="phone" busy={start.busy} onPress={() => start.run()} />
-      )
+      <Button label="Sign in" busy={signIn.busy} disabled={login.trim().length < 5 || !codeReady(code)}
+        onPress={() => signIn.run()} />
     }>
       <Card tone="soft" style={{ alignItems: 'center', paddingVertical: 20, gap: 8 }}>
         <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: colors.surface,
@@ -53,31 +42,22 @@ export default function TechSignIn() {
         </View>
       </Card>
       <Title sub="Your jobs, schedule and customer messages.">Technician sign-in</Title>
-      {sentTo ? (
+      {googleClientId && googleSignInAvailable() ? (
         <>
-          <CodeInput value={code} onChange={setCode} devCode={devCode} phoneLabel={formatPhone(sentTo)} />
-          <ErrorText message={verify.error} />
-          <TextLink label="Use a different number" onPress={() => { setSentTo(null); setCode(''); }} />
+          <GoogleSignIn clientId={googleClientId} getNonce={getNonce} onCredential={(t) => google.run(t)} />
+          <ErrorText message={google.error} />
+          <Row style={{ gap: 10 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: colors.line }} />
+            <Muted>or</Muted>
+            <View style={{ flex: 1, height: 1, backgroundColor: colors.line }} />
+          </Row>
         </>
-      ) : (
-        <>
-          {googleClientId && googleSignInAvailable() ? (
-            <>
-              <GoogleSignIn clientId={googleClientId} getNonce={getNonce} onCredential={(t) => google.run(t)} />
-              <ErrorText message={google.error} />
-              <Row style={{ gap: 10 }}>
-                <View style={{ flex: 1, height: 1, backgroundColor: colors.line }} />
-                <Muted>or use your phone</Muted>
-                <View style={{ flex: 1, height: 1, backgroundColor: colors.line }} />
-              </Row>
-            </>
-          ) : null}
-          <Field label="Mobile number" value={phone} onChangeText={setPhone} placeholder="(404) 555-0123"
-            keyboardType="phone-pad" autoComplete="tel" onSubmitEditing={() => start.run()} />
-          <ErrorText message={start.error} />
-          <Muted>New here? Your company sends you an invite by email. Open it on this phone to set up your account.</Muted>
-        </>
-      )}
+      ) : null}
+      <Field label="Mobile number or email" value={login} onChangeText={setLogin}
+        placeholder="(404) 555-0123" autoComplete="username" autoCapitalize="none" />
+      <CodeInput value={code} onChange={setCode} allowBackup onSubmit={() => signIn.run()} />
+      <ErrorText message={signIn.error} />
+      <Muted>New here? Your company sends you an invite by email. Open it on this phone to set up your account.</Muted>
       <TextLink label="I'm a homeowner" color={colors.muted} onPress={() => router.replace('/welcome')} />
     </Screen>
   );

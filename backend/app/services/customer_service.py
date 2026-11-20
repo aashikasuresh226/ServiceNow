@@ -3,8 +3,8 @@ personal link, and linked to their homeowner account when they join.
 
 Nobody is signed up without their consent: the shop sends the invite from its own phone
 or email (one tap in the portal), and the customer creates their own account. When they
-do, we recognise them by the phone number (verified by a texted code) or email (verified
-by Google) the shop has on file, and:
+do, we recognise them by the email (verified by Google) the shop has on file, or by their
+personal invite link together with the same phone number, and:
 - their account is linked to the shop's customer record (the shop sees "Using the app");
 - the shop gets first look at their requests (see MatchingService._rank);
 - the homeowner app suggests the address the shop has on file.
@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import ColumnElement, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
@@ -103,11 +103,14 @@ class CustomerService:
 
     async def _match_existing_homeowner(self, row: ShopCustomer) -> None:
         """A customer the shop just imported who already uses the app."""
-        conditions = []
+        conditions: list[ColumnElement[bool]] = []
         if row.phone_hash:
-            conditions.append(Homeowner.phone_hash == row.phone_hash)
+            # Only a number proven to be theirs (not just typed in at sign-up).
+            conditions.append(
+                (Homeowner.phone_hash == row.phone_hash) & Homeowner.phone_verified.is_(True)
+            )
         if row.email_hash:
-            conditions.append(Homeowner.email_hash == row.email_hash)
+            conditions.append(Homeowner.email_hash == row.email_hash)  # verified by Google
         if not conditions:
             return
         homeowner_id = await self.s.scalar(select(Homeowner.id).where(or_(*conditions)))
@@ -117,9 +120,10 @@ class CustomerService:
 
     # --- Joining --------------------------------------------------------------------------
     async def link_homeowner(self, homeowner: Homeowner) -> int:
-        """After sign-in: link every shop's customer record with this verified phone/email."""
+        """After sign-in: link every shop's customer record with this verified phone/email.
+        A number typed in at sign-up isn't proof (no code is texted), so it doesn't count."""
         conditions = []
-        if homeowner.phone_hash:
+        if homeowner.phone_hash and homeowner.phone_verified:
             conditions.append(ShopCustomer.phone_hash == homeowner.phone_hash)
         if homeowner.email_hash:
             conditions.append(ShopCustomer.email_hash == homeowner.email_hash)
@@ -148,6 +152,17 @@ class CustomerService:
         """The homeowner signed up from a shop's link: make them that shop's customer."""
         info = await self.invite_info(code)
         await self.link_homeowner(homeowner)
+        record = info.customer
+        if (
+            record is not None
+            and record.homeowner_id is None
+            and record.phone_hash
+            and record.phone_hash == homeowner.phone_hash
+        ):
+            # Their personal link (which the shop sent to this number) AND the same number:
+            # together that's good evidence it's them, so connect the shop's record.
+            record.homeowner_id = homeowner.id
+            record.joined_at = self.c.clock.now()
         already = await self.s.scalar(
             select(ShopCustomer.id).where(
                 ShopCustomer.shop_id == info.shop_id, ShopCustomer.homeowner_id == homeowner.id
