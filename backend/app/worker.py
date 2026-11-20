@@ -21,8 +21,10 @@ from app.container import Container, build_container
 from app.core.config import get_settings
 from app.domain.enums import RequestStatus, SchedulingProvider
 from app.models import ServiceRequest, Shop
+from app.services import integration_log
 from app.services.availability_service import AvailabilityService
 from app.services.external_jobs import ExternalJobService
+from app.services.hcp_mirror import HcpMirror
 from app.services.lifecycle import purge_stale_locations
 from app.services.matching_service import MatchingService
 from app.services.outside_job_actions import OutsideJobActions
@@ -108,6 +110,10 @@ async def tick(container: Container) -> None:
     await _run_step(container, "import_customers", lambda s: _import_customers(container, s))
     await _run_step(
         container, "send_hcp_actions", lambda s: OutsideJobActions(s, container).retry_all()
+    )
+    await _run_step(container, "send_hcp_updates", lambda s: HcpMirror(s, container).retry_all())
+    await _run_step(
+        container, "purge_integration_log", lambda s: integration_log.purge(s, container)
     )
     await _run_step(
         container, "process_waitlist", lambda s: MatchingService(s, container).process_waitlist()

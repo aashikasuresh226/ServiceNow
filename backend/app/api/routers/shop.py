@@ -8,13 +8,15 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ContainerDep, SessionDep, ShopDep
 from app.api.presenters import message_out, outside_job_out, shop_job_out
 from app.container import Container
 from app.core.errors import InvalidState, NotFound
 from app.domain.enums import SchedulingProvider
-from app.models import ServiceRequest, Shop, ShopCustomer, Technician
+from app.models import ExternalJob, ExternalJobEvent, ServiceRequest, Shop, ShopCustomer, Technician
 from app.schemas.api import (
     AcceptIn,
     BlockOut,
@@ -27,6 +29,8 @@ from app.schemas.api import (
     DashboardOut,
     DispatchSettingsIn,
     EmailLinkOut,
+    HcpActivityOut,
+    IntegrationLogOut,
     LinkOut,
     LiveIn,
     MessageIn,
@@ -49,15 +53,18 @@ from app.schemas.api import (
     TimeOffIn,
     TimeOffOut,
 )
+from app.services import integration_log
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
 from app.services.complaint_service import ComplaintService
 from app.services.complaints_view import complaint_views
 from app.services.customer_service import CustomerService, status_of
-from app.services.external_jobs import ExternalJobService
+from app.services.external_jobs import SYNCED_VALUES, ExternalJobService
+from app.services.hcp_mirror import HcpMirror, connected
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.message_service import MessageService
+from app.services.outside_job_actions import OutsideJobActions
 from app.services.outside_jobs import OutsideJobService
 from app.services.shop_service import ShopService
 
@@ -175,6 +182,66 @@ async def list_outside_jobs(
         )
         for o in rows
     ]
+
+
+@router.get("/housecall-pro/activity", response_model=HcpActivityOut)
+async def hcp_activity(principal: ShopDep, session: SessionDep, c: ContainerDep) -> HcpActivityOut:
+    """What we sent to Housecall Pro and whether it worked (newest first)."""
+    shop = principal.shop
+    return HcpActivityOut(
+        connected=connected(shop),
+        last_read_at=shop.scheduling_last_synced_at,
+        last_error=shop.scheduling_last_error,
+        waiting=await _waiting(session, shop),
+        log=[
+            IntegrationLogOut(created_at=r.created_at, action=r.action, ok=r.ok, detail=r.detail)
+            for r in await integration_log.recent(session, shop.id)
+        ],
+    )
+
+
+async def _waiting(session: AsyncSession, shop: Shop) -> int:
+    jobs = select(ExternalJob.id).where(ExternalJob.shop_id == shop.id)
+    requests = select(ServiceRequest.id).where(ServiceRequest.shop_id == shop.id)
+    return int(
+        await session.scalar(
+            select(func.count())
+            .select_from(ExternalJobEvent)
+            .where(
+                ExternalJobEvent.sent_at.is_(None),
+                or_(
+                    ExternalJobEvent.job_id.in_(jobs),
+                    ExternalJobEvent.request_id.in_(requests),
+                ),
+            )
+        )
+        or 0
+    )
+
+
+@router.post("/housecall-pro/sync-now", response_model=HcpActivityOut)
+async def hcp_sync_now(principal: ShopDep, session: SessionDep, c: ContainerDep) -> HcpActivityOut:
+    """Read Housecall Pro and send everything that's waiting, now."""
+    shop = principal.shop
+    if not connected(shop):
+        raise InvalidState("Connect Housecall Pro first (How you take jobs)")
+    service = ExternalJobService(session, c)
+    await service.import_shop(shop)
+    for request in list(
+        await session.scalars(
+            select(ServiceRequest).where(
+                ServiceRequest.shop_id == shop.id, ServiceRequest.status.in_(SYNCED_VALUES)
+            )
+        )
+    ):
+        if not request.external_job_id:
+            await service.push(request, shop)
+        else:
+            await service.sync(request, shop)
+    await HcpMirror(session, c).retry_all(limit=500)
+    await OutsideJobActions(session, c).retry_all(limit=500)
+    await session.flush()
+    return await hcp_activity(principal, session, c)
 
 
 @router.get("/customers", response_model=CustomerListOut)

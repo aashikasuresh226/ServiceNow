@@ -59,9 +59,11 @@ function JobSummary({ job }: { job: Job }) {
         <span><span className="muted">Homeowner says:</span>{' '}
           {job.description ? `“${job.description}”` : job.symptoms.map((s) => label(options, 'symptoms', s)).join(', ')}</span>
         <span title={job.estimate.basis ?? undefined}><span className="muted">Shown to homeowner:</span>{' '}
-          {job.estimate.high_cents && job.estimate.low_cents != null && job.estimate.high_cents > job.estimate.low_cents
-            ? `${money(job.estimate.low_cents)}–${money(job.estimate.high_cents)}`
-            : `from ${money(job.estimate.low_cents)}`}</span>
+          {job.estimate.source === 'visit_only'
+            ? `${money(job.estimate.low_cents)} visit only (no estimate)`
+            : job.estimate.high_cents && job.estimate.low_cents != null && job.estimate.high_cents > job.estimate.low_cents
+              ? `${money(job.estimate.low_cents)}–${money(job.estimate.high_cents)}`
+              : `from ${money(job.estimate.low_cents)}`}</span>
       </div>
     </div>
     </>

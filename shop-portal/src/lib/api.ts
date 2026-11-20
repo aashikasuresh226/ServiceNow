@@ -4,6 +4,7 @@ import type {
   Customer,
   CustomerList,
   OutsideJob,
+  HcpActivity,
   ShopComplaint,
   AdminComplaint,
   AdminReview,
@@ -134,6 +135,9 @@ export const api = {
   complaints: () => request<ShopComplaint[]>('GET', '/shop/complaints'),
   respondComplaint: (id: string, response: string, resolved: boolean) =>
     request<ShopComplaint>('POST', `/shop/complaints/${id}/response`, { response, resolved }),
+
+  hcpActivity: () => request<HcpActivity>('GET', '/shop/housecall-pro/activity'),
+  hcpSyncNow: () => request<HcpActivity>('POST', '/shop/housecall-pro/sync-now'),
 
   outsideJobs: () => request<OutsideJob[]>('GET', '/shop/outside-jobs'),
   customers: (q?: string, status?: string) => {

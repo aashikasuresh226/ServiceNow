@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, Integer, String, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.core.db import Base, UTCDateTime
@@ -99,14 +99,18 @@ class ExternalJob(IdMixin, TimestampMixin, Base):
 
 
 class ExternalJobEvent(IdMixin, TimestampMixin, Base):
-    """Something the technician did on a Housecall Pro job in our app, queued to be sent to
-    Housecall Pro (a note, a line item or a photo). Retried by the worker until it's sent."""
+    """An update queued for Housecall Pro: something done in our app on a Housecall Pro job
+    (job_id), or on a job booked through our app that's mirrored there (request_id).
+    Retried by the worker, in order, until it's sent."""
 
     __tablename__ = "external_job_events"
     __table_args__ = (Index("ix_external_job_events_pending", "sent_at", "created_at"),)
 
-    job_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("external_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("external_jobs.id", ondelete="CASCADE"), index=True
+    )
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), index=True
     )
     technician_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("technicians.id", ondelete="SET NULL")
@@ -118,3 +122,18 @@ class ExternalJobEvent(IdMixin, TimestampMixin, Base):
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(String(300))
+
+
+class IntegrationLog(IdMixin, TimestampMixin, Base):
+    """What we sent to (or read from) the shop's Housecall Pro and whether it worked, so the
+    shop can see it in the portal. Kept 30 days."""
+
+    __tablename__ = "integration_logs"
+    __table_args__ = (Index("ix_integration_logs_shop_created", "shop_id", "created_at"),)
+
+    shop_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(200), nullable=False)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    detail: Mapped[str | None] = mapped_column(String(400))

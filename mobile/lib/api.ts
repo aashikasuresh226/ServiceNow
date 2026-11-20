@@ -16,6 +16,7 @@ import type {
   OutsideJobDetail,
   OutsideStep,
   UnreadChat,
+  HomeVisit,
   Complaint,
   ComplaintState,
   Providers,
@@ -148,6 +149,7 @@ export const api = {
 
   // Profile + card
   me: () => request<Homeowner>('GET', '/me'),
+  visits: () => request<HomeVisit[]>('GET', '/me/visits'),
   notifications: () =>
     request<{ unread_messages: UnreadChat[]; total_unread: number }>('GET', '/me/notifications'),
   complaint: (id: string) => request<ComplaintState>('GET', `/requests/${id}/complaint`),

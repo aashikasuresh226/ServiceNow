@@ -16,6 +16,7 @@ from app.core.clock import FrozenClock
 from app.domain.enums import SchedulingProvider
 from app.integrations.scheduling.housecall_pro import HousecallProClient, parse_us_address
 from app.services.external_jobs import ExternalJobService
+from app.worker import tick
 from tests.conftest import (
     SeededShop,
     analyzed_request,
@@ -253,6 +254,7 @@ class FakeHousecallPro:
         self.notes: dict[str, list[str]] = {}
         self.line_items: dict[str, list[dict[str, Any]]] = {}
         self.attachments: dict[str, list[bytes]] = {}
+        self.dispatched: dict[str, list[str]] = {}
         self.down = False  # simulate Housecall Pro being unreachable for writes
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -265,7 +267,11 @@ class FakeHousecallPro:
         if not request.headers.get("authorization", "").startswith("Bearer key_"):
             return httpx.Response(401, json={"error": "unauthorized"})
         parts = path.strip("/").split("/")
-        if len(parts) == 3 and parts[0] == "jobs" and parts[1] != "job_1":
+        if (
+            len(parts) == 3
+            and parts[0] == "jobs"
+            and parts[2] in ("notes", "line_items", "attachments", "dispatch")
+        ):
             job_id, what = parts[1], parts[2]
             if request.method == "POST" and self.down:
                 return httpx.Response(503, json={"error": "unavailable"})
@@ -277,6 +283,9 @@ class FakeHousecallPro:
                 return httpx.Response(201, json={"id": "li_1", **body})
             if what == "line_items" and request.method == "GET":
                 return httpx.Response(200, json={"data": self.line_items.get(job_id, [])})
+            if what == "dispatch" and request.method == "PUT":
+                self.dispatched[job_id] = [e["employee_id"] for e in body["dispatched_employees"]]
+                return httpx.Response(200, json={})
             if what == "attachments" and request.method == "POST":
                 assert b'name="file"' in request.content
                 self.attachments.setdefault(job_id, []).append(request.content)
@@ -468,3 +477,91 @@ def test_us_address_parsing() -> None:
     a = parse_us_address("191 Peachtree St NE, Atlanta, GA 30303")
     assert (a.street, a.city, a.state, a.zip) == ("191 Peachtree St NE", "Atlanta", "GA", "30303")
     assert parse_us_address("Somewhere odd").street == "Somewhere odd"
+
+
+async def test_app_jobs_mirror_into_housecall_pro_in_every_dispatch_mode(
+    client: httpx.AsyncClient,
+    shops: dict[str, SeededShop],
+    clock: FrozenClock,
+    container: Container,
+) -> None:
+    """A shop on Housecall Pro that lets us pick the technician (platform mode) still gets
+    every app job and every step in Housecall Pro, so nobody sees two versions."""
+    fake = FakeHousecallPro()
+    c = use_fake_hcp(client, container, fake)
+    shop = await shop_login(client, shops["near"], clock)
+    nina = shops["near"].tech_ids[0]
+    await client.patch(f"/shop/technicians/{nina}", headers=shop, json={"external_id": "emp_nina"})
+    await client.put(
+        "/shop/scheduling",
+        headers=shop,
+        json={"provider": "housecall_pro", "credentials": {"api_key": "key_abc"}},
+    )
+    me = (await client.get("/shop/me", headers=shop)).json()
+    assert me["shop"]["dispatch_mode"] == "platform"
+
+    home = await homeowner_login(client)
+    rid = (await book(client, home))["id"]
+    job = (await client.post(f"/shop/jobs/{rid}/accept", headers=shop, json={})).json()
+    assert job["external_job_id"] == "job_1"
+    created = next(b for m, p, b in fake.calls if m == "POST" and p == "/jobs")
+    assert created["assigned_employee_ids"] == ["emp_nina"]  # we picked Nina: she's assigned
+
+    for step in ("en-route", "on-site"):
+        await client.post(f"/shop/jobs/{rid}/{step}", headers=shop, json={})
+    await client.post(
+        f"/shop/jobs/{rid}/quote",
+        headers=shop,
+        json={"final_price_cents": 26_500, "notes": "Replaced capacitor"},
+    )
+    await client.post(f"/requests/{rid}/approve-quote", headers=home)
+    fake.down = True  # Housecall Pro hiccups at the end
+    await client.post(f"/shop/jobs/{rid}/complete", headers=shop)
+    activity = (await client.get("/shop/housecall-pro/activity", headers=shop)).json()
+    assert activity["waiting"] == 1 and activity["log"][0]["ok"] is False
+    assert "unavailable" in activity["log"][0]["detail"]  # Housecall Pro's own message
+    fake.down = False
+    clock.advance(seconds=61)
+    await tick(c)
+
+    notes = fake.notes["job_1"]
+    assert notes[0].startswith("On my way, ") and "Nina Near" in notes[0]
+    assert notes[1].startswith("Arrived, ")
+    assert notes[2].startswith("Customer approved $265.00") and "Replaced capacitor" in notes[2]
+    assert notes[3].startswith("Job finished, ") and "Card charged $265.00" in notes[3]
+    [item] = fake.line_items["job_1"]
+    assert item["unit_price"] == 26_500 and item["quantity"] == 1
+    activity = (await client.get("/shop/housecall-pro/activity", headers=shop)).json()
+    assert activity["waiting"] == 0
+    actions = [entry["action"] for entry in activity["log"]]
+    assert actions[0].startswith("Job finished") and activity["log"][0]["ok"]
+    assert any(
+        a.startswith("Created job job_1 for Jordan Lee (technician assigned)") for a in actions
+    )
+
+    # "Sync now" from the portal works too.
+    r = await client.post("/shop/housecall-pro/sync-now", headers=shop)
+    assert r.status_code == 200 and r.json()["connected"] is True
+
+
+async def test_canceled_app_job_is_canceled_in_housecall_pro(
+    client: httpx.AsyncClient,
+    shops: dict[str, SeededShop],
+    clock: FrozenClock,
+    container: Container,
+) -> None:
+    fake = FakeHousecallPro()
+    use_fake_hcp(client, container, fake)
+    shop = await shop_login(client, shops["near"], clock)
+    await client.put(
+        "/shop/scheduling",
+        headers=shop,
+        json={"provider": "housecall_pro", "credentials": {"api_key": "key_abc"}},
+    )
+    home = await homeowner_login(client)
+    rid = (await book(client, home))["id"]
+    await client.post(f"/shop/jobs/{rid}/accept", headers=shop, json={})
+    r = await client.post(f"/requests/{rid}/cancel", headers=home)
+    assert r.status_code == 200, r.text
+    assert fake.notes["job_1"][-1].startswith("Canceled in HVAC Connect")
+    assert ("DELETE", "/jobs/job_1/schedule", None) in fake.calls

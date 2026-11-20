@@ -31,6 +31,41 @@ export default function DiagnosisScreen() {
   if (!unit || !dx) return <Loading label="Waiting for analysis…" />;
   const bars = CONFIDENCE_BARS[dx.confidence];
 
+  // Nothing the AI could use: say so plainly, no guessed problem or price.
+  if (dx.analysis === 'skipped' || dx.analysis === 'photo_unusable') {
+    const skipped = dx.analysis === 'skipped';
+    return (
+      <Screen footer={
+        <>
+          <Button label={skipped ? 'Add a photo' : 'Retake the photo'} icon="camera"
+            onPress={() => router.replace(`/request/${id}/photo`)} />
+          <TextLink label="Continue without an AI check" color={colors.muted}
+            onPress={() => router.push(`/request/${id}/estimate`)} />
+        </>
+      }>
+        <StepHeader step={3} />
+        <Title sub={skipped
+          ? "You didn't add a photo or describe the problem, so there's nothing for the AI to check and no estimate."
+          : "The AI couldn't read your photo, so it hasn't guessed the problem or a price."}>
+          {skipped ? 'Nothing to check yet' : 'We need a clearer photo'}
+        </Title>
+        {unit.photo_feedback ? (
+          <Card tone="amber" style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <Icon name="camera" size={18} color={colors.amberInk} />
+            <Body style={{ flex: 1, color: colors.amberInk }}>{unit.photo_feedback}</Body>
+          </Card>
+        ) : null}
+        <Card tone="muted" style={{ gap: 6 }}>
+          <Body style={{ fontWeight: '700' }}>For an AI check and a price estimate</Body>
+          <Muted>• A photo of the outdoor unit with its label (the silver sticker) visible</Muted>
+          <Muted>• Or a few words about what's happening, e.g. "fan outside isn't spinning, humming noise"</Muted>
+        </Card>
+        <Muted>Or continue: your technician diagnoses the problem and gives you the price before any work starts.</Muted>
+      </Screen>
+    );
+  }
+  const identified = dx.primary_issue !== 'general_diagnostic';
+
   return (
     <Screen footer={<Button label="See estimate" onPress={() => router.push(`/request/${id}/estimate`)} />}>
       <StepHeader step={3} />
@@ -91,9 +126,14 @@ export default function DiagnosisScreen() {
           <Muted>Photo analysis isn't switched on yet, so we haven't guessed the problem. Your
             photos and description go to the technician, who diagnoses it on site.</Muted>
         </Card>
+      ) : !identified ? (
+        <Card tone="muted">
+          <Muted>The AI couldn't tell the problem from this, so it hasn't guessed one or a price.
+            Your technician diagnoses it on site.</Muted>
+        </Card>
       ) : null}
 
-      {dx.ai_used === false ? null : (
+      {dx.ai_used === false || !identified ? null : (
       <Card tone="soft" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <Svg width={40} height={44} viewBox="0 0 40 44" {...decorative}>
           <Path d="M15 8V2M25 8V2" stroke={colors.primary} strokeWidth={2.5} strokeLinecap="round" />
@@ -112,7 +152,7 @@ export default function DiagnosisScreen() {
         </View>
       </Card>
       )}
-      {dx.ai_used === false ? null : <Body style={{ color: colors.body }}>{dx.summary}</Body>}
+      {dx.ai_used === false || !identified ? null : <Body style={{ color: colors.body }}>{dx.summary}</Body>}
       {dx.visible_issues?.length ? (
         <View style={{ gap: 4 }}>
           <Muted>Seen in your photo:</Muted>

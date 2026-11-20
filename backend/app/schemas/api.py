@@ -746,3 +746,32 @@ class AdminReviewOut(Model):
     technician_rating: int | None
     shop_rating: int | None
     review: str | None
+
+
+class IntegrationLogOut(Model):
+    created_at: datetime
+    action: str
+    ok: bool
+    detail: str | None
+
+
+class HcpActivityOut(Model):
+    connected: bool
+    last_read_at: datetime | None
+    last_error: str | None
+    waiting: int  # updates not yet accepted by Housecall Pro
+    log: list[IntegrationLogOut]
+
+
+class HomeVisitOut(Model):
+    """A visit the homeowner's company booked in Housecall Pro (shown so the customer sees
+    the same visit in our app)."""
+
+    id: uuid.UUID
+    shop_name: str
+    shop_phone: str | None
+    technician_first_name: str | None
+    starts_at: datetime | None
+    ends_at: datetime | None
+    description: str | None
+    status: str  # scheduled | en_route | on_site | working | finished

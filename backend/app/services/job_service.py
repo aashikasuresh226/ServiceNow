@@ -13,6 +13,7 @@ from app.domain.enums import Actor, RequestStatus
 from app.domain.state_machine import HOMEOWNER_CANCELABLE
 from app.models import Homeowner, JobOffer, ServiceRequest, Shop, Technician
 from app.services.calendar_service import CalendarService
+from app.services.hcp_mirror import HcpMirror
 from app.services.lifecycle import clear_live_location, transition
 from app.services.matching_service import MatchingService
 from app.services.notifications import notify_homeowner
@@ -85,10 +86,12 @@ class JobService:
     async def mark_en_route(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
         transition(self.s, request, S.EN_ROUTE, actor)
         await self._notify(request, "{tech} is on the way to your home.")
+        await HcpMirror(self.s, self.c).record(request, "en_route")
 
     async def mark_on_site(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
         transition(self.s, request, S.ON_SITE, actor)
         await clear_live_location(self.s, request)  # sharing ends on arrival
+        await HcpMirror(self.s, self.c).record(request, "on_site")
 
     async def submit_quote(
         self,
@@ -116,6 +119,13 @@ class JobService:
         assert shop
         await self.payments.ensure_hold_covers(request, homeowner, shop, request.final_price_cents)
         transition(self.s, request, S.IN_PROGRESS, Actor.HOMEOWNER)
+        await HcpMirror(self.s, self.c).record(
+            request,
+            "quote_approved",
+            price_cents=request.final_price_cents,
+            notes=request.quote_notes,
+            item=(request.diagnosis or {}).get("primary_issue_label"),
+        )
 
     async def complete(self, request: ServiceRequest, actor: Actor = Actor.SHOP) -> None:
         if request.status != S.IN_PROGRESS.value:
@@ -124,6 +134,9 @@ class JobService:
         request.completed_at = self.c.clock.now()
         transition(self.s, request, S.COMPLETED, actor)
         await CalendarService(self.s, self.c).finish(request)
+        await HcpMirror(self.s, self.c).record(
+            request, "completed", charged_cents=request.captured_cents
+        )
         if request.captured_cents is not None:
             message = (
                 "Your HVAC job is complete. Your card was charged "

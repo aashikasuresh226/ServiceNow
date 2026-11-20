@@ -62,6 +62,7 @@ _RULES: list[tuple[Symptom, EquipmentType, IssueCategory, list[IssueCategory], s
 
 class FakeUnitAnalyzer:
     last_price_context: PriceContext | None = None
+    photo_feedback: str | None = None  # tests: pretend the photo couldn't be read
 
     async def analyze(
         self,
@@ -114,6 +115,7 @@ class FakeUnitAnalyzer:
                 equipment_type=unit_type,
                 approx_age_years=12 if photos else None,
                 tonnage=3.0 if photos else None,
+                photo_feedback=self.photo_feedback,
             ),
             diagnosis=Diagnosis(
                 primary_issue=issue,

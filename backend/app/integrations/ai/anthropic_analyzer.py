@@ -118,6 +118,9 @@ typical residential prices in that market and year. Adjust for what you see: uni
 - Give a realistic low and high for the most likely issue, covering the alternatives when \
 they would cost more. Keep the range honest (high usually no more than about 3x low).
 - If the evidence is too thin to price at all, use 0 for both.
+- Never guess from the selected symptoms alone: if the photos don't show HVAC equipment
+(or nothing about the problem) and the description doesn't say what's wrong, set
+primary_issue to general_diagnostic, confidence low, and 0 for both prices.
 - basis: one short plain sentence for the homeowner on what the range is based on (e.g. \
 "Based on 12 recent capacitor repairs nearby and your 3-ton unit."). Never promise a price.
 

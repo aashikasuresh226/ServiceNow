@@ -6,10 +6,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, File, Request, UploadFile, status
+from sqlalchemy import select
 
 from app.api.deps import ContainerDep, HomeownerDep, SessionDep, client_ip
 from app.api.presenters import message_out, request_out
-from app.models import Complaint, ServiceRequest
+from app.models import Complaint, ServiceRequest, Shop
 from app.schemas.api import (
     CardSetupFinishIn,
     CardSetupOut,
@@ -19,6 +20,7 @@ from app.schemas.api import (
     CustomerInviteIn,
     HomeownerOut,
     HomeownerUpdateIn,
+    HomeVisitOut,
     InviteOut,
     MatchIn,
     MessageIn,
@@ -41,6 +43,7 @@ from app.services.customer_service import CustomerService
 from app.services.job_service import JobService
 from app.services.matching_service import MatchingService
 from app.services.message_service import MessageService
+from app.services.outside_jobs import OutsideJobService
 from app.services.provider_service import ProviderService
 from app.services.request_service import RequestService
 
@@ -292,6 +295,35 @@ async def list_messages(
     messages = MessageService(session, c)
     await messages.mark_read_by_homeowner(request)  # opening the chat reads it
     return [message_out(m) for m in await messages.list(request)]
+
+
+@router.get("/me/visits", response_model=list[HomeVisitOut])
+async def visits(me: HomeownerDep, session: SessionDep, c: ContainerDep) -> list[HomeVisitOut]:
+    """Visits your HVAC company booked for you in Housecall Pro, so you see them here too."""
+    rows = await OutsideJobService(session, c).for_homeowner(me.id)
+    shops = (
+        {
+            s.id: s
+            for s in await session.scalars(
+                select(Shop).where(Shop.id.in_({j.shop_id for j, _ in rows}))
+            )
+        }
+        if rows
+        else {}
+    )
+    return [
+        HomeVisitOut(
+            id=job.id,
+            shop_name=shops[job.shop_id].name if job.shop_id in shops else "Your HVAC company",
+            shop_phone=shops[job.shop_id].phone if job.shop_id in shops else None,
+            technician_first_name=first,
+            starts_at=job.starts_at,
+            ends_at=job.ends_at,
+            description=job.description,
+            status=job.app_status or "scheduled",
+        )
+        for job, first in rows
+    ]
 
 
 @router.get("/me/notifications", response_model=NotificationsOut)

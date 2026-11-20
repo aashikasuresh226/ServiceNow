@@ -18,6 +18,7 @@ All field mapping is in this file.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -276,6 +277,14 @@ class HousecallProClient:
     async def add_link(self, job_id: str, title: str, url: str) -> None:
         await self._request("POST", f"/jobs/{job_id}/links", json={"title": title, "url": url})
 
+    async def dispatch(self, job_id: str, employee_ids: list[str]) -> None:
+        """Assign technicians (PUT, objects keyed employee_id)."""
+        await self._request(
+            "PUT",
+            f"/jobs/{job_id}/dispatch",
+            json={"dispatched_employees": [{"employee_id": e} for e in employee_ids]},
+        )
+
     async def add_line_item(
         self,
         job_id: str,
@@ -321,7 +330,7 @@ class HousecallProClient:
             log.warning(
                 "Housecall Pro attachment -> %s: %.300s", response.status_code, response.text
             )
-            raise ExternalServiceError(_reason(response.status_code))
+            raise ExternalServiceError(_reason(response.status_code, response.text))
 
     async def unschedule(self, job_id: str) -> None:
         await self._request("DELETE", f"/jobs/{job_id}/schedule")
@@ -350,7 +359,7 @@ class HousecallProClient:
                 response.status_code,
                 response.text,
             )
-            raise ExternalServiceError(_reason(response.status_code))
+            raise ExternalServiceError(_reason(response.status_code, response.text))
         if response.status_code == 204 or not response.content:
             return {}
         try:
@@ -371,7 +380,27 @@ class HousecallProClient:
         return rows
 
 
-def _reason(status: int) -> str:
+def _reason(status: int, body: str = "") -> str:
+    """A plain reason, plus Housecall Pro's own message when it gives one."""
+    base = _base_reason(status)
+    detail = ""
+    try:
+        data = json.loads(body) if body.strip().startswith(("{", "[")) else None
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        err = data.get("error") or data.get("errors") or data.get("message")
+        if isinstance(err, dict):
+            err = err.get("message") or json.dumps(err)
+        if isinstance(err, list):
+            err = "; ".join(str(e) for e in err)
+        detail = str(err or "").strip()
+    elif body.strip().startswith("<"):
+        detail = "no such route (HTML 404 page)" if status == 404 else ""
+    return f"{base}: {detail[:200]}" if detail else base
+
+
+def _base_reason(status: int) -> str:
     if status == 401:
         return "Housecall Pro rejected the API key"
     if status == 403:

@@ -1,16 +1,16 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icons';
-import { AcUnit, HouseIllustration } from '@/components/illustrations';
+import { HouseIllustration } from '@/components/illustrations';
 import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, Label, Muted, Row, Screen } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useUnread } from '@/lib/unread';
 import { labelFor, useOptions } from '@/lib/hooks';
-import type { ServiceRequest } from '@/lib/types';
+import type { HomeVisit, ServiceRequest } from '@/lib/types';
 
 const ACTIVE = new Set(['proposed', 'waitlisted', 'offered', 'dispatched', 'en_route', 'on_site',
   'quoted', 'in_progress']);
@@ -34,10 +34,15 @@ export default function Home() {
   const { me } = useAuth();
   const options = useOptions();
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
+  const [visits, setVisits] = useState<HomeVisit[]>([]);
 
   useFocusEffect(
     useCallback(() => {
       api.listRequests().then(setRequests).catch(() => undefined);
+      api.visits().then(setVisits).catch(() => undefined);
+      // Visits booked by the company can change (on the way, rescheduled): keep them fresh.
+      const timer = setInterval(() => { api.visits().then(setVisits).catch(() => undefined); }, 15000);
+      return () => clearInterval(timer);
     }, []),
   );
 
@@ -45,7 +50,6 @@ export default function Home() {
   const active = requests.find((r) => ACTIVE.has(r.status));
   const newFor = (r: ServiceRequest) => byRequest[r.id] ?? 0;
   const firstName = me?.name?.split(' ')[0];
-  const lastUnit = requests.find((r) => r.unit?.brand)?.unit;
 
   const openRequest = (r: ServiceRequest) => {
     if (r.status === 'draft') router.push(`/request/${r.id}/photo`);
@@ -85,23 +89,14 @@ export default function Home() {
         </Pressable>
       ) : null}
 
+      {visits.map((v) => <VisitCard key={v.id} visit={v} />)}
+
       <Card tone="soft" style={{ alignItems: 'center', gap: 12 }}>
         <HouseIllustration width={230} />
         <Text style={styles.cta}>HVAC trouble? Get help fast.</Text>
         <Button label="Start a request" style={{ alignSelf: 'stretch' }}
           onPress={() => router.push('/request/new')} />
       </Card>
-
-      <Label>Your units</Label>
-      <Row style={{ gap: 10 }}>
-        <Card style={styles.unitCard}>
-          <AcUnit width={64} />
-          <Muted style={{ fontWeight: '600', color: colors.ink, textAlign: 'center' }}>
-            {lastUnit ? `${lastUnit.brand} ${labelFor(options, 'equipment_types', lastUnit.equipment_type)}`
-              : 'Added after your first request'}
-          </Muted>
-        </Card>
-      </Row>
 
       {requests.length ? <Label>Recent requests</Label> : null}
       {requests.slice(0, 5).map((r) => (
@@ -143,7 +138,6 @@ function Tab({ icon, label, active, onPress }: {
 const styles = StyleSheet.create({
   hello: { fontSize: 26, fontWeight: '800', color: colors.ink, letterSpacing: -0.4 },
   cta: { fontSize: 17, fontWeight: '700', color: colors.ink },
-  unitCard: { width: 150, alignItems: 'center', gap: 6 },
   historyRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.line },
   tabs: { flexDirection: 'row', justifyContent: 'space-around' },
   tab: { alignItems: 'center', gap: 2, minWidth: 64, minHeight: 44, justifyContent: 'center' },
@@ -157,5 +151,35 @@ function NewBadge({ count }: { count: number }) {
       <Icon name="chat" size={12} color="#fff" />
       <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{count}</Text>
     </View>
+  );
+}
+
+const VISIT_STATUS: Record<HomeVisit['status'], string> = {
+  scheduled: 'Scheduled',
+  en_route: 'On the way',
+  on_site: 'Arrived',
+  working: 'Working on it',
+  finished: 'Finished',
+};
+
+/** A visit your company booked for you (in their Housecall Pro), shown here too. */
+function VisitCard({ visit }: { visit: HomeVisit }) {
+  const when = visit.starts_at
+    ? new Date(visit.starts_at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : 'Time to be confirmed';
+  const live = visit.status !== 'scheduled';
+  return (
+    <Card tone={live ? 'amber' : 'plain'} style={{ gap: 6 }}>
+      <Row style={{ justifyContent: 'space-between' }}>
+        <Body style={{ fontWeight: '700' }}>Visit from {visit.shop_name}</Body>
+        <Badge label={VISIT_STATUS[visit.status]} tone={live ? 'amber' : 'neutral'} />
+      </Row>
+      <Muted>{when}{visit.technician_first_name ? ` · ${visit.technician_first_name}` : ''}</Muted>
+      {visit.description ? <Muted numberOfLines={2}>{visit.description}</Muted> : null}
+      {visit.shop_phone ? (
+        <Button label={`Call ${visit.shop_name}`} variant="secondary" icon="phone"
+          onPress={() => Linking.openURL(`tel:${visit.shop_phone}`)} />
+      ) : null}
+    </Card>
   );
 }

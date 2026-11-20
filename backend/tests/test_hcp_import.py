@@ -285,3 +285,30 @@ async def test_technician_runs_a_housecall_pro_job_in_the_app(
         401,
         403,
     )
+
+
+async def test_customer_using_both_sees_the_housecall_pro_visit_in_the_app(
+    client: httpx.AsyncClient,
+    container: Container,
+    shops: dict[str, SeededShop],
+    clock: FrozenClock,
+) -> None:
+    fake, c, shop = await connect(client, container, shops, clock)
+    tech = await join_as_technician(client, shop, shops["near"].tech_ids[0])
+    fake.own_jobs = [hcp_job(clock, "job_77")]  # Rosa, (404) 555-0123
+    clock.advance(seconds=61)
+    await tick(c)
+
+    rosa = await homeowner_login(client, "(404) 555-0123")  # the number the shop has on file
+    [visit] = (await client.get("/me/visits", headers=rosa)).json()
+    assert visit["shop_name"] == "Near HVAC" and visit["technician_first_name"] == "Nina"
+    assert visit["status"] == "scheduled" and visit["description"] == "AC not cooling upstairs"
+
+    [job] = (await client.get("/tech/jobs", headers=tech)).json()["outside_jobs"]
+    await client.post(
+        f"/tech/outside-jobs/{job['id']}/step", headers=tech, json={"step": "on_my_way"}
+    )
+    assert (await client.get("/me/visits", headers=rosa)).json()[0]["status"] == "en_route"
+    # Someone else sees nothing.
+    other = await homeowner_login(client, "(404) 555-0188")
+    assert (await client.get("/me/visits", headers=other)).json() == []

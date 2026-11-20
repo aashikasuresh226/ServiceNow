@@ -29,6 +29,7 @@ from app.container import Container
 from app.core.errors import AppError, InvalidState, NotFound
 from app.integrations.storage import sniff_image_type
 from app.models import ExternalJob, ExternalJobEvent, Homeowner, Shop, ShopCustomer, Technician
+from app.services import integration_log
 from app.services.notifications import notify_homeowner
 
 log = logging.getLogger(__name__)
@@ -164,6 +165,8 @@ class OutsideJobActions:
             for event in pending:
                 event.error = "Housecall Pro isn't connected"
             return 0
+        if not pending:
+            return 0
         sent = 0
         tz = ZoneInfo(shop.timezone) if shop and shop.timezone else ZoneInfo("America/New_York")
         for event in pending:
@@ -174,12 +177,14 @@ class OutsideJobActions:
                 await self._send(client, job, event, tz)
             except AppError as exc:
                 event.error = exc.message[:300]
+                integration_log.record(self.s, job.shop_id, _what(event, job), False, exc.message)
                 log.warning(
                     "Housecall Pro action %s for job %s failed: %s", event.id, job.id, exc.message
                 )
                 break
             event.sent_at = self.c.clock.now()
             event.error = None
+            integration_log.record(self.s, job.shop_id, _what(event, job), True)
             sent += 1
         await self.s.flush()
         return sent
@@ -228,6 +233,7 @@ class OutsideJobActions:
                 await self.s.scalars(
                     select(ExternalJobEvent.job_id)
                     .where(
+                        ExternalJobEvent.job_id.is_not(None),
                         ExternalJobEvent.sent_at.is_(None),
                         ExternalJobEvent.attempts < DEFAULT_MAX_ATTEMPTS,
                     )
@@ -271,3 +277,11 @@ class OutsideJobActions:
                 }
             )
         return items
+
+
+def _what(event: ExternalJobEvent, job: ExternalJob) -> str:
+    kinds = {"status": "Step", "note": "Note", "line_item": "Line item", "photo": "Photo"}
+    label = kinds.get(event.kind, event.kind)
+    if event.kind == "status":
+        label = STEPS.get(json.loads(event.payload).get("step"), ("", set(), "Step"))[2]
+    return f"{label} (job {job.invoice_number or job.external_id})"

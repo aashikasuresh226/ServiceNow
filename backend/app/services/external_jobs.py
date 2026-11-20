@@ -35,6 +35,7 @@ from app.integrations.scheduling.housecall_pro import (
     parse_us_address,
 )
 from app.models import ExternalJob, Homeowner, ServiceRequest, Shop, Technician
+from app.services import integration_log
 from app.services.calendar_service import CalendarService
 from app.services.customer_service import CustomerService
 from app.services.lifecycle import transition
@@ -104,7 +105,17 @@ class ExternalJobService:
         except AppError as exc:
             request.external_error = exc.message[:300]
             log.warning("Housecall Pro push failed for %s: %s", request.id, exc.message)
+            integration_log.record(
+                self.s, shop.id, f"Create job for {' '.join(name)}", False, exc.message
+            )
             return
+        integration_log.record(
+            self.s,
+            shop.id,
+            f"Created job {job_id} for {' '.join(name)}"
+            + (" (technician assigned)" if employee_ids else " (no technician linked yet)"),
+            True,
+        )
         request.external_job_id = job_id
         request.external_error = None
         request.external_synced_at = self.c.clock.now()
@@ -144,7 +155,10 @@ class ExternalJobService:
             lines.append(
                 f"Likely issue: {dx['primary_issue_label']}. {dx.get('summary') or ''}".strip()
             )
-        if request.estimate_low_cents:
+        if (request.diagnosis or {}).get("estimate_source") == "visit_only":
+            fee = (request.diagnostic_fee_cents or 0) / 100
+            lines.append(f"Customer was shown the ${fee:,.0f} diagnostic visit only (no estimate).")
+        elif request.estimate_low_cents:
             shown = f"${request.estimate_low_cents / 100:,.0f}"
             if request.estimate_high_cents:
                 shown += f"-${request.estimate_high_cents / 100:,.0f}"
@@ -171,7 +185,7 @@ class ExternalJobService:
                 select(ServiceRequest)
                 .join(Shop, Shop.id == ServiceRequest.shop_id)
                 .where(
-                    Shop.dispatch_mode == "software",
+                    Shop.scheduling_provider == SchedulingProvider.HOUSECALL_PRO.value,
                     ServiceRequest.status.in_(SYNCED_VALUES),
                     or_(
                         ServiceRequest.external_synced_at.is_(None),
@@ -306,6 +320,8 @@ class ExternalJobService:
         try:
             details = await client.fetch_jobs(start=start, end=end)
         except AppError as exc:
+            if shop.scheduling_last_error != exc.message[:500]:  # once per new problem
+                integration_log.record(self.s, shop.id, "Read jobs", False, exc.message)
             shop.scheduling_last_error = exc.message[:500]
             log.warning("Housecall Pro import failed for shop %s: %s", shop.id, exc.message)
             return 0
@@ -348,9 +364,11 @@ class ExternalJobService:
             )
         }
         techs: dict[str, Technician | None] = {}
+        new = 0
         for detail in theirs:
             row = existing.get(detail.job.id)
             if row is None:
+                new += 1
                 row = ExternalJob(
                     shop_id=shop.id,
                     provider=SchedulingProvider.HOUSECALL_PRO.value,
@@ -373,6 +391,15 @@ class ExternalJobService:
                 ),
             )
         )
+        if new:
+            integration_log.record(
+                self.s,
+                shop.id,
+                f"Read {new} new job{'s' if new != 1 else ''} from Housecall Pro",
+                True,
+            )
+        elif shop.scheduling_last_error:
+            integration_log.record(self.s, shop.id, "Reading jobs works again", True)
         shop.scheduling_last_synced_at = now
         shop.scheduling_last_error = None
         await self.s.flush()

@@ -57,8 +57,9 @@ export function formatPhone(e164: string | null | undefined): string {
 }
 
 /** "$239–$389", or "from $89" when the repair is priced on site. */
-export function estimateRange(estimate: { low_cents: number | null; high_cents?: number | null }): string {
+export function estimateRange(estimate: { low_cents: number | null; high_cents?: number | null; source?: string | null }): string {
   const { low_cents: low, high_cents: high } = estimate;
   if (low == null) return '—';
+  if (estimate.source === 'visit_only') return `${money(low)} visit · repair priced on site`;
   return high && high > low ? `${money(low)}–${money(high)}` : `from ${money(low)}`;
 }

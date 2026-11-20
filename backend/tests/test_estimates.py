@@ -16,7 +16,7 @@ from app.integrations.ai.anthropic_analyzer import parse_estimate, request_text
 from app.integrations.ai.base import PastPrice, PriceContext
 from app.integrations.ai.fake import FakeUnitAnalyzer
 from app.models import Homeowner, ServiceRequest
-from tests.conftest import analyzed_request, homeowner_login
+from tests.conftest import analyzed_request, homeowner_login, png_bytes
 
 
 async def _completed_jobs(
@@ -70,7 +70,7 @@ async def test_estimate_uses_past_final_prices(
     assert est["source"] == "ai" and "3 past jobs" in est["basis"]
 
 
-async def test_estimate_without_ai_falls_back(
+async def test_no_problem_identified_means_visit_fee_only(
     client: httpx.AsyncClient, container: Container, clock: FrozenClock
 ) -> None:
     home = await homeowner_login(client)
@@ -83,9 +83,64 @@ async def test_estimate_without_ai_falls_back(
         transport=httpx.ASGITransport(app=app), base_url="http://test/v1"
     ) as plain:
         req = await analyzed_request(plain, home)
+    # AI off: no problem was identified, so no repair estimate (not even from past jobs).
     est = req["estimate"]
-    assert est["source"] == "past_jobs"
-    assert (est["low_cents"], est["high_cents"]) == (150_00, 210_00)
+    assert est["source"] == "visit_only" and est["high_cents"] is None
+    assert est["low_cents"] == est["diagnostic_fee_cents"] == 89_00
+    assert req["diagnosis"]["analysis"] == "off" and req["diagnosis"]["ai_used"] is False
+
+
+async def test_nothing_given_means_no_ai_and_no_estimate(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    home = await homeowner_login(client)
+    analyzer = container.analyzer
+    assert isinstance(analyzer, FakeUnitAnalyzer)
+    analyzer.last_price_context = None
+    for description in (None, "broken"):  # no photo, and no real description
+        r = await client.post(
+            "/requests", headers=home, json={"symptoms": ["no_cooling"], "description": description}
+        )
+        rid = r.json()["id"]
+        req = (await client.post(f"/requests/{rid}/analyze", headers=home)).json()
+        assert req["diagnosis"]["analysis"] == "skipped" and req["diagnosis"]["ai_used"] is False
+        assert req["diagnosis"]["primary_issue"] == "general_diagnostic"
+        assert req["estimate"]["source"] == "visit_only" and req["estimate"]["high_cents"] is None
+        assert req["unit"]["brand"] is None
+    assert analyzer.last_price_context is None  # the AI was never called
+
+    # A real description alone is enough to analyze.
+    r = await client.post(
+        "/requests",
+        headers=home,
+        json={"symptoms": ["no_cooling"], "description": "Outdoor fan not spinning, humming noise"},
+    )
+    req = (await client.post(f"/requests/{r.json()['id']}/analyze", headers=home)).json()
+    assert req["diagnosis"]["analysis"] == "ai"
+
+
+async def test_unusable_photo_gets_a_retake_tip_not_a_guess(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    home = await homeowner_login(client)
+    analyzer = container.analyzer
+    assert isinstance(analyzer, FakeUnitAnalyzer)
+    analyzer.photo_feedback = "Move closer to the silver label on the side of the unit"
+    try:
+        r = await client.post("/requests", headers=home, json={"symptoms": ["no_cooling"]})
+        rid = r.json()["id"]
+        await client.post(
+            f"/requests/{rid}/photos",
+            headers=home,
+            files={"file": ("unit.png", png_bytes(), "image/png")},
+        )
+        req = (await client.post(f"/requests/{rid}/analyze", headers=home)).json()
+    finally:
+        analyzer.photo_feedback = None
+    assert req["diagnosis"]["analysis"] == "photo_unusable"
+    assert req["diagnosis"]["primary_issue"] == "general_diagnostic"
+    assert req["unit"]["photo_feedback"].startswith("Move closer")
+    assert req["estimate"]["source"] == "visit_only"
 
 
 def test_parse_estimate_sanity() -> None:

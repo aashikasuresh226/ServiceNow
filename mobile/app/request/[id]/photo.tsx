@@ -81,7 +81,7 @@ export default function Photo() {
           icon={photos.length ? 'sparkle' : 'camera'} busy={upload.busy}
           onPress={() => (photos.length ? analyze.run() : upload.run('camera'))} />
         {!photos.length ? (
-          <TextLink label="Skip photo, use my description" color={colors.muted}
+          <TextLink label={request?.description?.trim() ? 'Skip photo, use my description' : 'Skip photo'} color={colors.muted}
             onPress={() => analyze.run()} />
         ) : null}
       </>

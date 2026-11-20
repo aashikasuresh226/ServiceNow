@@ -274,12 +274,10 @@ class MatchingService:
             await self.shop_accept(request, shop, None, Actor.SYSTEM)
 
     async def cancel(self, request: ServiceRequest, actor: Actor, reason: str) -> None:
-        if request.external_job_id and actor != Actor.SHOP and request.shop_id:
-            shop = await self.s.get(Shop, request.shop_id)
-            if shop is not None:
-                from app.services.external_jobs import ExternalJobService
+        if request.external_job_id and request.shop_id:
+            from app.services.hcp_mirror import HcpMirror  # avoid import cycle
 
-                await ExternalJobService(self.s, self.c).note_canceled(request, shop, reason)
+            await HcpMirror(self.s, self.c).record(request, "canceled", reason=reason)
         await self._close_offers(request, accepted=None)
         await clear_live_location(self.s, request)
         await self.payments.release_hold(request)
@@ -327,8 +325,12 @@ class MatchingService:
                 if request.technician_confirmed
                 else f"{shop.name} accepted your HVAC request and is assigning a technician.",
             )
-        if shop.dispatch_mode == "software":
-            from app.services.external_jobs import ExternalJobService  # avoid import cycle
+        from app.services.hcp_mirror import connected  # avoid import cycle
+
+        if connected(shop):
+            # Every job of a shop on Housecall Pro goes into it, whatever the dispatch mode,
+            # so the office and customers see the same job in both places.
+            from app.services.external_jobs import ExternalJobService
 
             await ExternalJobService(self.s, self.c).push(request, shop)
 

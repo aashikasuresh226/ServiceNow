@@ -341,6 +341,22 @@ the web it can also show a system notification while the app is in the backgroun
 chat screen offers "Alert me to new messages"). With Twilio set up, the homeowner also gets
 one text per burst of messages. Native push notifications need an app-store build (later).
 
+**Jobs booked in the app go into Housecall Pro too** (`services/hcp_mirror.py`), for every
+shop with Housecall Pro connected, whatever its dispatch mode. On accept the job is created
+there (customer matched by phone, technician assigned if linked); then on the way, arrived,
+the approved price (a line item), finished (with whether the card was charged in the app)
+and canceled are added to it. Updates are queued and retried in order, and the reverse also
+works: a technician assigned or rescheduled in Housecall Pro updates the app. Customers who
+use the app see visits their company booked in Housecall Pro on their home screen ("Visit
+from Ponce Air & Heat", with the technician and live status). **How you take jobs →
+Housecall Pro activity** lists every send with Housecall Pro's own error message if it
+failed, what's waiting, and a **Sync now** button.
+
+**No guessing.** If a request has no photo and no real description, the AI isn't called and
+no estimate is shown: just the diagnostic visit fee, with the repair priced on site. The same
+applies when the AI can't read the photo (the app asks for a retake) or can't identify the
+problem.
+
 **Existing customers** (`services/customer_service.py`, portal **Customers**): the shop's
 whole Housecall Pro customer list is imported on connect and daily (or **Import from
 Housecall Pro**). Each customer gets a personal invite link; **Text** / **Email** open the

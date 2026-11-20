@@ -135,29 +135,52 @@ class RequestService:
                 window_seconds=3600,
             )
         context = await self.price_context(request)
-        result, ai_error = await self._run_analysis(request, context)
+        given = has_input(request)
+        if given:
+            result, ai_error = await self._run_analysis(request, context)
+        else:
+            # Nothing to look at (no photo, no description): don't guess a problem or a price.
+            result, ai_error = self._on_site(), None
+        analysis = (
+            "skipped"
+            if not given
+            else "off"
+            if self.c.analyzer is None
+            else "failed"
+            if ai_error
+            else "ai"
+        )
+        if analysis == "ai" and result.unit.photo_feedback and not _described(request):
+            # The AI couldn't use the photo and there's no description: only a retake helps.
+            analysis = "photo_unusable"
+            result = AnalysisResult(unit=result.unit, diagnosis=self._on_site().diagnosis)
         estimate = estimate_for(result.diagnosis.primary_issue)
         price_entry = PRICE_BOOK[result.diagnosis.primary_issue]
         fee = estimate.diagnostic_fee_cents
-        if result.estimate is not None:
+        identified = (
+            analysis == "ai" and result.diagnosis.primary_issue != IssueCategory.GENERAL_DIAGNOSTIC
+        )
+        high: int | None = None
+        if identified and result.estimate is not None:
             # The AI's range, from the photos + description and past prices (see price_context).
             low = fee + result.estimate.repair_low_cents
-            high: int | None = fee + result.estimate.repair_high_cents
+            high = fee + result.estimate.repair_high_cents
             basis, source = result.estimate.basis, "ai"
-        else:
+        elif identified:
             past = next((p for p in context.past_by_issue if p.issue == price_entry.label), None)
             if past is not None:
                 low, high = past.low_cents, past.high_cents
                 basis = f"Based on {past.jobs} past {price_entry.label.lower()} jobs here."
                 source = "past_jobs"
             else:
-                low, high = estimate.total_low_cents, None
-                basis = (
-                    "Includes the diagnostic visit; the repair is priced on site."
-                    if not estimate.repair_low_cents
-                    else f"Typical starting price for: {price_entry.label.lower()}."
-                )
+                low = estimate.total_low_cents
+                basis = f"Typical starting price for: {price_entry.label.lower()}."
                 source = "price_book"
+        else:
+            # No problem identified: only the visit has a price; the repair is quoted on site.
+            low = fee
+            basis = "Your technician diagnoses the problem and gives you the price before any work."
+            source = "visit_only"
 
         request.unit_info = {
             **asdict(result.unit),
@@ -174,8 +197,9 @@ class RequestService:
             "confidence": result.diagnosis.confidence.value,
             "safety_warning": result.diagnosis.safety_warning,
             "visible_issues": result.diagnosis.visible_issues,
-            "ai_used": self.c.analyzer is not None and ai_error is None,
+            "ai_used": analysis in ("ai", "photo_unusable"),
             "ai_error": ai_error,
+            "analysis": analysis,  # ai | skipped (nothing given) | off | failed | photo_unusable
             "estimate_basis": basis,
             "estimate_source": source,
         }
@@ -228,18 +252,22 @@ class RequestService:
             past_by_issue=sorted(by_issue, key=lambda p: -p.jobs)[:12],
         )
 
-    async def _run_analysis(
-        self, request: ServiceRequest, context: PriceContext
-    ) -> tuple[AnalysisResult, str | None]:
-        """The analysis, plus why it failed (None when it worked or is switched off).
-        A failure never blocks the request: the technician diagnoses on site."""
-        on_site = AnalysisResult(
+    @staticmethod
+    def _on_site() -> AnalysisResult:
+        return AnalysisResult(
             unit=UnitInfo(None, None, None, EquipmentType.UNKNOWN, None),
             diagnosis=Diagnosis(
                 primary_issue=IssueCategory.GENERAL_DIAGNOSTIC,
                 summary="Your technician will diagnose the problem on site.",
             ),
         )
+
+    async def _run_analysis(
+        self, request: ServiceRequest, context: PriceContext
+    ) -> tuple[AnalysisResult, str | None]:
+        """The analysis, plus why it failed (None when it worked or is switched off).
+        A failure never blocks the request: the technician diagnoses on site."""
+        on_site = self._on_site()
         if self.c.analyzer is None:
             return on_site, None  # switched off (no Anthropic key): nothing is guessed
         photos = [
@@ -291,3 +319,15 @@ class RequestService:
         info["edited_by_homeowner"] = True
         request.unit_info = info
         return request
+
+
+MIN_DESCRIPTION = 10  # characters: "AC broken" is a symptom, not something to analyze
+
+
+def _described(request: ServiceRequest) -> bool:
+    return len((request.description or "").strip()) >= MIN_DESCRIPTION
+
+
+def has_input(request: ServiceRequest) -> bool:
+    """Something the AI can actually look at: a photo or a real description."""
+    return bool(request.photos) or _described(request)

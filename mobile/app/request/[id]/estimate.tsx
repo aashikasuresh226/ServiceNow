@@ -27,6 +27,37 @@ export default function Estimate() {
     ? repairHigh && repairHigh > repairLow ? `${money(repairLow)}–${money(repairHigh)}` : `from ${money(repairLow)}`
     : 'On site';
 
+  if (request.estimate.source === 'visit_only') {
+    // No problem identified: the visit has a price, the repair is quoted on site. No estimate.
+    return (
+      <Screen footer={
+        <>
+          <Button label="Continue" onPress={() => router.push(`/request/${id}/preferences`)} />
+          <TextLink label="Save for later" color={colors.muted} onPress={() => router.replace('/home')} />
+        </>
+      }>
+        <StepHeader step={3} />
+        <Title sub="There's no repair estimate because the problem hasn't been identified yet.">What it costs</Title>
+        <Card style={{ gap: 10 }}>
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Row><Icon name="truck" size={20} color={colors.ink} /><Body>Diagnostic visit</Body></Row>
+            <Body style={{ fontWeight: '700' }}>{money(fee)}</Body>
+          </Row>
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Row><Icon name="wrench" size={20} color={colors.ink} /><Body>Repair</Body></Row>
+            <Muted>Priced on site</Muted>
+          </Row>
+        </Card>
+        <Row style={{ alignItems: 'flex-start' }}>
+          <Icon name="info" size={18} color={colors.muted} />
+          <Muted style={{ flex: 1 }}>
+            Your technician finds the problem and tells you the price in the app before any work starts. You approve it first.
+          </Muted>
+        </Row>
+      </Screen>
+    );
+  }
+
   return (
     <Screen footer={
       <>

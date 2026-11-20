@@ -78,6 +78,8 @@ export type Diagnosis = {
   visible_issues?: string[];
   /** false when photo analysis is switched off (no Anthropic key yet). */
   ai_used?: boolean;
+  /** ai | skipped (no photo or description) | off | failed | photo_unusable */
+  analysis?: 'ai' | 'skipped' | 'off' | 'failed' | 'photo_unusable';
   /** Why photo analysis failed, when it did (the request still goes ahead). */
   ai_error?: string | null;
 };
@@ -305,7 +307,7 @@ export type Estimate = {
   low_cents: number | null;
   high_cents?: number | null;
   basis?: string | null;
-  source?: 'ai' | 'past_jobs' | 'price_book' | null;
+  source?: 'ai' | 'past_jobs' | 'price_book' | 'visit_only' | null;
 };
 
 export type UnreadChat = {
@@ -330,4 +332,16 @@ export type ComplaintState = {
   can_file: boolean;
   categories: Record<string, string>;
   complaint: Complaint | null;
+};
+
+/** A visit the homeowner's company booked in Housecall Pro. */
+export type HomeVisit = {
+  id: string;
+  shop_name: string;
+  shop_phone: string | null;
+  technician_first_name: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  description: string | null;
+  status: 'scheduled' | 'en_route' | 'on_site' | 'working' | 'finished';
 };

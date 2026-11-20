@@ -294,3 +294,11 @@ export type AdminReview = {
   shop_rating: number | null;
   review: string | null;
 };
+
+export type HcpActivity = {
+  connected: boolean;
+  last_read_at: string | null;
+  last_error: string | null;
+  waiting: number;
+  log: { created_at: string; action: string; ok: boolean; detail: string | null }[];
+};

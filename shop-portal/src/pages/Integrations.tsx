@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Button, ErrorAlert, Switch } from '../components/ui';
 import { api } from '../lib/api';
-import { useAction, usePortal } from '../lib/hooks';
+import { clock, useAction, useLiveData, usePortal } from '../lib/hooks';
 import type { DispatchMode } from '../lib/types';
 
 const MODES: { value: DispatchMode; title: string; text: string }[] = [
@@ -46,10 +46,6 @@ export function IntegrationsPage() {
   });
   const disconnect = useAction(async () => {
     await api.disconnectScheduling();
-    setMe(await api.me());
-  });
-  const sync = useAction(async () => {
-    await api.syncNow();
     setMe(await api.me());
   });
   if (!shop) return null;
@@ -140,13 +136,12 @@ export function IntegrationsPage() {
                 </div>
               ) : null}
               <div className="row">
-                <Button icon="refresh" busy={sync.busy} onClick={() => void sync.run()}>Sync now</Button>
                 <Button variant="danger" busy={disconnect.busy}
                   onClick={() => { if (window.confirm('Disconnect Housecall Pro? Jobs already sent stay in Housecall Pro.')) void disconnect.run(); }}>
                   Disconnect
                 </Button>
               </div>
-              <ErrorAlert message={sync.error ?? disconnect.error} />
+              <ErrorAlert message={disconnect.error} />
             </>
           ) : (
             <form className="stack" onSubmit={(e) => { e.preventDefault(); void connect.run(); }}>
@@ -166,6 +161,7 @@ export function IntegrationsPage() {
             </form>
           )}
         </section>
+        {hcp ? <HcpActivity /> : null}
         <section className="card stack">
           <div className="row between">
             <h2>ServiceTitan</h2>
@@ -176,5 +172,53 @@ export function IntegrationsPage() {
         </section>
       </div>
     </>
+  );
+}
+
+/** Everything we sent to (and read from) Housecall Pro, and whether it worked. */
+function HcpActivity() {
+  const activity = useLiveData(() => api.hcpActivity(), 10000);
+  const sync = useAction(async () => { await api.hcpSyncNow(); await activity.reload(); });
+  const data = activity.data;
+  return (
+    <section className="card stack" aria-label="Housecall Pro activity">
+      <div className="row between">
+        <h2>Housecall Pro activity</h2>
+        <Button size="small" icon="refresh" busy={sync.busy} onClick={() => sync.run()}>Sync now</Button>
+      </div>
+      <p className="small muted">
+        Jobs booked in the app are created in Housecall Pro when you accept them. Each step (on the way, arrived,
+        approved price as a line item, finished, canceled) is added to that job, and your Housecall Pro jobs are read
+        every minute. Housecall Pro doesn't let other apps change a job's status, so steps appear as notes on the job;
+        close and invoice jobs in Housecall Pro.
+      </p>
+      <ErrorAlert message={activity.error ?? sync.error} />
+      {data ? (
+        <p className="small">
+          Last read {data.last_read_at ? clock(data.last_read_at) : 'never'}
+          {data.waiting ? <> · <strong>{data.waiting} update{data.waiting === 1 ? '' : 's'} waiting to send</strong></> : ' · nothing waiting'}
+          {data.last_error ? <span className="alert small" style={{ display: 'block', marginTop: 6 }}>Last problem: {data.last_error}</span> : null}
+        </p>
+      ) : null}
+      {data?.log.length ? (
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Time</th><th>What</th><th>Result</th></tr></thead>
+            <tbody>
+              {data.log.map((row, i) => (
+                <tr key={`${row.created_at}${i}`}>
+                  <td className="small">{new Date(row.created_at).toLocaleString()}</td>
+                  <td className="small">{row.action}</td>
+                  <td className="small">
+                    {row.ok ? <span className="badge success small">Sent</span>
+                      : <><span className="badge danger small">Failed</span> <span className="muted">{row.detail}</span></>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : data ? <p className="small muted">Nothing sent yet. Accept a job or run one in the technician app and it shows here.</p> : null}
+    </section>
   );
 }

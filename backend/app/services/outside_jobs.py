@@ -64,7 +64,7 @@ class OutsideJobService:
                 .where(ExternalJobEvent.job_id.in_(job_ids), ExternalJobEvent.sent_at.is_(None))
                 .group_by(ExternalJobEvent.job_id)
             )
-            unsent = {job_id: int(count) for job_id, count in counted.all()}
+            unsent = {job_id: int(count) for job_id, count in counted.all() if job_id}
         return [
             OutsideJob(
                 r,
@@ -104,6 +104,29 @@ class OutsideJobService:
         )
         rows = [r for r in rows if r.starts_at is None or start <= r.starts_at < end]
         return await self._wrap(rows)
+
+    async def for_homeowner(self, homeowner_id: uuid.UUID) -> list[tuple[ExternalJob, str | None]]:
+        """Upcoming visits booked in the shops' Housecall Pro for this homeowner (linked by the
+        phone or email the shop has on file), with the technician's first name."""
+        now = self.c.clock.now()
+        rows = (
+            await self.s.execute(
+                select(ExternalJob, Technician.name)
+                .join(ShopCustomer, ShopCustomer.id == ExternalJob.customer_id)
+                .outerjoin(Technician, Technician.id == ExternalJob.technician_id)
+                .where(
+                    ShopCustomer.homeowner_id == homeowner_id,
+                    ExternalJob.starts_at >= now - TECH_PAST,
+                    ExternalJob.starts_at <= now + timedelta(days=30),
+                )
+                .order_by(ExternalJob.starts_at)
+            )
+        ).all()
+        return [
+            (job, name.split(" ")[0] if name else None)
+            for job, name in rows
+            if _open(job) and job.app_status != "finished"
+        ]
 
     async def get_for_technician(self, tech: Technician, job_id: uuid.UUID) -> OutsideJob:
         for item in await self.for_technician(tech):
