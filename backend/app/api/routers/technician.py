@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, File, UploadFile, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ContainerDep, SessionDep, TechDep
-from app.api.presenters import message_out, outside_job_out, tech_job_out
+from app.api.presenters import (
+    message_out,
+    outside_activity_text,
+    outside_job_out,
+    tech_job_out,
+)
+from app.container import Container
 from app.core.errors import Forbidden, NotFound
 from app.models import ServiceRequest, Technician
 from app.schemas.api import (
@@ -15,13 +22,20 @@ from app.schemas.api import (
     LocationIn,
     MessageIn,
     MessageOut,
+    OutsideActivity,
+    OutsideJobDetailOut,
     OutsideJobOut,
+    OutsideLineItem,
+    OutsideLineItemIn,
+    OutsideNoteIn,
+    OutsideStepIn,
     QuoteIn,
     TechBoardOut,
     TechJobOut,
     TechMeOut,
 )
 from app.services.message_service import MessageService
+from app.services.outside_job_actions import LineItem, OutsideJobActions
 from app.services.outside_jobs import OutsideJob, OutsideJobService
 from app.services.tech_app_service import TechAppService
 
@@ -76,19 +90,102 @@ def _outside(item: OutsideJob, tech: Technician) -> OutsideJobOut:
         technician_name=item.technician_name,
         show_phone=tech.can_contact_customers,
         customer_uses_app=item.customer_uses_app,
+        unsent=item.unsent,
     )
 
 
-@router.get("/outside-jobs/{job_id}", response_model=OutsideJobOut)
+@router.get("/outside-jobs/{job_id}", response_model=OutsideJobDetailOut)
 async def outside_job(
     job_id: uuid.UUID, principal: TechDep, session: SessionDep, c: ContainerDep
-) -> OutsideJobOut:
-    """A job from the company's Housecall Pro (read-only here)."""
+) -> OutsideJobDetailOut:
+    """A job from the company's Housecall Pro, with what's been done in the app and the
+    line items Housecall Pro has."""
     tech = principal.tech
     board = await board_for(principal, session, c)
     if not any(o.id == job_id for o in board.outside_jobs):
         raise NotFound("Job not found")
-    return _outside(await OutsideJobService(session, c).get_for_technician(tech, job_id), tech)
+    return await _detail(session, c, tech, job_id)
+
+
+async def _detail(
+    session: AsyncSession, c: Container, tech: Technician, job_id: uuid.UUID
+) -> OutsideJobDetailOut:
+    item = await OutsideJobService(session, c).get_for_technician(tech, job_id)
+    actions = OutsideJobActions(session, c)
+    events = await actions.events(job_id)
+    items = await actions.hcp_line_items(item.job)
+    return OutsideJobDetailOut(
+        **_outside(item, tech).model_dump(),
+        activity=[
+            OutsideActivity(
+                id=e.id,
+                kind=e.kind,
+                text=outside_activity_text(e),
+                created_at=e.created_at,
+                sent=e.sent_at is not None,
+                error=e.error,
+            )
+            for e in events
+        ],
+        line_items=[OutsideLineItem(**i) for i in items] if items is not None else None,
+    )
+
+
+@router.post("/outside-jobs/{job_id}/step", response_model=OutsideJobDetailOut)
+async def outside_step(
+    job_id: uuid.UUID, body: OutsideStepIn, principal: TechDep, session: SessionDep, c: ContainerDep
+) -> OutsideJobDetailOut:
+    """On my way / Arrived / Started / Finished: written to the Housecall Pro job as notes."""
+    await OutsideJobActions(session, c).step(principal.tech, job_id, body.step, body.summary)
+    return await _detail(session, c, principal.tech, job_id)
+
+
+@router.post("/outside-jobs/{job_id}/line-items", response_model=OutsideJobDetailOut)
+async def outside_line_item(
+    job_id: uuid.UUID,
+    body: OutsideLineItemIn,
+    principal: TechDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> OutsideJobDetailOut:
+    """Add work or a part with its price to the Housecall Pro job."""
+    await OutsideJobActions(session, c).add_line_item(
+        principal.tech,
+        job_id,
+        LineItem(body.name, body.quantity, body.unit_price_cents),
+    )
+    return await _detail(session, c, principal.tech, job_id)
+
+
+@router.post("/outside-jobs/{job_id}/notes", response_model=OutsideJobDetailOut)
+async def outside_note(
+    job_id: uuid.UUID, body: OutsideNoteIn, principal: TechDep, session: SessionDep, c: ContainerDep
+) -> OutsideJobDetailOut:
+    await OutsideJobActions(session, c).add_note(principal.tech, job_id, body.body)
+    return await _detail(session, c, principal.tech, job_id)
+
+
+@router.post("/outside-jobs/{job_id}/photos", response_model=OutsideJobDetailOut)
+async def outside_photo(
+    job_id: uuid.UUID,
+    principal: TechDep,
+    session: SessionDep,
+    c: ContainerDep,
+    file: UploadFile = File(...),
+) -> OutsideJobDetailOut:
+    data = await file.read(c.settings.max_photo_bytes + 1)
+    await OutsideJobActions(session, c).add_photo(principal.tech, job_id, data)
+    return await _detail(session, c, principal.tech, job_id)
+
+
+@router.post("/outside-jobs/{job_id}/retry", response_model=OutsideJobDetailOut)
+async def outside_retry(
+    job_id: uuid.UUID, principal: TechDep, session: SessionDep, c: ContainerDep
+) -> OutsideJobDetailOut:
+    """Try again now to send what's waiting (also retried automatically)."""
+    item = await OutsideJobService(session, c).get_for_technician(principal.tech, job_id)
+    await OutsideJobActions(session, c).send_pending(item.job)
+    return await _detail(session, c, principal.tech, job_id)
 
 
 async def _job(

@@ -97,6 +97,10 @@ function byTime(board: TechBoard): (TechJob | OutsideJob)[] {
   return [...started, ...rest.sort((a, b) => when(a) - when(b))];
 }
 
+const OUTSIDE_STATUS: Record<string, string> = {
+  en_route: 'On the way', on_site: 'On site', working: 'Working', finished: 'Finished',
+};
+
 function OutsideRow({ job, highlight }: { job: OutsideJob; highlight: boolean }) {
   return (
     <Pressable accessibilityRole="button" onPress={() => router.push(`/tech/outside/${job.id}`)}
@@ -112,7 +116,12 @@ function OutsideRow({ job, highlight }: { job: OutsideJob; highlight: boolean })
         {job.starts_at && new Date(job.starts_at).toDateString() !== new Date().toDateString()
           ? <Muted>{visitTime(job.starts_at)}</Muted> : null}
       </View>
-      <Badge label="Housecall Pro" tone="neutral" />
+      <View style={{ alignItems: 'flex-end', gap: 4 }}>
+        <Badge label="Housecall Pro" tone="neutral" />
+        {job.app_status ? (
+          <Badge label={OUTSIDE_STATUS[job.app_status] ?? job.app_status} tone={job.app_status === 'finished' ? 'success' : 'amber'} />
+        ) : null}
+      </View>
     </Pressable>
   );
 }

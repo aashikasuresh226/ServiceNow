@@ -8,7 +8,15 @@ from datetime import timedelta
 from app.container import Container
 from app.domain.enums import RequestStatus
 from app.domain.pricing import platform_fee
-from app.models import ExternalJob, JobOffer, Message, RequestPhoto, ServiceRequest, Technician
+from app.models import (
+    ExternalJob,
+    ExternalJobEvent,
+    JobOffer,
+    Message,
+    RequestPhoto,
+    ServiceRequest,
+    Technician,
+)
 from app.schemas.api import (
     EstimateInfo,
     MessageOut,
@@ -271,8 +279,15 @@ def outside_job_out(
     technician_name: str | None,
     show_phone: bool,
     customer_uses_app: bool,
+    unsent: int = 0,
 ) -> OutsideJobOut:
     return OutsideJobOut(
+        app_status=job.app_status,
+        on_my_way_at=job.on_my_way_at,
+        arrived_at=job.arrived_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        unsent=unsent,
         id=job.id,
         provider=job.provider,
         invoice_number=job.invoice_number,
@@ -287,3 +302,27 @@ def outside_job_out(
         technician_name=technician_name,
         customer_uses_app=customer_uses_app,
     )
+
+
+def outside_activity_text(event: ExternalJobEvent) -> str:
+    """One line per action for the technician's activity list."""
+    import json
+
+    if event.kind == "status":
+        data = json.loads(event.payload)
+        labels = {
+            "on_my_way": "On my way",
+            "arrived": "Arrived",
+            "started": "Started work",
+            "finished": "Finished work",
+        }
+        text = labels.get(data.get("step"), "Status")
+        return f"{text}: {data['summary']}" if data.get("summary") else text
+    if event.kind == "line_item":
+        data = json.loads(event.payload)
+        quantity = data["quantity"]
+        qty = f"{quantity:g} x " if quantity != 1 else ""
+        return f"Added {data['name']}: {qty}${data['unit_price_cents'] / 100:,.2f}"
+    if event.kind == "photo":
+        return "Added a photo"
+    return f"Note: {event.payload}"

@@ -250,13 +250,37 @@ class FakeHousecallPro:
         self.deleted = False
         self.own_jobs: list[dict[str, Any]] = []  # created in Housecall Pro by the shop
         self.customers: list[dict[str, Any]] = []
+        self.notes: dict[str, list[str]] = {}
+        self.line_items: dict[str, list[dict[str, Any]]] = {}
+        self.attachments: dict[str, list[bytes]] = {}
+        self.down = False  # simulate Housecall Pro being unreachable for writes
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content) if request.content else None
+        try:
+            body = json.loads(request.content) if request.content else None
+        except ValueError:
+            body = None  # multipart upload
         path = request.url.path
         self.calls.append((request.method, path, body))
         if not request.headers.get("authorization", "").startswith("Bearer key_"):
             return httpx.Response(401, json={"error": "unauthorized"})
+        parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "jobs" and parts[1] != "job_1":
+            job_id, what = parts[1], parts[2]
+            if request.method == "POST" and self.down:
+                return httpx.Response(503, json={"error": "unavailable"})
+            if what == "notes" and request.method == "POST":
+                self.notes.setdefault(job_id, []).append(body["content"])
+                return httpx.Response(201, json={"id": "note_1"})
+            if what == "line_items" and request.method == "POST":
+                self.line_items.setdefault(job_id, []).append(body)
+                return httpx.Response(201, json={"id": "li_1", **body})
+            if what == "line_items" and request.method == "GET":
+                return httpx.Response(200, json={"data": self.line_items.get(job_id, [])})
+            if what == "attachments" and request.method == "POST":
+                assert b'name="file"' in request.content
+                self.attachments.setdefault(job_id, []).append(request.content)
+                return httpx.Response(201, json={"id": "att_1"})
         if path == "/employees":
             return httpx.Response(
                 200,

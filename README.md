@@ -309,9 +309,18 @@ schedule. Failed sends show on the job in the portal and are retried.
 **The shop's own Housecall Pro jobs** (booked by their office, not through us) are copied
 every minute (`ExternalJobService.import_shop`): jobs scheduled from yesterday to 14 days
 ahead plus the 50 newest (so unscheduled ones show too), with their customers. The assigned
-technician sees them in the technician app (badge *Housecall Pro*; call and directions,
-read-only: they're run in Housecall Pro), the office sees them under **Jobs → In Housecall
-Pro**, and the technician's time is blocked for matching. Reassigned, rescheduled or deleted
+technician sees them in the technician app and runs them there: **On my way**, **I've
+arrived**, **Start work**, line items (work and parts with prices), notes, photos and
+**Finish job** with a summary. Line items (`POST /jobs/{id}/line_items`, cents), notes and
+photos (`POST /jobs/{id}/attachments`) go straight into the Housecall Pro job. Housecall
+Pro's public API has no route to change a job's status, so each step is added to the job as
+a timestamped note ("On my way, 2:05 PM - Nina Near"), and the office invoices and closes
+the job in Housecall Pro; the portal's **Jobs → In Housecall Pro** shows each job's progress
+in the app and flags finished jobs to invoice. Actions are queued and sent in order; if
+Housecall Pro can't be reached they wait and the worker retries (the app shows "waiting to
+send"). A customer who uses the app gets a text when the technician taps On my way. The
+office sees these jobs under **Jobs → In Housecall Pro**, and the technician's time is
+blocked for matching. Reassigned, rescheduled or deleted
 jobs update at the next copy. With the webhook URL pasted into Housecall Pro, a new job
 arrives within seconds. (Housecall Pro can only reach the webhook on a public server, not
 on `localhost`; locally the one-minute copy is what you'll see.)

@@ -585,6 +585,49 @@ class OutsideJobOut(Model):
     technician_id: uuid.UUID | None
     technician_name: str | None
     customer_uses_app: bool
+    # Progress from our app: "" | en_route | on_site | working | finished
+    app_status: str = ""
+    on_my_way_at: datetime | None = None
+    arrived_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    unsent: int = 0  # actions still waiting to reach Housecall Pro
+
+
+class OutsideActivity(Model):
+    id: uuid.UUID
+    kind: str  # status | note | line_item | photo
+    text: str
+    created_at: datetime
+    sent: bool
+    error: str | None
+
+
+class OutsideLineItem(Model):
+    name: str
+    quantity: float
+    unit_price_cents: int
+    total_cents: int
+
+
+class OutsideJobDetailOut(OutsideJobOut):
+    activity: list[OutsideActivity]
+    line_items: list[OutsideLineItem] | None  # as Housecall Pro has them; None: unreachable
+
+
+class OutsideStepIn(Model):
+    step: str = Field(pattern="^(on_my_way|arrived|started|finished)$")
+    summary: str | None = Field(None, max_length=2000)
+
+
+class OutsideLineItemIn(Model):
+    name: str = Field(min_length=1, max_length=120)
+    quantity: float = Field(1, gt=0, le=1000)
+    unit_price_cents: int = Field(ge=0, le=10_000_000)
+
+
+class OutsideNoteIn(Model):
+    body: str = Field(min_length=1, max_length=2000)
 
 
 class TechBoardOut(Model):

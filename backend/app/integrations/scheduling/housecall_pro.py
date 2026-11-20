@@ -276,6 +276,53 @@ class HousecallProClient:
     async def add_link(self, job_id: str, title: str, url: str) -> None:
         await self._request("POST", f"/jobs/{job_id}/links", json={"title": title, "url": url})
 
+    async def add_line_item(
+        self,
+        job_id: str,
+        *,
+        name: str,
+        quantity: float,
+        unit_price_cents: int,
+        kind: str = "labor",
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Money is integer cents in Housecall Pro ($250 -> 25000)."""
+        body: dict[str, Any] = {
+            "name": name,
+            "kind": kind,
+            "quantity": quantity,
+            "unit_price": unit_price_cents,
+            "unit_cost": 0,
+        }
+        if description:
+            body["description"] = description
+        return await self._request("POST", f"/jobs/{job_id}/line_items", json=body)
+
+    async def line_items(self, job_id: str) -> list[dict[str, Any]]:
+        body = await self._request("GET", f"/jobs/{job_id}/line_items")
+        rows = body.get("data") or body.get("line_items") or body.get("items") or []
+        return [r for r in rows if isinstance(r, dict)]
+
+    async def upload_attachment(
+        self, job_id: str, *, filename: str, data: bytes, content_type: str
+    ) -> None:
+        """Multipart upload (field "file"). Not idempotent, so never retried after a send."""
+        try:
+            response = await self._http.post(
+                f"{self._base}/jobs/{job_id}/attachments",
+                files={"file": (filename, data, content_type)},
+                headers={k: v for k, v in self._headers().items() if k != "Content-Type"},
+                timeout=60.0,
+            )
+        except httpx.HTTPError as exc:
+            log.warning("Housecall Pro attachment upload failed: %s", exc)
+            raise ExternalServiceError("Couldn't reach Housecall Pro") from exc
+        if response.status_code >= 400:
+            log.warning(
+                "Housecall Pro attachment -> %s: %.300s", response.status_code, response.text
+            )
+            raise ExternalServiceError(_reason(response.status_code))
+
     async def unschedule(self, job_id: str) -> None:
         await self._request("DELETE", f"/jobs/{job_id}/schedule")
 

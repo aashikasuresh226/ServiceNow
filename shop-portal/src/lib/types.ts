@@ -231,6 +231,12 @@ export type OutsideJob = {
   technician_id: string | null;
   technician_name: string | null;
   customer_uses_app: boolean;
+  app_status: '' | 'en_route' | 'on_site' | 'working' | 'finished';
+  on_my_way_at: string | null;
+  arrived_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  unsent: number;
 };
 
 export type Customer = {

@@ -6,12 +6,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import Container
 from app.core.errors import NotFound
-from app.models import ExternalJob, ShopCustomer, Technician
+from app.models import ExternalJob, ExternalJobEvent, ShopCustomer, Technician
 
 TECH_PAST = timedelta(hours=12)
 TECH_AHEAD = timedelta(days=7)
@@ -22,6 +22,7 @@ class OutsideJob:
     job: ExternalJob
     technician_name: str | None
     customer_uses_app: bool
+    unsent: int = 0  # actions from our app still waiting to reach Housecall Pro
 
 
 def _open(job: ExternalJob) -> bool:
@@ -55,11 +56,21 @@ class OutsideJobService:
             if customer_ids
             else set()
         )
+        job_ids = [r.id for r in rows]
+        unsent: dict[uuid.UUID, int] = {}
+        if job_ids:
+            counted = await self.s.execute(
+                select(ExternalJobEvent.job_id, func.count())
+                .where(ExternalJobEvent.job_id.in_(job_ids), ExternalJobEvent.sent_at.is_(None))
+                .group_by(ExternalJobEvent.job_id)
+            )
+            unsent = {job_id: int(count) for job_id, count in counted.all()}
         return [
             OutsideJob(
                 r,
                 names.get(r.technician_id) if r.technician_id else None,
                 r.customer_id in joined,
+                int(unsent.get(r.id, 0)),
             )
             for r in rows
         ]

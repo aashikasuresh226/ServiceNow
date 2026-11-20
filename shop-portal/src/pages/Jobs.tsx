@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Avatar, Icon } from '../components/Icon';
 import { Button, Empty, ErrorAlert } from '../components/ui';
 import { api } from '../lib/api';
-import { countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal, visitTime } from '../lib/hooks';
+import { clock, countdownLabel, label, money, useAction, useCountdown, useLiveData, usePortal, visitTime } from '../lib/hooks';
 import type { Job, Message, OutsideJob, TechOption } from '../lib/types';
 
 /** +14045550199 -> (404) 555-0199 */
@@ -332,7 +332,7 @@ function OutsideTable({ jobs }: { jobs: OutsideJob[] }) {
   return (
     <div className="card table-wrap">
       <table className="table">
-        <thead><tr><th>When</th><th>Customer</th><th>Job</th><th>Technician</th><th>Status</th></tr></thead>
+        <thead><tr><th>When</th><th>Customer</th><th>Job</th><th>Technician</th><th>In the app</th><th>Housecall Pro</th></tr></thead>
         <tbody>
           {jobs.map((j) => (
             <tr key={j.id}>
@@ -344,11 +344,34 @@ function OutsideTable({ jobs }: { jobs: OutsideJob[] }) {
               </td>
               <td className="small">{j.invoice_number ? `#${j.invoice_number} · ` : ''}{j.description ?? '—'}</td>
               <td>{j.technician_name ?? <span className="muted">Unassigned</span>}</td>
+              <td className="small"><AppProgress job={j} /></td>
               <td className="small" style={{ textTransform: 'capitalize' }}>{j.work_status || '—'}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** What the technician has done on a Housecall Pro job in our app. */
+function AppProgress({ job }: { job: OutsideJob }) {
+  const at = (iso: string | null) => (iso ? clock(iso) : '');
+  const text = {
+    '': null,
+    en_route: `On the way ${at(job.on_my_way_at)}`,
+    on_site: `Arrived ${at(job.arrived_at)}`,
+    working: `Working since ${at(job.started_at)}`,
+    finished: `Finished ${at(job.finished_at)}`,
+  }[job.app_status];
+  if (!text) return <span className="muted">—</span>;
+  return (
+    <span>
+      <span className={`badge ${job.app_status === 'finished' ? 'success' : 'amber'} small`}>{text}</span>
+      {job.app_status === 'finished' && !/complete/i.test(job.work_status) ? (
+        <span className="muted" style={{ display: 'block' }}>Invoice it in Housecall Pro</span>
+      ) : null}
+      {job.unsent ? <span className="muted" style={{ display: 'block' }}>{job.unsent} waiting to send</span> : null}
+    </span>
   );
 }

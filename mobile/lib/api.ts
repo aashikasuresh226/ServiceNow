@@ -13,6 +13,8 @@ import type {
   Options,
   OtpStarted,
   OutsideJob,
+  OutsideJobDetail,
+  OutsideStep,
   UnreadChat,
   Complaint,
   ComplaintState,
@@ -223,7 +225,24 @@ export const techApi = {
 
   me: () => request<TechMe>('GET', '/tech/me'),
   board: () => request<TechBoard>('GET', '/tech/jobs'),
-  outsideJob: (id: string) => request<OutsideJob>('GET', `/tech/outside-jobs/${id}`),
+  outsideJob: (id: string) => request<OutsideJobDetail>('GET', `/tech/outside-jobs/${id}`),
+  outsideStep: (id: string, step: OutsideStep, summary?: string) =>
+    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/step`, { step, summary }),
+  outsideLineItem: (id: string, name: string, quantity: number, unit_price_cents: number) =>
+    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/line-items`, { name, quantity, unit_price_cents }),
+  outsideNote: (id: string, body: string) =>
+    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/notes`, { body }),
+  outsideRetry: (id: string) => request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/retry`),
+  outsidePhoto: async (id: string, uri: string, mimeType = 'image/jpeg') => {
+    const form = new FormData();
+    if (Platform.OS === 'web') {
+      const blob = await (await fetch(uri)).blob();
+      form.append('file', blob, 'job.jpg');
+    } else {
+      form.append('file', { uri, name: 'job.jpg', type: mimeType } as unknown as Blob);
+    }
+    return request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/photos`, form);
+  },
   job: (id: string) => request<TechJob>('GET', `/tech/jobs/${id}`),
   accept: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/accept`),
   decline: (id: string, reason?: string) => request<void>('POST', `/tech/jobs/${id}/decline`, { reason }),

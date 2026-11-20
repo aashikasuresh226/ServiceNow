@@ -25,6 +25,7 @@ from app.services.availability_service import AvailabilityService
 from app.services.external_jobs import ExternalJobService
 from app.services.lifecycle import purge_stale_locations
 from app.services.matching_service import MatchingService
+from app.services.outside_job_actions import OutsideJobActions
 
 log = logging.getLogger("app.worker")
 
@@ -105,6 +106,9 @@ async def tick(container: Container) -> None:
     )
     await _run_step(container, "sync_schedules", lambda s: _sync_due_shops(container, s))
     await _run_step(container, "import_customers", lambda s: _import_customers(container, s))
+    await _run_step(
+        container, "send_hcp_actions", lambda s: OutsideJobActions(s, container).retry_all()
+    )
     await _run_step(
         container, "process_waitlist", lambda s: MatchingService(s, container).process_waitlist()
     )

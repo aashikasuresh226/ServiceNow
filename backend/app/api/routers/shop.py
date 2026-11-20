@@ -171,6 +171,7 @@ async def list_outside_jobs(
             technician_name=o.technician_name,
             show_phone=True,
             customer_uses_app=o.customer_uses_app,
+            unsent=o.unsent,
         )
         for o in rows
     ]

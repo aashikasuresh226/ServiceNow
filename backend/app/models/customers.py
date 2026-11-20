@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, Uuid
+from sqlalchemy import ForeignKey, Index, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.core.db import Base, UTCDateTime
@@ -86,3 +86,35 @@ class ExternalJob(IdMixin, TimestampMixin, Base):
     starts_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # None: unscheduled
     ends_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     seen_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    # Progress recorded by the technician in our app. Housecall Pro's API can't set a job's
+    # status, so each step is also written to the job as a timestamped note.
+    app_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="", server_default=""
+    )
+    on_my_way_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    arrived_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ExternalJobEvent(IdMixin, TimestampMixin, Base):
+    """Something the technician did on a Housecall Pro job in our app, queued to be sent to
+    Housecall Pro (a note, a line item or a photo). Retried by the worker until it's sent."""
+
+    __tablename__ = "external_job_events"
+    __table_args__ = (Index("ix_external_job_events_pending", "sent_at", "created_at"),)
+
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("external_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    technician_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("technicians.id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # status|note|line_item|photo
+    # status: on_my_way|arrived|started|finished. note: the text. line_item: JSON.
+    # photo: storage key. Encrypted: notes can hold customer details.
+    payload: Mapped[str] = mapped_column(EncryptedText, nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(String(300))

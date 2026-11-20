@@ -173,6 +173,20 @@ export type OutsideJob = {
   technician_id: string | null;
   technician_name: string | null;
   customer_uses_app: boolean;
+  /** Progress from our app (Housecall Pro gets each step as a note). */
+  app_status: '' | 'en_route' | 'on_site' | 'working' | 'finished';
+  on_my_way_at: string | null;
+  arrived_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  unsent: number;
+};
+
+export type OutsideStep = 'on_my_way' | 'arrived' | 'started' | 'finished';
+
+export type OutsideJobDetail = OutsideJob & {
+  activity: { id: string; kind: string; text: string; created_at: string; sent: boolean; error: string | null }[];
+  line_items: { name: string; quantity: number; unit_price_cents: number; total_cents: number }[] | null;
 };
 
 export type InviteInfo = {

@@ -13,7 +13,7 @@ from app.container import Container
 from app.core.clock import FrozenClock
 from app.models import AvailabilityBlock, ExternalJob, ShopCustomer
 from app.worker import tick
-from tests.conftest import SeededShop, analyzed_request, homeowner_login, shop_login
+from tests.conftest import SeededShop, analyzed_request, homeowner_login, png_bytes, shop_login
 from tests.test_dispatch import FakeHousecallPro, use_fake_hcp
 from tests.test_technicians import join_as_technician
 
@@ -193,3 +193,95 @@ async def test_customers_are_imported_invited_and_linked(
     found = (await client.get("/shop/customers", headers=shop, params={"q": "kim"})).json()
     assert [x["name"] for x in found["customers"]] == ["Kim Park"]
     assert (await client.get("/invites/NOPE1234")).status_code == 404
+
+
+async def test_technician_runs_a_housecall_pro_job_in_the_app(
+    client: httpx.AsyncClient,
+    container: Container,
+    shops: dict[str, SeededShop],
+    clock: FrozenClock,
+) -> None:
+    fake, c, shop = await connect(client, container, shops, clock)
+    tech = await join_as_technician(client, shop, shops["near"].tech_ids[0])
+    fake.own_jobs = [hcp_job(clock, "job_77")]
+    clock.advance(seconds=61)
+    await tick(c)
+    [job] = (await client.get("/tech/jobs", headers=tech)).json()["outside_jobs"]
+    url = f"/tech/outside-jobs/{job['id']}"
+
+    r = await client.post(f"{url}/step", headers=tech, json={"step": "on_my_way"})
+    assert r.status_code == 200, r.text
+    assert r.json()["app_status"] == "en_route" and r.json()["on_my_way_at"]
+    # Can't finish before arriving / starting; can't go back.
+    bad = await client.post(f"{url}/step", headers=tech, json={"step": "finished"})
+    assert bad.status_code == 409
+    await client.post(f"{url}/step", headers=tech, json={"step": "arrived"})
+    await client.post(f"{url}/step", headers=tech, json={"step": "started"})
+
+    r = await client.post(
+        f"{url}/line-items",
+        headers=tech,
+        json={"name": "Run capacitor 45/5 uF", "quantity": 1, "unit_price_cents": 18_500},
+    )
+    detail = r.json()
+    assert detail["line_items"] == [
+        {
+            "name": "Run capacitor 45/5 uF",
+            "quantity": 1.0,
+            "unit_price_cents": 18_500,
+            "total_cents": 18_500,
+        }
+    ]
+    assert fake.line_items["job_77"][0]["unit_price"] == 18_500  # cents, as Housecall Pro wants
+    await client.post(f"{url}/notes", headers=tech, json={"body": "Contactor pitted, replace soon"})
+    photo = await client.post(
+        f"{url}/photos", headers=tech, files={"file": ("unit.png", png_bytes(), "image/png")}
+    )
+    assert photo.status_code == 200, photo.text
+    assert len(fake.attachments["job_77"]) == 1
+
+    # Housecall Pro goes down: actions wait, in order, and are retried by the worker.
+    fake.down = True
+    r = await client.post(
+        f"{url}/step",
+        headers=tech,
+        json={"step": "finished", "summary": "Replaced run capacitor, tested OK"},
+    )
+    done = r.json()
+    assert done["app_status"] == "finished" and done["unsent"] == 1
+    assert done["activity"][-1]["sent"] is False and done["activity"][-1]["error"]
+    [waiting] = (await client.get("/shop/outside-jobs", headers=shop)).json()
+    assert waiting["unsent"] == 1  # the office sees it too
+    fake.down = False
+    await tick(c)
+    done = (await client.get(url, headers=tech)).json()
+    assert done["unsent"] == 0 and all(a["sent"] for a in done["activity"])
+    assert [a["kind"] for a in done["activity"]] == [
+        "status",
+        "status",
+        "status",
+        "line_item",
+        "note",
+        "photo",
+        "status",
+    ]
+
+    notes = fake.notes["job_77"]
+    assert notes[0].startswith("On my way, ") and "Nina Near" in notes[0]
+    assert "sent from HVAC Connect" in notes[0]
+    assert notes[3].startswith("Nina Near: Contactor pitted")
+    assert "Work done: Replaced run capacitor" in notes[-1]
+    assert "Finish and invoice this job in Housecall Pro" in notes[-1]
+
+    # The office sees where it stands; the next import keeps the app's progress.
+    clock.advance(seconds=61)
+    await tick(c)
+    [row] = (await client.get("/shop/outside-jobs", headers=shop)).json()
+    assert row["app_status"] == "finished" and row["finished_at"]
+    # Another technician can't touch it.
+    assert (
+        await client.post(f"{url}/step", headers=shop, json={"step": "arrived"})
+    ).status_code in (
+        401,
+        403,
+    )
