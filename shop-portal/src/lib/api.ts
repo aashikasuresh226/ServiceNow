@@ -28,10 +28,11 @@ import type {
 /** The API's address. On a host like Render this can be just the API's host name
  * (e.g. hvac-api.onrender.com): https:// and /v1 are added. */
 function apiUrl(value: string | undefined): string {
-  const raw = (value ?? '').trim().replace(/\/$/, '');
+  let raw = (value ?? '').trim().replace(/\/+$/, '');
   if (!raw) return 'http://localhost:8000/v1';
-  if (raw.includes('://')) return raw;
-  return `https://${raw}/v1`;
+  if (!raw.includes('://')) raw = `https://${raw}`;
+  // Just the address (https://hvac-api-ab12.onrender.com): the API lives under /v1.
+  return /^[a-z]+:\/\/[^/]+$/i.test(raw) ? `${raw}/v1` : raw;
 }
 
 export const API_URL = apiUrl(import.meta.env.VITE_API_URL);
@@ -116,7 +117,7 @@ async function request<T>(method: string, path: string, body?: unknown,
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, 'network', "Can't reach the server. Is the API running?");
+    throw new ApiError(0, 'network', `Can't reach the server (${API_URL}). Is the API running?`);
   }
   if (r.status === 401 && !opts.token && opts.retry !== false && tokens && (await refresh())) {
     return request<T>(method, path, body, { retry: false });

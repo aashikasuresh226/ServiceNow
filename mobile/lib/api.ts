@@ -111,7 +111,7 @@ async function request<T>(
       body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, 'network', "Can't reach the server. Check your connection.");
+    throw new ApiError(0, 'network', `Can't reach the server (${API_URL}). Check your connection.`);
   }
 
   if (response.status === 401 && auth && retry && tokens) {

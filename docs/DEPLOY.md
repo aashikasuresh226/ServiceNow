@@ -38,8 +38,20 @@ Keep it private: it's the password to all your data.
    - Shop portal: `https://hvac-portal.onrender.com`
    - API: `https://hvac-api.onrender.com/v1/health` shows `{"status":"ok"}`.
 
-The services find each other's addresses by themselves, and QR codes point at the real app
-address.
+5. **Connect the three addresses** (Render can't fill these in for you). Copy each
+   service's address from the top of its page in the dashboard, then:
+
+   | Service → Environment | Variable | Value (example) |
+   |---|---|---|
+   | hvac-app | `EXPO_PUBLIC_API_URL` | `hvac-api-ab12.onrender.com` |
+   | hvac-portal | `VITE_API_URL` | `hvac-api-ab12.onrender.com` |
+   | hvac-api | `HVAC_APP_HOST` | `hvac-app-cd34.onrender.com` |
+   | hvac-api | `HVAC_PORTAL_HOST` | `hvac-portal-ef56.onrender.com` |
+
+   Save, then on **hvac-app** and **hvac-portal** click **Manual Deploy → Clear build cache
+   & deploy** (the API address is built into those sites). If the app says "Can't reach
+   the server (…)", the address in brackets is the one it tried: it must be your API's
+   address followed by `/v1`.
 
 Secrets that Render generated for you (`HVAC_JWT_SECRET`, `HVAC_ENCRYPTION_KEY`,
 `HVAC_ADMIN_TOKEN`) are in **Render → hvac-api → Environment**. Your admin key for

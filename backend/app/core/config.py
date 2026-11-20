@@ -8,6 +8,7 @@ and in tests without third-party accounts. Production must set real providers;
 from __future__ import annotations
 
 import logging
+import os
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Any, Literal
@@ -200,8 +201,10 @@ class Settings(BaseSettings):
             host = host.strip().rstrip("/")
             return host if "://" in host else f"https://{host}"
 
-        if self.api_host.strip():
-            object.__setattr__(self, "public_api_url", url(self.api_host))
+        # On Render the API's own public address is provided automatically.
+        api_host = self.api_host.strip() or os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
+        if api_host:
+            object.__setattr__(self, "public_api_url", url(api_host))
         if self.app_host.strip():
             object.__setattr__(self, "public_app_url", url(self.app_host))
         extra = [url(h) for h in (self.app_host, self.portal_host) if h.strip()]

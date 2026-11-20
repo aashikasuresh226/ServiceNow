@@ -6,7 +6,10 @@
 #                without visits, so point a free monitor at /v1/health: see docs/DEPLOY.md)
 #   hvac-app     homeowner + technician app (static site; QR codes and invites point here)
 #   hvac-portal  shop portal (static site)
-# The services find each other's addresses automatically (fromService ... host).
+# After the first deploy, put each service's public address (shown at the top of its page in
+# the dashboard, e.g. hvac-api-ab12.onrender.com) into the values marked "public address"
+# below, then redeploy the two static sites. (Render's fromService "host" is a private
+# network name that phones and browsers can't reach, so it isn't used.)
 
 services:
   - type: web
@@ -48,22 +51,13 @@ services:
       # Firebase Web API key (verification emails). Required in production.
       - key: HVAC_FIREBASE_API_KEY
         sync: false
-      # Where the apps live (filled in from the other services).
-      - key: HVAC_API_HOST
-        fromService:
-          type: web
-          name: hvac-api
-          property: host
+      # Public addresses of the two sites, e.g. hvac-app-ab12.onrender.com (QR codes, invite
+      # links and the browser security check use them). The API's own public address is
+      # read from Render automatically (or set HVAC_API_HOST).
       - key: HVAC_APP_HOST
-        fromService:
-          type: web
-          name: hvac-app
-          property: host
+        sync: false
       - key: HVAC_PORTAL_HOST
-        fromService:
-          type: web
-          name: hvac-portal
-          property: host
+        sync: false
 
   - type: web
     name: hvac-app
@@ -77,11 +71,10 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      # Public address of hvac-api, e.g. hvac-api-ab12.onrender.com. It's built into the
+      # site, so redeploy this site after changing it.
       - key: EXPO_PUBLIC_API_URL
-        fromService:
-          type: web
-          name: hvac-api
-          property: host
+        sync: false
 
   - type: web
     name: hvac-portal
@@ -94,8 +87,7 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      # Public address of hvac-api, e.g. hvac-api-ab12.onrender.com. It's built into the
+      # site, so redeploy this site after changing it.
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: hvac-api
-          property: host
+        sync: false
