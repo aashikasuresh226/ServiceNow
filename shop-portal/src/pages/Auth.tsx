@@ -6,7 +6,7 @@
 import QRCode from 'qrcode';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { GoogleButton } from '../components/GoogleButton';
 import { Icon } from '../components/Icon';
@@ -63,7 +63,8 @@ function Hero() {
 export function AuthPage() {
   const navigate = useNavigate();
   const options = useOptions();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<'login' | 'signup'>(params.get('mode') === 'signup' ? 'signup' : 'login');
   const [step, setStep] = useState<LoginStep | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -98,6 +99,7 @@ export function AuthPage() {
       <div className="auth-card">
         <Hero />
         <form className="auth-form" onSubmit={onSubmit}>
+          <Link to="/start" className="small muted">← Not a shop owner?</Link>
           <div className="tabs" role="tablist">
             <button type="button" role="tab" className="tab" aria-selected={mode === 'login'} onClick={() => setMode('login')}>Sign in</button>
             <button type="button" role="tab" className="tab" aria-selected={mode === 'signup'} onClick={() => setMode('signup')}>Create account</button>

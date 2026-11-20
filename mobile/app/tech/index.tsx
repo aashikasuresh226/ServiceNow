@@ -15,19 +15,19 @@ import type { OutsideJob, TechBoard, TechJob } from '@/lib/types';
 
 
 export default function TechHome() {
-  const { tech, signOut, refreshMe } = useAuth();
+  const { tech, signOutTech: signOut, refreshTech } = useAuth();
   const [board, setBoard] = useState<TechBoard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     try {
       // Permissions can change at any time (the company edits them), so refresh both.
-      const [next] = await Promise.all([techApi.board(), refreshMe()]);
+      const [next] = await Promise.all([techApi.board(), refreshTech()]);
       setBoard(next);
       setError(null);
     } catch {
       setError("Couldn't refresh. Retrying…");
     }
-  }, [refreshMe]);
+  }, [refreshTech]);
   // Refresh whenever this screen comes back into view, and every few seconds while open.
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
   usePolling(refresh, 5000, true);

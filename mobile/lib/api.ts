@@ -47,12 +47,16 @@ type TokenStore = {
   set: (tokens: Tokens | null) => void;
 };
 
-let tokenStore: TokenStore = { get: () => null, set: () => undefined };
-let refreshing: Promise<boolean> | null = null;
+/** Customers and technicians have separate sign-ins (one person can be both). */
+export type Role = 'homeowner' | 'technician';
 
-/** Called once by the auth provider so the client can read and rotate tokens. */
-export function bindTokenStore(store: TokenStore): void {
-  tokenStore = store;
+const noStore: TokenStore = { get: () => null, set: () => undefined };
+const tokenStores: Record<Role, TokenStore> = { homeowner: noStore, technician: noStore };
+const refreshing: Record<Role, Promise<boolean> | null> = { homeowner: null, technician: null };
+
+/** Called once by the auth provider so the client can read and rotate each role's tokens. */
+export function bindTokenStore(role: Role, store: TokenStore): void {
+  tokenStores[role] = store;
 }
 
 async function parseError(response: Response): Promise<ApiError> {
@@ -66,10 +70,11 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, 'error', 'Something went wrong. Please try again.');
 }
 
-async function refreshSession(): Promise<boolean> {
+async function refreshSession(role: Role): Promise<boolean> {
+  const tokenStore = tokenStores[role];
   const current = tokenStore.get();
   if (!current) return false;
-  refreshing ??= (async () => {
+  refreshing[role] ??= (async () => {
     try {
       const response = await fetch(`${API_URL}/auth/refresh`, {
         method: 'POST',
@@ -85,22 +90,22 @@ async function refreshSession(): Promise<boolean> {
     } catch {
       return false;
     } finally {
-      refreshing = null;
+      refreshing[role] = null;
     }
   })();
-  return refreshing;
+  return refreshing[role] as Promise<boolean>;
 }
 
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  { auth = true, retry = true }: { auth?: boolean; retry?: boolean } = {},
+  { auth = true, retry = true, as = 'homeowner' }: { auth?: boolean; retry?: boolean; as?: Role } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
   if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
-  const tokens = auth ? tokenStore.get() : null;
+  const tokens = auth ? tokenStores[as].get() : null;
   if (tokens) headers.Authorization = `Bearer ${tokens.access_token}`;
 
   let response: Response;
@@ -115,7 +120,7 @@ async function request<T>(
   }
 
   if (response.status === 401 && auth && retry && tokens) {
-    if (await refreshSession()) return request<T>(method, path, body, { auth, retry: false });
+    if (await refreshSession(as)) return request<T>(method, path, body, { auth, retry: false, as });
   }
   if (!response.ok) throw await parseError(response);
   if (response.status === 204) return undefined as T;
@@ -205,33 +210,40 @@ export const api = {
     request<ServiceRequest>('POST', `/requests/${id}/rating`, ratings),
 };
 
-/** Technician app. */
+/** Technician app: always the technician's own sign-in. */
+function techRequest<T>(
+  method: string, path: string, body?: unknown, options: { auth?: boolean } = {},
+): Promise<T> {
+  return request<T>(method, path, body, { ...options, as: 'technician' });
+}
+
+
 export const techApi = {
   inviteInfo: (token: string) =>
-    request<InviteInfo>('GET', `/auth/technician/invite/${encodeURIComponent(token)}`, undefined, { auth: false }),
+    techRequest<InviteInfo>('GET', `/auth/technician/invite/${encodeURIComponent(token)}`, undefined, { auth: false }),
   verifyInviteEmail: (token: string) =>
-    request<{ claim: string }>('POST', '/auth/technician/invite/verify-email',
+    techRequest<{ claim: string }>('POST', '/auth/technician/invite/verify-email',
       { token }, { auth: false }),
   inviteAuthenticator: (token: string, claim: string) =>
-    request<AuthenticatorSetupData>('POST', '/auth/technician/invite/authenticator', { token, claim }, { auth: false }),
+    techRequest<AuthenticatorSetupData>('POST', '/auth/technician/invite/authenticator', { token, claim }, { auth: false }),
   acceptInvite: (data: {
     token: string; claim: string; phone?: string; setup_token?: string; code?: string; google_id_token?: string;
-  }) => request<Tokens & { backup_codes: string[] }>('POST', '/auth/technician/invite/accept', data, { auth: false }),
+  }) => techRequest<Tokens & { backup_codes: string[] }>('POST', '/auth/technician/invite/accept', data, { auth: false }),
   login: (login: string, code: string) =>
-    request<Tokens>('POST', '/auth/technician/login', { login, code }, { auth: false }),
+    techRequest<Tokens>('POST', '/auth/technician/login', { login, code }, { auth: false }),
   google: (id_token: string) =>
-    request<Tokens>('POST', '/auth/technician/google', { id_token }, { auth: false }),
+    techRequest<Tokens>('POST', '/auth/technician/google', { id_token }, { auth: false }),
 
-  me: () => request<TechMe>('GET', '/tech/me'),
-  board: () => request<TechBoard>('GET', '/tech/jobs'),
-  outsideJob: (id: string) => request<OutsideJobDetail>('GET', `/tech/outside-jobs/${id}`),
+  me: () => techRequest<TechMe>('GET', '/tech/me'),
+  board: () => techRequest<TechBoard>('GET', '/tech/jobs'),
+  outsideJob: (id: string) => techRequest<OutsideJobDetail>('GET', `/tech/outside-jobs/${id}`),
   outsideStep: (id: string, step: OutsideStep, summary?: string, actual_issue?: string) =>
-    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/step`, { step, summary, actual_issue }),
+    techRequest<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/step`, { step, summary, actual_issue }),
   outsideLineItem: (id: string, name: string, quantity: number, unit_price_cents: number) =>
-    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/line-items`, { name, quantity, unit_price_cents }),
+    techRequest<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/line-items`, { name, quantity, unit_price_cents }),
   outsideNote: (id: string, body: string) =>
-    request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/notes`, { body }),
-  outsideRetry: (id: string) => request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/retry`),
+    techRequest<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/notes`, { body }),
+  outsideRetry: (id: string) => techRequest<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/retry`),
   outsidePhoto: async (id: string, uri: string, mimeType = 'image/jpeg') => {
     const form = new FormData();
     if (Platform.OS === 'web') {
@@ -240,23 +252,23 @@ export const techApi = {
     } else {
       form.append('file', { uri, name: 'job.jpg', type: mimeType } as unknown as Blob);
     }
-    return request<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/photos`, form);
+    return techRequest<OutsideJobDetail>('POST', `/tech/outside-jobs/${id}/photos`, form);
   },
-  job: (id: string) => request<TechJob>('GET', `/tech/jobs/${id}`),
-  accept: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/accept`),
-  decline: (id: string, reason?: string) => request<void>('POST', `/tech/jobs/${id}/decline`, { reason }),
+  job: (id: string) => techRequest<TechJob>('GET', `/tech/jobs/${id}`),
+  accept: (id: string) => techRequest<TechJob>('POST', `/tech/jobs/${id}/accept`),
+  decline: (id: string, reason?: string) => techRequest<void>('POST', `/tech/jobs/${id}/decline`, { reason }),
   cantMakeIt: (id: string, reason?: string) =>
-    request<TechJob>('POST', `/tech/jobs/${id}/cant-make-it`, { reason }),
-  startDriving: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/start-driving`),
+    techRequest<TechJob>('POST', `/tech/jobs/${id}/cant-make-it`, { reason }),
+  startDriving: (id: string) => techRequest<TechJob>('POST', `/tech/jobs/${id}/start-driving`),
   location: (id: string, lat: number, lng: number, accuracy_m?: number | null) =>
-    request<void>('PUT', `/tech/jobs/${id}/location`, { lat, lng, accuracy_m: accuracy_m ?? null }),
-  arrived: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/arrived`),
+    techRequest<void>('PUT', `/tech/jobs/${id}/location`, { lat, lng, accuracy_m: accuracy_m ?? null }),
+  arrived: (id: string) => techRequest<TechJob>('POST', `/tech/jobs/${id}/arrived`),
   quote: (id: string, final_price_cents: number, notes: string, actual_issue?: string) =>
-    request<TechJob>('POST', `/tech/jobs/${id}/quote`, { final_price_cents, notes, actual_issue }),
-  complete: (id: string) => request<TechJob>('POST', `/tech/jobs/${id}/complete`),
-  messages: (id: string) => request<Message[]>('GET', `/tech/jobs/${id}/messages`),
+    techRequest<TechJob>('POST', `/tech/jobs/${id}/quote`, { final_price_cents, notes, actual_issue }),
+  complete: (id: string) => techRequest<TechJob>('POST', `/tech/jobs/${id}/complete`),
+  messages: (id: string) => techRequest<Message[]>('GET', `/tech/jobs/${id}/messages`),
   sendMessage: (id: string, body: string) =>
-    request<Message>('POST', `/tech/jobs/${id}/messages`, { body }),
+    techRequest<Message>('POST', `/tech/jobs/${id}/messages`, { body }),
 };
 
 export type UnitUpdate = {

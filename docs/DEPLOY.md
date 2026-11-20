@@ -97,6 +97,12 @@ hours run out before the month ends.
 
 ## 5. Try it
 
+**The one link to share is the portal's address** (`https://hvac-portal-….onrender.com`).
+It asks "Who are you?": homeowners go to the app to sign in or create an account, shop
+owners create their shop account, and technicians are told to ask their shop for an
+email invite (and to check Spam/Junk). Customers and technicians sign in separately, so one
+phone can be signed in as both.
+
 - Portal: create the shop account, confirm the email, turn on 2-step verification, add
   the shop address and a technician.
 - Phone: open the portal's QR code (**Customers** → *Invite*) with the phone camera → the

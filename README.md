@@ -53,6 +53,7 @@ shop portal, homeowner app) and two browser tabs:
 
 | | URL | |
 |---|---|---|
+| Start page (the one link to share) | http://localhost:5173 | Asks *Who are you?* and sends homeowners, shop owners and technicians to the right place |
 | Shop portal | http://localhost:5173 | **Create account** with Google or email + password, confirm the email link, then scan the QR code with your authenticator app |
 | Homeowner app | http://localhost:8081 | **Continue with Google** or with a mobile number + an authenticator app |
 | Technician app | http://localhost:8081/tech/sign-in | Opened from the shop's invite email; sign in with an authenticator-app code (or Google) |

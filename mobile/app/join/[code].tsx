@@ -19,7 +19,7 @@ const PERKS: [IconName, string][] = [
 
 export default function Join() {
   const { code } = useLocalSearchParams<{ code: string }>();
-  const { tokens, role } = useAuth();
+  const { tokens } = useAuth();
   const [shop, setShop] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +33,7 @@ export default function Join() {
   }, [code]);
 
   const go = async () => {
-    if (tokens && role === 'homeowner') {
+    if (tokens) {
       await acceptPendingInvite();
       router.replace('/home');
     } else {

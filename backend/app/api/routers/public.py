@@ -85,6 +85,8 @@ async def options(c: ContainerDep) -> dict[str, object]:
             "email_links": "firebase" if c.firebase is not None else "development",
             # Technicians have no sign-up: invited ones sign in here.
             "technician_sign_in_url": f"{c.settings.public_app_url.rstrip('/')}/tech/sign-in",
+            # The homeowner app (the portal's start page sends customers here).
+            "app_url": c.settings.public_app_url.rstrip("/"),
         },
     }
 

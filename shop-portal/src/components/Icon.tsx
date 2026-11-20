@@ -27,6 +27,9 @@ const PATHS: Record<string, string[]> = {
   chat: ['M4 5h16v11H9l-5 4z'],
   send: ['M4 12l16-8-6 16-2-6z'],
   bank: ['M3 9l9-6 9 6zM5 20h14M6 10v8M10 10v8M14 10v8M18 10v8'],
+  home: ['M3 11l9-7 9 7M5 10v10h14V10M10 20v-6h4v6'],
+  building: ['M4 21V5h10v16M14 9h6v12M2 21h20M7 9h1M10 9h1M7 13h1M10 13h1M7 17h1M10 17h1M17 13h1M17 17h1'],
+  arrow: ['M5 12h14M13 6l6 6-6 6'],
 };
 
 const CIRCLES: Record<string, [number, number, number][]> = {

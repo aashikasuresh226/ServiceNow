@@ -15,9 +15,10 @@ const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'authenticator', 'p', 'join'
 // Technician screens anyone can open: sign-in and the emailed invite.
 const PUBLIC_TECH_ROUTES = new Set(['sign-in', 'join']);
 
-/** Sends signed-out users to the welcome screen, and each role to its own screens. */
+/** Customer screens need the customer sign-in, technician screens (/tech) the technician
+ * one. The two are separate, so being signed in as one never affects the other. */
 function AuthGate() {
-  const { ready, tokens, role } = useAuth();
+  const { ready, tokens, techTokens } = useAuth();
   const segments = useSegments() as string[];
   const first = segments[0] ?? '';
   const second = segments[1] ?? '';
@@ -25,14 +26,13 @@ function AuthGate() {
 
   useEffect(() => {
     if (!ready) return;
-    if (!tokens) {
-      if (!isPublic) router.replace(first === 'tech' ? '/tech/sign-in' : '/welcome');
+    if (first === 'tech') {
+      if (!techTokens && !isPublic) router.replace('/tech/sign-in');
+      else if (techTokens && second === 'sign-in') router.replace('/tech');
       return;
     }
-    if (isPublic || first === 'p') return;
-    if (role === 'technician' && first !== 'tech') router.replace('/tech');
-    if (role === 'homeowner' && first === 'tech') router.replace('/home');
-  }, [ready, tokens, role, first, isPublic]);
+    if (!tokens && !isPublic) router.replace('/welcome');
+  }, [ready, tokens, techTokens, first, second, isPublic]);
 
   if (!ready) return <Loading />;
   return <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }} />;

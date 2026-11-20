@@ -21,6 +21,7 @@ export type Features = {
   /** Who emails sign-up links and technician invites. */
   email_links: 'firebase' | 'development';
   technician_sign_in_url: string;
+  app_url: string;
 };
 
 /** Firebase emailed the link (delivery=firebase), or in development open `dev_link`. */

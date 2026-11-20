@@ -8,7 +8,7 @@ import { CodeInput, codeReady } from '@/components/CodeInput';
 import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
 import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
-import { Button, Card, ErrorText, Field, Muted, Row, Screen, TextLink, Title } from '@/components/ui';
+import { Button, Card, ErrorText, Field, Muted, Row, Screen, Title } from '@/components/ui';
 import { api, techApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAction, useOptions } from '@/lib/hooks';
@@ -57,8 +57,10 @@ export default function TechSignIn() {
         placeholder="(404) 555-0123" autoComplete="username" autoCapitalize="none" />
       <CodeInput value={code} onChange={setCode} allowBackup onSubmit={() => signIn.run()} />
       <ErrorText message={signIn.error} />
-      <Muted>New here? Your company sends you an invite by email. Open it on this phone to set up your account.</Muted>
-      <TextLink label="I'm a homeowner" color={colors.muted} onPress={() => router.replace('/welcome')} />
+      <Muted>
+        New here? Ask your shop to invite you. The invite comes by email from HVAC Connect: if it isn't in your inbox,
+        check Spam or Junk. Open it on this phone to set up your account.
+      </Muted>
     </Screen>
   );
 }

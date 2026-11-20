@@ -40,7 +40,7 @@ export async function askForWebAlerts(): Promise<boolean> {
 }
 
 export function UnreadProvider({ children }: { children: ReactNode }) {
-  const { tokens, role } = useAuth();
+  const { tokens } = useAuth();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const [chats, setChats] = useState<UnreadChat[]>([]);
@@ -51,7 +51,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
   path.current = pathname;
 
   const refresh = useCallback(async () => {
-    if (!tokens || role !== 'homeowner') return;
+    if (!tokens) return;
     try {
       const data = await api.notifications();
       const fresh = data.unread_messages.filter((c) => seen.current.get(c.request_id) !== c.last_at);
@@ -68,17 +68,17 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     } catch {
       // offline or signed out: try again next time
     }
-  }, [tokens, role]);
+  }, [tokens]);
 
   useEffect(() => {
     first.current = true;
     seen.current.clear();
     setChats([]);
-    if (!tokens || role !== 'homeowner') return;
+    if (!tokens) return;
     void refresh();
     const timer = setInterval(() => { void refresh(); }, POLL_MS);
     return () => clearInterval(timer);
-  }, [tokens, role, refresh]);
+  }, [tokens, refresh]);
 
   useEffect(() => {
     if (!banner) return;
@@ -95,7 +95,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
   return (
     <UnreadContext.Provider value={{ byRequest, total, refresh: () => { void refresh(); } }}>
       {children}
-      {banner ? (
+      {banner && !pathname.startsWith('/tech') ? (
         <View pointerEvents="box-none" style={{ position: 'absolute', top: insets.top + 8, left: 12, right: 12, alignItems: 'center' }}>
           <Pressable
             accessibilityRole="alert"

@@ -15,18 +15,20 @@ import { IntegrationsPage } from './pages/Integrations';
 import { JobsPage } from './pages/Jobs';
 import { PayoutsOnboarding } from './pages/Payouts';
 import { SettingsPage } from './pages/Settings';
+import { StartPage } from './pages/Start';
 import { TechniciansPage } from './pages/Technicians';
 import { VerifyEmailPage } from './pages/VerifyEmail';
 import './styles.css';
 
 function RequireSession({ children }: { children: ReactNode }) {
-  return hasSession() ? children : <Navigate to="/login" replace />;
+  return hasSession() ? children : <Navigate to="/start" replace />;
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
+        <Route path="/start" element={<StartPage />} />
         <Route path="/login" element={<AuthPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/admin" element={<AdminPage />} />
