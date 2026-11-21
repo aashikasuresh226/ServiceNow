@@ -7,11 +7,11 @@ from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, File, Query, Request, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import ContainerDep, SessionDep, ShopDep
+from app.api.deps import ContainerDep, SessionDep, ShopDep, client_ip
 from app.api.presenters import message_out, outside_job_out, shop_job_out
 from app.container import Container
 from app.core.errors import InvalidState, NotFound
@@ -22,6 +22,7 @@ from app.schemas.api import (
     BlockOut,
     BusyIn,
     CalendarLinkOut,
+    ChangePasswordIn,
     ComplaintResponseIn,
     CountOut,
     CustomerListOut,
@@ -39,6 +40,7 @@ from app.schemas.api import (
     PayoutScheduleIn,
     QuoteIn,
     SchedulingConnectIn,
+    ShopAccountIn,
     ShopComplaintOut,
     ShopJobOut,
     ShopMeOut,
@@ -52,8 +54,10 @@ from app.schemas.api import (
     TechOptionOut,
     TimeOffIn,
     TimeOffOut,
+    TokensOut,
 )
-from app.services import integration_log
+from app.services import integration_log, media
+from app.services.auth_service import AuthService
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
 from app.services.complaint_service import ComplaintService
@@ -78,7 +82,12 @@ def _me(principal: ShopDep, c: Container | None = None) -> ShopMeOut:
         shop.scheduling_webhook_url = (
             f"{c.settings.public_api_url}/v1/webhooks/housecall-pro/{token}"
         )
-    return ShopMeOut(user_email=principal.user.email, user_name=principal.user.name, shop=shop)
+    return ShopMeOut(
+        user_email=principal.user.email,
+        user_name=principal.user.name,
+        has_password=bool(principal.user.password_hash),
+        shop=shop,
+    )
 
 
 def _tech_out(tech: Technician) -> TechnicianOut:
@@ -102,6 +111,55 @@ async def update_shop(
         address=body.address,
         timezone=body.timezone,
     )
+    return _me(principal, c)
+
+
+@router.patch("/account", response_model=ShopMeOut)
+async def update_account(
+    body: ShopAccountIn, principal: ShopDep, session: SessionDep, c: ContainerDep
+) -> ShopMeOut:
+    """The signed-in person's own details (not the shop's)."""
+    if body.name is not None:
+        principal.user.name = body.name.strip() or None
+        await session.flush()
+    return _me(principal, c)
+
+
+@router.post("/account/password", response_model=TokensOut)
+async def change_password(
+    body: ChangePasswordIn,
+    request: Request,
+    principal: ShopDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> TokensOut:
+    """Change (or, after Google sign-up, set) the password. Other sessions are signed out;
+    this one gets fresh tokens."""
+    tokens = await AuthService(session, c).change_shop_password(
+        principal.user, body.current_password, body.new_password, ip=client_ip(request)
+    )
+    return TokensOut(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
+    )
+
+
+@router.post("/logo", response_model=ShopMeOut)
+async def set_logo(
+    principal: ShopDep, session: SessionDep, c: ContainerDep, file: UploadFile = File(...)
+) -> ShopMeOut:
+    """Shop logo (PNG keeps transparency): shown to customers with their technician."""
+    data = await file.read(media.MAX_BYTES + 1)
+    principal.shop.logo_url = await media.save_image(c, data, kind="logo")
+    await session.flush()
+    return _me(principal, c)
+
+
+@router.delete("/logo", response_model=ShopMeOut)
+async def remove_logo(principal: ShopDep, session: SessionDep, c: ContainerDep) -> ShopMeOut:
+    principal.shop.logo_url = None
+    await session.flush()
     return _me(principal, c)
 
 

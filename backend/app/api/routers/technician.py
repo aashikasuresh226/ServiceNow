@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import ContainerDep, SessionDep, TechDep
+from app.api.deps import ContainerDep, SessionDep, TechDep, TechPrincipal
 from app.api.presenters import (
     message_out,
     outside_activity_text,
@@ -33,7 +33,10 @@ from app.schemas.api import (
     TechBoardOut,
     TechJobOut,
     TechMeOut,
+    TechUpdateIn,
 )
+from app.services import media
+from app.services.auth_service import AuthService
 from app.services.message_service import MessageService
 from app.services.outside_job_actions import LineItem, OutsideJobActions
 from app.services.outside_jobs import OutsideJob, OutsideJobService
@@ -42,10 +45,15 @@ from app.services.tech_app_service import TechAppService
 router = APIRouter(prefix="/tech", tags=["technician"])
 
 
-@router.get("/me", response_model=TechMeOut)
-async def me(principal: TechDep) -> TechMeOut:
+def _tech_me(principal: TechPrincipal) -> TechMeOut:
     tech, shop = principal.tech, principal.shop
     return TechMeOut(
+        photo_url=tech.photo_url,
+        sign_in="authenticator"
+        if tech.totp_secret_encrypted
+        else "google"
+        if tech.google_sub
+        else "email",
         id=tech.id,
         name=tech.name,
         phone=tech.phone,
@@ -56,6 +64,43 @@ async def me(principal: TechDep) -> TechMeOut:
         can_contact_customers=tech.can_contact_customers,
         schedule_view=tech.schedule_view,
     )
+
+
+@router.get("/me", response_model=TechMeOut)
+async def me(principal: TechDep) -> TechMeOut:
+    return _tech_me(principal)
+
+
+@router.patch("/me", response_model=TechMeOut)
+async def update_me(
+    body: TechUpdateIn, principal: TechDep, session: SessionDep, c: ContainerDep
+) -> TechMeOut:
+    """A technician updates their own mobile number (customers and the office use it)."""
+    if body.phone is not None:
+        service = AuthService(session, c)
+        phone = service._normalize_allowed(body.phone)
+        await service._ensure_tech_phone_free(principal.tech, phone)
+        principal.tech.phone = phone
+        await session.flush()
+    return _tech_me(principal)
+
+
+@router.post("/me/photo", response_model=TechMeOut)
+async def set_photo(
+    principal: TechDep, session: SessionDep, c: ContainerDep, file: UploadFile = File(...)
+) -> TechMeOut:
+    """Profile photo: customers see it when this technician is on the way."""
+    data = await file.read(media.MAX_BYTES + 1)
+    principal.tech.photo_url = await media.save_image(c, data, kind="avatar")
+    await session.flush()
+    return _tech_me(principal)
+
+
+@router.delete("/me/photo", response_model=TechMeOut)
+async def remove_photo(principal: TechDep, session: SessionDep) -> TechMeOut:
+    principal.tech.photo_url = None
+    await session.flush()
+    return _tech_me(principal)
 
 
 @router.get("/jobs", response_model=TechBoardOut)

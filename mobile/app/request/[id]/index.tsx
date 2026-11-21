@@ -4,7 +4,7 @@
  */
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { Icon } from '@/components/icons';
@@ -81,13 +81,19 @@ function TechCard({ request, showEta = true }: { request: ServiceRequest; showEt
       <RouteMap height={110} progress={0} label={`${t.name} is ${miles(t.distance_km)} away`} />
       <View style={{ padding: 14, gap: 10 }}>
         <Row style={{ gap: 12 }}>
-          <View style={styles.avatarRing}><Avatar size={56} name={t.name} /></View>
+          <View style={styles.avatarRing}><Avatar size={56} name={t.name} uri={t.photo_url} /></View>
           <View style={{ flex: 1 }}>
             <Text style={styles.techName}>{t.name}</Text>
-            <Muted>
-              {t.shop_name}
-              {t.rating ? ` · ★ ${t.rating.toFixed(1)}` : ''}
-            </Muted>
+            <Row style={{ gap: 6 }}>
+              {t.shop_logo_url ? (
+                <Image source={{ uri: t.shop_logo_url }} accessibilityLabel={`${t.shop_name} logo`}
+                  style={{ width: 18, height: 18, borderRadius: 4 }} resizeMode="contain" />
+              ) : null}
+              <Muted style={{ flexShrink: 1 }}>
+                {t.shop_name}
+                {t.rating ? ` · ★ ${t.rating.toFixed(1)}` : ''}
+              </Muted>
+            </Row>
           </View>
           {showEta && t.arrival_at && isScheduled(t.arrival_at) ? (
             <View style={{ alignItems: 'flex-end', maxWidth: 110 }}>
@@ -353,7 +359,7 @@ function Tracking({ request, onChange }: Props) {
         )}
       </Card>
       <Row style={{ gap: 12 }}>
-        <Avatar size={44} name={t?.name} />
+        <Avatar size={44} name={t?.name} uri={t?.photo_url} />
         <View style={{ flex: 1 }}>
           <Body style={{ fontWeight: '700' }}>{t?.name}</Body>
           <Muted>

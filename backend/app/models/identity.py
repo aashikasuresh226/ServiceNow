@@ -35,6 +35,7 @@ class Homeowner(IdMixin, TimestampMixin, Base):
     )
     name: Mapped[str | None] = mapped_column(EncryptedText)
     address: Mapped[str | None] = mapped_column(EncryptedText)
+    photo_url: Mapped[str | None] = mapped_column(String(500))  # profile photo (services/media)
     lat: Mapped[float | None] = mapped_column(Float)
     lng: Mapped[float | None] = mapped_column(Float)
     sms_opt_in: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

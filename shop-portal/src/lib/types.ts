@@ -43,6 +43,7 @@ export type LoginStep = {
 export type Shop = {
   id: string;
   name: string;
+  logo_url: string | null;
   phone: string | null;
   address: string | null;
   lat: number | null;
@@ -79,7 +80,7 @@ export type TechOption = {
 
 export type TimeOff = { id: string; starts_at: string; ends_at: string; label: string | null };
 
-export type ShopMe = { user_email: string; user_name: string | null; shop: Shop };
+export type ShopMe = { user_email: string; user_name: string | null; has_password: boolean; shop: Shop };
 
 export type WorkingHours = Record<string, string[][]>;
 

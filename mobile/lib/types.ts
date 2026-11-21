@@ -37,6 +37,7 @@ export type Homeowner = {
   lng: number | null;
   sms_opt_in: boolean;
   payment_method_label: string | null;
+  photo_url?: string | null;
 };
 
 export type RequestStatus =
@@ -90,6 +91,7 @@ export type TechnicianSummary = {
   name: string;
   first_name: string;
   photo_url: string | null;
+  shop_logo_url?: string | null;
   rating: number | null;
   rating_count: number;
   certifications: string[];
@@ -128,6 +130,8 @@ export type TechMe = {
   can_respond_offers: boolean;
   can_contact_customers: boolean;
   schedule_view: 'full' | 'next';
+  photo_url: string | null;
+  sign_in: 'authenticator' | 'email' | 'google';
 };
 
 export type TechJob = {

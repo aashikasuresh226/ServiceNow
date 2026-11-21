@@ -102,6 +102,36 @@ def normalize_photo(data: bytes) -> tuple[bytes, str]:
     return out.getvalue(), "image/jpeg"
 
 
+def normalize_avatar(data: bytes, size: int = 512) -> tuple[bytes, str]:
+    """A profile photo: upright, centered square crop, size x size JPEG, no metadata."""
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            upright = ImageOps.exif_transpose(image).convert("RGB")
+            square = ImageOps.fit(upright, (size, size), Image.Resampling.LANCZOS)
+            out = io.BytesIO()
+            square.save(out, format="JPEG", quality=85, optimize=True)
+    except Exception as exc:
+        raise ValueError("unreadable image") from exc
+    return out.getvalue(), "image/jpeg"
+
+
+def normalize_logo(data: bytes, max_side: int = 512) -> tuple[bytes, str]:
+    """A shop logo: upright, at most max_side px, PNG (keeps transparency), no metadata."""
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            upright = ImageOps.exif_transpose(image).convert("RGBA")
+            upright.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            out = io.BytesIO()
+            upright.save(out, format="PNG", optimize=True)
+    except Exception as exc:
+        raise ValueError("unreadable image") from exc
+    return out.getvalue(), "image/png"
+
+
 def sniff_image_type(data: bytes) -> str | None:
     """Trust the bytes, not the client's Content-Type header."""
     if data.startswith(b"\xff\xd8\xff"):

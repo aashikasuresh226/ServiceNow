@@ -36,6 +36,7 @@ from app.schemas.api import (
     UnitUpdateIn,
     UnreadChat,
 )
+from app.services import media
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService, mask_email
 from app.services.complaint_service import CATEGORIES, ComplaintService, can_complain
@@ -63,6 +64,23 @@ async def add_email(
     """Add a recovery email: a confirmation link is emailed; it's saved once opened."""
     link = await AuthService(session, c).homeowner_add_email(me, str(body.email))
     return EmailLinkSentOut(sent_to=mask_email(link.email), dev_link=link.dev_link)
+
+
+@router.post("/me/photo", response_model=HomeownerOut)
+async def set_photo(
+    me: HomeownerDep, session: SessionDep, c: ContainerDep, file: UploadFile = File(...)
+) -> HomeownerOut:
+    """Profile photo (cropped square; location data removed)."""
+    me.photo_url = await media.save_image(c, await file.read(media.MAX_BYTES + 1), kind="avatar")
+    await session.flush()
+    return HomeownerOut.model_validate(me)
+
+
+@router.delete("/me/photo", response_model=HomeownerOut)
+async def remove_photo(me: HomeownerDep, session: SessionDep) -> HomeownerOut:
+    me.photo_url = None
+    await session.flush()
+    return HomeownerOut.model_validate(me)
 
 
 @router.patch("/me", response_model=HomeownerOut)

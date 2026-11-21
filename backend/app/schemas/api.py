@@ -235,6 +235,7 @@ class HomeownerOut(Model):
     lng: float | None
     sms_opt_in: bool
     payment_method_label: str | None
+    photo_url: str | None = None
 
 
 class ProfileSuggestionsOut(Model):
@@ -315,6 +316,7 @@ class TechnicianSummary(Model):
     certifications: list[str]
     shop_name: str
     shop_phone: str | None
+    shop_logo_url: str | None = None
     distance_km: float | None
     eta_minutes: int | None
     arrival_at: datetime | None  # when the tech is expected (now-ish, or e.g. tomorrow 8:15)
@@ -418,6 +420,7 @@ class ShopOut(Model):
     instant_book_daily_limit: int = 3
     # Paste into Housecall Pro > App Store > Webhooks (optional; polling works without it).
     scheduling_webhook_url: str | None = None
+    logo_url: str | None = None
 
 
 class DispatchSettingsIn(Model):
@@ -452,7 +455,21 @@ class TimeOffOut(Model):
 class ShopMeOut(Model):
     user_email: str
     user_name: str | None
+    has_password: bool = True  # False: signed up with Google (can set one)
     shop: ShopOut
+
+
+class ShopAccountIn(Model):
+    name: str | None = Field(None, max_length=120)
+
+
+class ChangePasswordIn(Model):
+    current_password: str | None = Field(None, max_length=200)  # not needed if none is set yet
+    new_password: str = Field(min_length=1, max_length=200)  # rules: core.passwords
+
+
+class TechUpdateIn(Model):
+    phone: str | None = Field(None, max_length=20)
 
 
 class ShopUpdateIn(Model):
@@ -624,6 +641,8 @@ class TechMeOut(Model):
     can_respond_offers: bool
     can_contact_customers: bool
     schedule_view: str
+    photo_url: str | None = None
+    sign_in: str = "authenticator"  # authenticator | email | google
 
 
 class TechJobOut(Model):

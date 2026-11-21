@@ -38,7 +38,10 @@ export default function TechHome() {
     <Screen>
       <Row style={{ justifyContent: 'space-between' }}>
         <Muted>{tech.shop_name}</Muted>
-        <TextLink label="Sign out" color={colors.muted} onPress={() => { void signOut().then(() => router.replace('/tech/sign-in')); }} />
+        <Row style={{ gap: 16 }}>
+          <TextLink label="Account" onPress={() => router.push('/tech/account')} />
+          <TextLink label="Sign out" color={colors.muted} onPress={() => { void signOut().then(() => router.replace('/tech/sign-in')); }} />
+        </Row>
       </Row>
       <Title sub={today}>{tech.schedule_view === 'next' ? 'Your next job' : `Hi ${tech.name.split(' ')[0]}`}</Title>
 

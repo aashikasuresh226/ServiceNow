@@ -61,6 +61,8 @@ async def test_authenticator_sign_up_sign_in_and_backup_codes(
     assert (await client.post("/auth/homeowner/start", json={"phone": phone})).json() == {
         "account": "existing",
         "setup": None,
+        "method": "authenticator",
+        "email_hint": None,
     }
     clock.advance(seconds=30)
     r = await client.post(

@@ -280,6 +280,31 @@ class AuthService:
         await self._revoke_all(user.id)
         await self.s.flush()
 
+    async def change_shop_password(
+        self, user: ShopUser, current: str | None, new: str, *, ip: str | None
+    ) -> SessionTokens:
+        """Signed in: change the password (or set one after Google sign-up). Signs out every
+        other session and returns fresh tokens for this one."""
+        self.limit_ip(ip)
+        if user.password_hash:
+            self.c.rate_limiter.check("password", str(user.id), limit=10, window_seconds=900)
+            if not current or not verify_password(current, user.password_hash):
+                raise Unauthorized("Your current password isn't right", code="bad_password")
+            if verify_password(new, user.password_hash):
+                raise AppError("Choose a password you haven't used here", code="same_password")
+        await passwords.ensure_strong(
+            new,
+            http=self.c.http,
+            check_breaches=self.settings.password_breach_check
+            and self.settings.environment != Environment.TEST,
+        )
+        user.password_hash = hash_password(new)
+        await self._revoke_all(user.id)
+        await self.s.flush()
+        return await self.issue_session(
+            TokenClaims(user.id, Role.SHOP_USER, TokenType.ACCESS, user.shop_id)
+        )
+
     # --- Rate limiting ----------------------------------------------------------------
     def limit_ip(self, ip: str | None, bucket: str = "sign_in") -> None:
         if not ip:

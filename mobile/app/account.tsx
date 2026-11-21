@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
 import { EmailSent } from '@/components/EmailSent';
+import { ProfilePhoto } from '@/components/ProfilePhoto';
 import { Body, Button, Card, ErrorText, Field, KeyValue, Muted, Row, Screen, StepHeader, Title } from '@/components/ui';
 import { api, type LinkSent } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -11,7 +12,7 @@ import { formatPhone } from '@/lib/format';
 import { useAction, useOptions } from '@/lib/hooks';
 
 export default function Account() {
-  const { me, signOut } = useAuth();
+  const { me, signOut, setMe } = useAuth();
   const options = useOptions();
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState<LinkSent | null>(null);
@@ -25,11 +26,17 @@ export default function Account() {
       <StepHeader />
       <Title>Account</Title>
       <Card>
+        <ProfilePhoto uri={me.photo_url} name={me.name}
+          hint="Your technician sees it, so they know who to look for."
+          onPick={async (uri, type) => setMe(await api.setPhoto(uri, type))}
+          onRemove={async () => setMe(await api.removePhoto())} />
+      </Card>
+      <Card>
         <KeyValue k="Name" v={me.name ?? '—'} />
         <KeyValue k="Phone" v={formatPhone(me.phone)} />
         {me.email ? <KeyValue k="Email" v={me.email} /> : null}
         <Muted>{me.address}</Muted>
-        <Button label="Edit details" variant="secondary" onPress={() => router.push('/profile')} />
+        <Button label="Edit name, address or phone" variant="secondary" onPress={() => router.push('/profile')} />
       </Card>
       {!me.email ? (
         <Card style={{ gap: 8 }}>

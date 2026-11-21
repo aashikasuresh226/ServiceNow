@@ -1,5 +1,5 @@
 /** Simple vector illustrations (from the wireflow). No image assets or map API keys needed. */
-import { Platform } from 'react-native';
+import { Image, Platform } from 'react-native';
 import Svg, { Circle, G, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { colors } from './theme';
@@ -66,7 +66,13 @@ export function Viewfinder({ width = 220 }: { width?: number }) {
   );
 }
 
-export function Avatar({ size = 48, name }: { size?: number; name?: string }) {
+export function Avatar({ size = 48, name, uri }: { size?: number; name?: string; uri?: string | null }) {
+  if (uri) {
+    return (
+      <Image source={{ uri }} accessibilityLabel={name ? `${name}'s photo` : 'Profile photo'}
+        style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.primaryTint }} />
+    );
+  }
   // Deterministic skin tone per name, so the same tech always looks the same.
   const tones = ['#E2B48C', '#C68B59', '#8D5524', '#F1C27D', '#D9A066'];
   const tone = tones[(name ?? '').length % tones.length];

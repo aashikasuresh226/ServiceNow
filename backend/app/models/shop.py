@@ -21,6 +21,9 @@ class Shop(IdMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20))
     address: Mapped[str | None] = mapped_column(String(300))
+    logo_url: Mapped[str | None] = mapped_column(
+        String(500)
+    )  # /v1/media/<key> (see services/media)
     lat: Mapped[float | None] = mapped_column(Float)
     lng: Mapped[float | None] = mapped_column(Float)
     timezone: Mapped[str] = mapped_column(String(64), default="America/New_York", nullable=False)

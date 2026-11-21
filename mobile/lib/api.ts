@@ -128,6 +128,18 @@ async function request<T>(
 }
 
 /** An emailed sign-in, recovery or confirmation link was sent. */
+/** A picked image as multipart form data (web: a blob; native: a file reference). */
+async function imageForm(uri: string, mimeType = 'image/jpeg'): Promise<FormData> {
+  const form = new FormData();
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(uri)).blob();
+    form.append('file', blob, 'photo.jpg');
+  } else {
+    form.append('file', { uri, name: 'photo.jpg', type: mimeType } as unknown as Blob);
+  }
+  return form;
+}
+
 export type LinkSent = { sent_to: string | null; dev_link: string | null };
 type HomeownerSession = Tokens & { needs_profile: boolean };
 
@@ -154,6 +166,9 @@ export const api = {
   confirmEmail: (token: string) =>
     request<LinkSent>('POST', '/auth/homeowner/email/confirm', { token }, { auth: false }),
   addEmail: (email: string) => request<LinkSent>('POST', '/me/email', { email }),
+  setPhoto: async (uri: string, mimeType?: string) =>
+    request<Homeowner>('POST', '/me/photo', await imageForm(uri, mimeType)),
+  removePhoto: () => request<Homeowner>('DELETE', '/me/photo'),
   homeownerSignup: (phone: string, setup_token: string, code: string) =>
     request<Tokens & { needs_profile: boolean; backup_codes: string[] }>(
       'POST', '/auth/homeowner/signup', { phone, setup_token, code }, { auth: false }),
@@ -264,6 +279,10 @@ export const techApi = {
     techRequest<Tokens>('POST', '/auth/technician/recover/finish', { token }, { auth: false }),
 
   me: () => techRequest<TechMe>('GET', '/tech/me'),
+  updateMe: (data: { phone?: string }) => techRequest<TechMe>('PATCH', '/tech/me', data),
+  setPhoto: async (uri: string, mimeType?: string) =>
+    techRequest<TechMe>('POST', '/tech/me/photo', await imageForm(uri, mimeType)),
+  removePhoto: () => techRequest<TechMe>('DELETE', '/tech/me/photo'),
   board: () => techRequest<TechBoard>('GET', '/tech/jobs'),
   outsideJob: (id: string) => techRequest<OutsideJobDetail>('GET', `/tech/outside-jobs/${id}`),
   outsideStep: (id: string, step: OutsideStep, summary?: string, actual_issue?: string) =>

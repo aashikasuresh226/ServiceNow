@@ -108,13 +108,14 @@ async function refresh(): Promise<boolean> {
 async function request<T>(method: string, path: string, body?: unknown,
   opts: { token?: string; retry?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = {};
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
   const bearer = opts.token ?? tokens?.access_token;
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
   let r: Response;
   try {
     r = await fetch(`${API_URL}${path}`, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+      method, headers, body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, 'network', `Can't reach the server (${API_URL}). Is the API running?`);
@@ -191,6 +192,16 @@ export const api = {
     : Promise.resolve(),
 
   me: () => request<ShopMe>('GET', '/shop/me'),
+  updateAccount: (name: string) => request<ShopMe>('PATCH', '/shop/account', { name }),
+  changePassword: async (current_password: string | null, new_password: string) => {
+    setTokens(await request<Tokens>('POST', '/shop/account/password', { current_password, new_password }));
+  },
+  uploadLogo: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<ShopMe>('POST', '/shop/logo', form);
+  },
+  removeLogo: () => request<ShopMe>('DELETE', '/shop/logo'),
   updateShop: (data: Partial<{ name: string; phone: string; address: string; timezone: string }>) =>
     request<ShopMe>('PATCH', '/shop/me', data),
   setLive: (is_live: boolean) => request<ShopMe>('PUT', '/shop/live', { is_live }),

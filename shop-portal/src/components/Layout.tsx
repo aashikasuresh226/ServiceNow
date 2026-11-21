@@ -41,7 +41,7 @@ export function Layout() {
       <div className="app">
         <nav className="sidebar" aria-label="Main">
           <div className="brand">
-            <Logo size={30} />
+            {shop.logo_url ? <img className="brand-logo" src={shop.logo_url} alt="" /> : <Logo size={30} />}
             {shop.name}
           </div>
           {NAV.map((item) => (

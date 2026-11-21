@@ -17,6 +17,7 @@ from app.domain import enums
 from app.domain.pricing import DIAGNOSTIC_FEE_CENTS, PRICE_BOOK
 from app.models import Homeowner, ProcessedWebhook, RequestPhoto, Shop
 from app.schemas.api import InviteOut
+from app.services import media
 from app.services.customer_service import CustomerService
 from app.services.provider_service import ProviderService
 
@@ -105,6 +106,19 @@ async def get_photo(
         content=data,
         media_type=photo.content_type,
         headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/media/{key}")
+async def get_media(key: str, session: SessionDep, c: ContainerDep) -> Response:
+    """A profile photo or shop logo (only files that are currently in use)."""
+    if not await media.in_use(session, key):
+        raise NotFound("Image not found")
+    data = await c.storage.read(key)
+    return Response(
+        content=data,
+        media_type="image/png" if key.endswith(".png") else "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
     )
 
 
