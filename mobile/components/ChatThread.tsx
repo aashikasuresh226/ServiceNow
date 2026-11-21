@@ -52,7 +52,7 @@ export function ChatThread({ load, send, me, closed, closedNote }: {
               accessibilityLabel={`${mine ? 'You' : who}: ${m.body}`}>
               {!mine ? <Text style={styles.who}>{who}</Text> : null}
               <Text style={{ color: mine ? '#FFFFFF' : colors.ink, fontSize: 15, lineHeight: 20 }}>{m.body}</Text>
-              <Text style={[styles.time, mine && { color: '#DCE5FB' }]}>
+              <Text style={[styles.time, mine && { color: '#CFE5E0' }]}>
                 {new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
               </Text>
             </View>

@@ -306,7 +306,7 @@ export function Badge({ label, tone = 'primary' }: {
   const t = {
     primary: { bg: colors.primarySoft, fg: colors.primary },
     amber: { bg: colors.amberSoft, fg: colors.amberInk },
-    neutral: { bg: '#E9ECF0', fg: colors.body },
+    neutral: { bg: '#EFEAE0', fg: colors.body },
     success: { bg: colors.successSoft, fg: colors.success },
   }[tone];
   return (

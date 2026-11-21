@@ -18,11 +18,18 @@
       "package": "com.example.hvacconnect",
       "permissions": [
         "CAMERA"
-      ]
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#15403B"
+      }
     },
     "web": {
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "favicon": "./assets/favicon.png",
+      "themeColor": "#15403B",
+      "backgroundColor": "#F6F2EA"
     },
     "plugins": [
       "expo-router",
@@ -45,6 +52,9 @@
     "experiments": {
       "typedRoutes": false,
       "tsconfigPaths": true
-    }
+    },
+    "icon": "./assets/icon.png",
+    "primaryColor": "#15403B",
+    "backgroundColor": "#F6F2EA"
   }
 }

@@ -73,7 +73,7 @@ export function Stat({ icon, value, label, tone }: {
   const colors = {
     primary: ['var(--primary-soft)', 'var(--primary)'],
     amber: ['var(--amber-soft)', 'var(--amber-ink)'],
-    neutral: ['#eef0f3', 'var(--ink)'],
+    neutral: ['#efeae0', 'var(--ink)'],
   }[tone];
   return (
     <div className="card stat">

@@ -4,6 +4,7 @@ import { Text, View, useWindowDimensions } from 'react-native';
 
 import { GoogleSignIn, googleSignInAvailable } from '@/components/auth/GoogleSignIn';
 import { HouseIllustration } from '@/components/illustrations';
+import { Logo } from '@/components/Logo';
 import { colors } from '@/components/theme';
 import { Badge, Body, Button, Card, ErrorText, Field, Muted, Row, Screen } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -63,9 +64,12 @@ export default function Welcome() {
         <HouseIllustration width={compact ? 150 : 230} />
       </Card>
       <View style={{ alignItems: 'center', gap: 2 }}>
-        <Text style={{ fontSize: compact ? 26 : 30, fontWeight: '800', color: colors.ink, letterSpacing: -0.5 }}>
-          {APP_NAME}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Logo size={compact ? 32 : 38} />
+          <Text style={{ fontSize: compact ? 26 : 30, fontWeight: '800', color: colors.primaryDark, letterSpacing: -0.5 }}>
+            {APP_NAME}
+          </Text>
+        </View>
         <Body style={{ color: colors.muted }}>HVAC help, matched in minutes</Body>
       </View>
       {invitedBy ? (

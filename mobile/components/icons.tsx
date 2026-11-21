@@ -91,7 +91,7 @@ function extras(name: IconName, color: string) {
   }
 }
 
-export function Icon({ name, size = 20, color = '#1A1F2B', strokeWidth = 2 }: {
+export function Icon({ name, size = 20, color = '#1C2B29', strokeWidth = 2 }: {
   name: IconName;
   size?: number;
   color?: string;

@@ -35,9 +35,9 @@ function JobSummary({ job }: { job: Job }) {
         <img className="photo-thumb" src={job.photos[0].url} alt="Homeowner's photo of the unit" />
       ) : (
         <svg className="photo-thumb" viewBox="0 0 120 100" role="img" aria-label="No photo">
-          <rect x="12" y="10" width="96" height="76" rx="6" fill="#fff" stroke="#5B6372" strokeWidth="2" />
-          <circle cx="54" cy="52" r="24" fill="#fff" stroke="#5B6372" strokeWidth="2" />
-          <rect x="88" y="28" width="14" height="22" rx="2" fill="#DCE5FB" stroke="#1D4ED8" strokeWidth="2" />
+          <rect x="12" y="10" width="96" height="76" rx="6" fill="#fff" stroke="#5C6964" strokeWidth="2" />
+          <circle cx="54" cy="52" r="24" fill="#fff" stroke="#5C6964" strokeWidth="2" />
+          <rect x="88" y="28" width="14" height="22" rx="2" fill="#CFE5E0" stroke="#2F7A70" strokeWidth="2" />
         </svg>
       )}
       <div className="stack spacer" style={{ gap: 4, minWidth: 220 }}>

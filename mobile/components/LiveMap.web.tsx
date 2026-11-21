@@ -12,7 +12,7 @@ export function LiveMap({ lat, lng, height = 220, label }: {
   const bbox = [lng - d, lat - d * 0.7, lng + d, lat + d * 0.7].map((v) => v.toFixed(5)).join(',');
   const src = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat.toFixed(5)},${lng.toFixed(5)}`;
   return (
-    <View style={{ height, overflow: 'hidden', backgroundColor: '#E8EEFD' }}>
+    <View style={{ height, overflow: 'hidden', backgroundColor: '#E4F0ED' }}>
       {createElement('iframe', {
         src,
         title: label,

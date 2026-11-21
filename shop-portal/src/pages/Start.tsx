@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { Logo } from '../components/Logo';
 import { useOptions } from '../lib/hooks';
 
 export function StartPage() {
@@ -20,7 +21,8 @@ export function StartPage() {
     <div className="auth-page">
       <main className="start-card">
         <div className="start-head">
-          <h1 style={{ fontSize: 26, margin: 0 }}>Welcome to HVAC Connect</h1>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><Logo size={52} /></div>
+          <h1 style={{ fontSize: 26, margin: 0, color: 'var(--primary-dark)' }}>Welcome to HVAC Connect</h1>
           <p className="muted" style={{ margin: 0 }}>Who are you?</p>
         </div>
 

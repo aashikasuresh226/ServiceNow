@@ -5,6 +5,7 @@ import { api, onSignOut, setTokens } from '../lib/api';
 import { PortalContext, useAction, useLiveData, useOptions } from '../lib/hooks';
 import type { ShopMe } from '../lib/types';
 import { Icon } from './Icon';
+import { Logo } from './Logo';
 import { ErrorAlert, Switch } from './ui';
 
 const NAV = [
@@ -40,7 +41,7 @@ export function Layout() {
       <div className="app">
         <nav className="sidebar" aria-label="Main">
           <div className="brand">
-            <span className="brand-mark"><Icon name="wrench" color="#fff" /></span>
+            <Logo size={30} />
             {shop.name}
           </div>
           {NAV.map((item) => (
