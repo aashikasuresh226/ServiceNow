@@ -93,7 +93,7 @@ export default function JoinAsTechnician() {
       setup ? (
         <Button label="Verify and start" busy={accept.busy} disabled={code.length !== 6} onPress={() => accept.run()} />
       ) : (
-        <Button label="Set up sign-in" icon="shield" busy={start.busy} onPress={() => start.run()} />
+        <Button label="Continue with email links" icon="mail" busy={useEmail.busy} onPress={() => useEmail.run()} />
       )
     }>
       <Title sub={`${info.shop_name} added you to their team.`}>Join {info.shop_name}</Title>
@@ -125,11 +125,15 @@ export default function JoinAsTechnician() {
           ) : null}
           <Field label="Mobile number" value={phone} onChangeText={setPhone} placeholder="(404) 555-0123"
             keyboardType="phone-pad" autoComplete="tel" onSubmitEditing={() => start.run()} />
-          <Muted>Customers and the office reach you on it. You'll sign in with a free authenticator app (no texts).</Muted>
-          <ErrorText message={start.error} />
-          <Button label={`No authenticator? Use email links (${info.email})`} variant="secondary" icon="mail"
-            busy={useEmail.busy} onPress={() => useEmail.run()} />
+          <Muted>Customers and the office reach you on it.</Muted>
+          <Card tone="soft" style={{ gap: 4 }}>
+            <Body style={{ fontWeight: '700' }}>Signing in: no password, no app needed</Body>
+            <Muted>Each time you sign in, we email a link to {info.email}. Tap it and you're in.</Muted>
+          </Card>
           <ErrorText message={useEmail.error} />
+          <Button label="Use an authenticator app instead" variant="secondary" icon="shield"
+            busy={start.busy} onPress={() => start.run()} />
+          <ErrorText message={start.error} />
           <Muted>Location is shared only while you're driving to a job, and only with that customer.</Muted>
         </View>
       )}

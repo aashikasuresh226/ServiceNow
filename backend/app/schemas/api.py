@@ -145,8 +145,17 @@ class EmailLinkOut(Model):
     dev_link: str | None = None
 
 
+class StepTokenIn(Model):
+    token: str = Field(min_length=10, max_length=4000)  # a sign-in step token (JWT)
+
+
+class LoginCodeOut(Model):
+    code: str  # shown by the emailed sign-in link, typed on the computer that's signing in
+
+
 class ShopLoginOut(Model):
-    # "verify_email" (open the emailed link) | "mfa" (enter code) | "mfa_setup" (enroll first)
+    # verify_email (open the emailed link) | mfa (authenticator code) | mfa_email (a sign-in
+    # link was emailed) | mfa_setup (choose authenticator or email first)
     step: str
     token: str
     email_link: EmailLinkOut | None = None

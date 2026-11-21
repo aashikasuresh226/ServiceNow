@@ -25,6 +25,7 @@ from app.schemas.api import (
     InviteAcceptIn,
     InviteAuthenticatorIn,
     InviteInfoOut,
+    LoginCodeOut,
     MfaCodeIn,
     MfaEnrollOut,
     MfaLoginIn,
@@ -35,6 +36,7 @@ from app.schemas.api import (
     ShopLoginIn,
     ShopLoginOut,
     ShopSignupIn,
+    StepTokenIn,
     TechEmailStartIn,
     TechLoginIn,
     TechSessionOut,
@@ -259,6 +261,58 @@ async def mfa_activate(
         refresh_token=tokens.refresh_token,
         expires_in=tokens.expires_in,
     )
+
+
+@router.post("/shop/mfa/email", response_model=TokensOut)
+async def mfa_email(principal: ShopSetupDep, session: SessionDep, c: ContainerDep) -> TokensOut:
+    """2-step verification by email (a sign-in link each time) instead of an authenticator."""
+    return _tokens(await AuthService(session, c).enable_email_mfa(principal.user))
+
+
+async def _mfa_user(token: str, session: SessionDep, c: ContainerDep) -> ShopUser:
+    claims = c.tokens.verify(token, expected_type=TokenType.MFA, now=c.clock.now())
+    if claims.role != Role.SHOP_USER:
+        raise Forbidden("Shop account required")
+    user = await session.get(ShopUser, claims.subject_id)
+    if user is None:
+        raise Unauthorized("Account not found")
+    return user
+
+
+@router.post("/shop/login/email-resend", response_model=ShopLoginOut)
+async def shop_login_email_resend(
+    body: StepTokenIn, session: SessionDep, c: ContainerDep
+) -> ShopLoginOut:
+    """Send the 2-step sign-in link again (body.token: the sign-in step token)."""
+    user = await _mfa_user(body.token, session, c)
+    return _step(await AuthService(session, c).resend_shop_login_link(user))
+
+
+@router.post("/shop/login/email-open", response_model=LoginCodeOut)
+async def shop_login_email_open(
+    body: EmailProofIn, request: Request, session: SessionDep, c: ContainerDep
+) -> LoginCodeOut:
+    """The emailed sign-in link was opened: a code to type on the computer signing in."""
+    code = await AuthService(session, c).open_shop_login_link(body.token, ip=client_ip(request))
+    return LoginCodeOut(code=code)
+
+
+@router.post("/shop/login/email-finish", response_model=TokensOut)
+async def shop_login_email_finish(
+    body: EmailProofIn, request: Request, session: SessionDep, c: ContainerDep
+) -> TokensOut:
+    """ "Continue on this device" from the emailed sign-in link."""
+    return _tokens(
+        await AuthService(session, c).finish_shop_login_link(body.token, ip=client_ip(request))
+    )
+
+
+@router.post("/shop/login/email-code", response_model=TokensOut)
+async def shop_login_email_code(
+    body: MfaLoginIn, session: SessionDep, c: ContainerDep
+) -> TokensOut:
+    user = await _mfa_user(body.token, session, c)
+    return _tokens(await AuthService(session, c).shop_login_code(user, body.code))
 
 
 @router.post("/shop/login/mfa", response_model=TokensOut)

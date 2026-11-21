@@ -182,6 +182,15 @@ export const api = {
     request<void>('POST', '/auth/shop/verify-email', { token }),
   loginMfa: (token: string, code: string) =>
     request<Tokens>('POST', '/auth/shop/login/mfa', { token, code }),
+  // 2-step verification by email (no authenticator app)
+  mfaEmail: (setupToken: string) =>
+    request<Tokens>('POST', '/auth/shop/mfa/email', undefined, { token: setupToken }),
+  loginEmailResend: (stepToken: string) =>
+    request<LoginStep>('POST', '/auth/shop/login/email-resend', { token: stepToken }),
+  loginEmailOpen: (t: string) => request<{ code: string }>('POST', '/auth/shop/login/email-open', { token: t }),
+  loginEmailFinish: (t: string) => request<Tokens>('POST', '/auth/shop/login/email-finish', { token: t }),
+  loginEmailCode: (stepToken: string, code: string) =>
+    request<Tokens>('POST', '/auth/shop/login/email-code', { token: stepToken, code }),
   enrollMfa: (setupToken: string) =>
     request<{ secret: string; otpauth_uri: string }>(
       'POST', '/auth/shop/mfa/enroll', undefined, { token: setupToken }),

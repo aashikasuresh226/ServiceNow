@@ -87,6 +87,9 @@ export function AuthPage() {
   if (step?.step === 'verify_email') {
     return <VerifyEmailStep step={step} onNext={setStep} onBack={() => setStep(null)} />;
   }
+  if (step?.step === 'mfa_email') {
+    return <MfaEmailStep step={step} onDone={() => navigate('/', { replace: true })} onBack={() => setStep(null)} />;
+  }
   if (step?.step === 'mfa') {
     return <MfaVerify step={step} onDone={() => navigate('/', { replace: true })} onBack={() => setStep(null)} />;
   }
@@ -258,7 +261,72 @@ function MfaVerify({ step, onDone, onBack }: { step: LoginStep; onDone: () => vo
   );
 }
 
-function MfaSetup({ token, onDone }: { token: string; isNew: boolean; onDone: () => void }) {
+/** 2-step verification by email: a link was emailed after the password. Open it on this
+ * computer (it signs in there), or on a phone and type the 6-digit code it shows here. */
+function MfaEmailStep({ step, onDone, onBack }: { step: LoginStep; onDone: () => void; onBack: () => void }) {
+  const [link, setLink] = useState(step.email_link);
+  const [resent, setResent] = useState(false);
+  const verify = useAction(async (code: string) => {
+    setTokens(await api.loginEmailCode(step.token, code));
+    onDone();
+  });
+  const resend = useAction(async () => {
+    const next = await api.loginEmailResend(step.token);
+    setLink(next.email_link);
+    setResent(true);
+  });
+  return (
+    <CodeForm title="Check your email"
+      subtitle={`${resent ? 'We sent a new' : 'We sent a'} sign-in link to ${link?.email ?? 'your email'}. Open it on this computer to continue, or open it on your phone and type the code it shows here. Not in your inbox? Check Spam or Junk.`}
+      submitLabel="Sign in" onSubmit={(c) => verify.run(c)} error={verify.error ?? resend.error} busy={verify.busy}>
+      {link?.delivery === 'development' && link.dev_link ? (
+        <p className="row small"><span className="badge amber">TEST MODE</span>
+          <a href={link.dev_link} target="_blank" rel="noreferrer">Open the sign-in link</a></p>
+      ) : null}
+      <div className="row between small">
+        <a href="#back" onClick={(e) => { e.preventDefault(); onBack(); }}>Use a different account</a>
+        <Button size="small" type="button" busy={resend.busy} onClick={() => resend.run()}>Send a new link</Button>
+      </div>
+    </CodeForm>
+  );
+}
+
+/** First time: choose how 2-step verification works (email needs no app). */
+function MfaSetup({ token, isNew, onDone }: { token: string; isNew: boolean; onDone: () => void }) {
+  const [method, setMethod] = useState<'email' | 'app' | null>(null);
+  const email = useAction(async () => {
+    setTokens(await api.mfaEmail(token));
+    onDone();
+  });
+  if (method === 'app') return <AuthenticatorSetupStep token={token} onDone={onDone} />;
+  return (
+    <div className="auth-page">
+      <div className="card stack" style={{ maxWidth: 480, width: '100%', padding: 28 }}>
+        <h1 style={{ margin: 0 }}>{isNew ? 'One more step: protect your account' : 'Turn on 2-step verification'}</h1>
+        <p className="muted" style={{ margin: 0 }}>Every shop account needs a second step after the password. Choose how you'd like to do it.</p>
+        <button type="button" className="role-option" onClick={() => { setMethod('email'); void email.run(); }} disabled={email.busy}>
+          <span className="role-icon"><Icon name="mail" size={22} /></span>
+          <span className="role-text">
+            <strong>Email me a sign-in link</strong>
+            <span className="small muted">No app needed. Each time you sign in, open the link we email you.</span>
+          </span>
+          {email.busy ? <span className="spinner" aria-hidden="true" /> : <Icon name="arrow" size={18} />}
+        </button>
+        <button type="button" className="role-option" onClick={() => setMethod('app')}>
+          <span className="role-icon"><Icon name="shield" size={22} /></span>
+          <span className="role-text">
+            <strong>Authenticator app</strong>
+            <span className="small muted">Most secure. Google Authenticator, Microsoft Authenticator, 1Password…</span>
+          </span>
+          <Icon name="arrow" size={18} />
+        </button>
+        <ErrorAlert message={email.error} />
+      </div>
+    </div>
+  );
+}
+
+function AuthenticatorSetupStep({ token, onDone }: { token: string; onDone: () => void }) {
   const [enroll, setEnroll] = useState<{ secret: string; otpauth_uri: string } | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const start = useAction(async () => {

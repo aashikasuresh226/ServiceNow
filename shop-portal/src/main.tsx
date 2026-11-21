@@ -16,6 +16,7 @@ import { JobsPage } from './pages/Jobs';
 import { PayoutsOnboarding } from './pages/Payouts';
 import { SettingsPage } from './pages/Settings';
 import { StartPage } from './pages/Start';
+import { VerifyLoginPage } from './pages/VerifyLogin';
 import { ForgotPasswordPage, ResetPasswordPage } from './pages/ForgotPassword';
 import { TechniciansPage } from './pages/Technicians';
 import { VerifyEmailPage } from './pages/VerifyEmail';
@@ -34,6 +35,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/verify-login" element={<VerifyLoginPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route element={<RequireSession><Layout /></RequireSession>}>
           <Route index element={<DashboardPage />} />

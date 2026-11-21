@@ -41,6 +41,7 @@ TTL = {
     "tech_recovery": timedelta(minutes=30),
     "shop_password_reset": timedelta(minutes=30),
     "homeowner_email": timedelta(hours=24),  # adding a recovery email
+    "shop_login": timedelta(minutes=15),  # 2-step verification by email
 }
 
 
@@ -125,6 +126,17 @@ class EmailProofService:
         challenge.claim_hash = hash_token(claim)
         await self.s.flush()
         return claim
+
+    async def check_inbox(self, challenge: EmailChallenge) -> None:
+        """Firebase confirms the address (the link went through its verification page)."""
+        if self.c.firebase is not None:
+            if not await self.c.firebase.is_verified(challenge.email):
+                raise Unauthorized(
+                    "Open the link in the email we sent, then continue from there.",
+                    code="email_unverified",
+                )
+        elif self.c.settings.environment == Environment.PROD:
+            raise AppError("Email links aren't set up (Firebase)", code="email_not_configured")
 
     async def redeem(self, token: str, purpose: str) -> EmailChallenge:
         """A sign-in link was opened: the token (only ever in the email) proves the inbox,

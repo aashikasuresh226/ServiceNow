@@ -35,7 +35,7 @@ export type EmailLink = {
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number };
 
 export type LoginStep = {
-  step: 'verify_email' | 'mfa' | 'mfa_setup';
+  step: 'verify_email' | 'mfa' | 'mfa_email' | 'mfa_setup';
   token: string;
   email_link: EmailLink | null;
 };

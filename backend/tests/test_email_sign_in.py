@@ -259,3 +259,68 @@ async def test_shop_resets_a_forgotten_password(
     )
     assert r.status_code == 200
     assert r.json()["step"] != "done"  # 2-step verification still required
+
+
+# --- Shops: 2-step verification by email ----------------------------------------------------
+async def test_shop_uses_email_instead_of_an_authenticator(client: httpx.AsyncClient) -> None:
+    from tests.conftest import STRONG_PASSWORD
+
+    email = "owner@email2fa.example.com"
+    r = await client.post(
+        "/auth/shop/signup",
+        json={"email": email, "password": STRONG_PASSWORD, "shop_name": "Email Air"},
+    )
+    body = r.json()
+    await client.post(
+        "/auth/shop/verify-email", json={"token": token_from_link(body["email_link"]["dev_link"])}
+    )
+    setup = {"Authorization": f"Bearer {body['token']}"}
+    step = (await client.get("/auth/shop/setup-status", headers=setup)).json()
+    assert step["step"] == "mfa_setup"
+    r = await client.post(
+        "/auth/shop/mfa/email", headers={"Authorization": f"Bearer {step['token']}"}
+    )
+    assert r.status_code == 200, r.text
+    assert (
+        await client.get(
+            "/shop/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"}
+        )
+    ).status_code == 200
+
+    # Next sign-in: password, then a link is emailed.
+    login = (
+        await client.post("/auth/shop/login", json={"email": email, "password": STRONG_PASSWORD})
+    ).json()
+    assert login["step"] == "mfa_email"
+    link = login["email_link"]["dev_link"]
+    assert "/verify-login?t=" in link
+    token = token_from_link(link)
+    # The password-step token alone can't sign in.
+    r = await client.post(
+        "/auth/shop/login/email-code", json={"token": login["token"], "code": "000000"}
+    )
+    assert r.status_code == 401
+    # Opened on a phone: shows a code; typed on the computer: signed in.
+    code = (await client.post("/auth/shop/login/email-open", json={"token": token})).json()["code"]
+    assert len(code) == 6
+    r = await client.post(
+        "/auth/shop/login/email-code", json={"token": login["token"], "code": code}
+    )
+    assert r.status_code == 200, r.text
+    r = await client.post(
+        "/auth/shop/login/email-code", json={"token": login["token"], "code": code}
+    )
+    assert r.status_code == 401  # single use
+
+    # Or "continue on this device" from the link.
+    login = (
+        await client.post("/auth/shop/login", json={"email": email, "password": STRONG_PASSWORD})
+    ).json()
+    r = await client.post(
+        "/auth/shop/login/email-finish",
+        json={"token": token_from_link(login["email_link"]["dev_link"])},
+    )
+    assert r.status_code == 200, r.text
+    # Resend
+    r = await client.post("/auth/shop/login/email-resend", json={"token": login["token"]})
+    assert r.json()["step"] == "mfa_email" and r.json()["email_link"]["dev_link"]

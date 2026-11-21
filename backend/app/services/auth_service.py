@@ -12,6 +12,7 @@ All sessions use short-lived access tokens + rotating refresh tokens.
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -29,6 +30,7 @@ from app.core.security import (
     Role,
     TokenClaims,
     TokenType,
+    constant_time_equals,
     hash_password,
     hash_token,
     new_refresh_token,
@@ -38,7 +40,15 @@ from app.core.security import (
     verify_totp,
 )
 from app.integrations.google_auth import GoogleIdentity
-from app.models import AuthNonce, Homeowner, RefreshToken, Shop, ShopUser, Technician
+from app.models import (
+    AuthNonce,
+    EmailChallenge,
+    Homeowner,
+    RefreshToken,
+    Shop,
+    ShopUser,
+    Technician,
+)
 from app.services import authenticator
 from app.services.customer_service import CustomerService
 from app.services.email_check import check_email
@@ -668,9 +678,94 @@ class AuthService:
                 else None
             )
             return ShopStep("verify_email", self._limited_token(user, TokenType.MFA_SETUP), link)
+        if user.mfa_enabled and not user.totp_secret_encrypted:
+            # 2-step verification by email: a sign-in link each time.
+            link = await self._send_shop_login_link(user) if send_email else None
+            return ShopStep("mfa_email", self._limited_token(user, TokenType.MFA), link)
         if user.mfa_enabled:
             return ShopStep("mfa", self._limited_token(user, TokenType.MFA))
         return ShopStep("mfa_setup", self._limited_token(user, TokenType.MFA_SETUP))
+
+    # --- Shops: 2-step verification by email (no authenticator app) ----------------------
+    # After the password, a link is emailed. Opened on the same device, it signs in there;
+    # opened on another one (e.g. a phone), it shows a 6-digit code to type on the computer
+    # that's signing in. Either way, the password alone isn't enough.
+    async def _send_shop_login_link(self, user: ShopUser) -> EmailLink:
+        self.c.rate_limiter.check("shop_login_link", str(user.id), limit=10, window_seconds=3600)
+        return await EmailProofService(self.s, self.c).start(
+            purpose="shop_login",
+            subject_id=user.id,
+            email=user.email,
+            page_url=f"{self.settings.public_web_url.rstrip('/')}/verify-login",
+        )
+
+    async def resend_shop_login_link(self, user: ShopUser) -> ShopStep:
+        if not user.mfa_enabled or user.totp_secret_encrypted:
+            raise Conflict("This account uses an authenticator app", code="use_authenticator")
+        return await self._shop_step(user)
+
+    async def enable_email_mfa(self, user: ShopUser) -> SessionTokens:
+        """Choose email instead of an authenticator app for 2-step verification."""
+        if user.email_verified_at is None:
+            raise Conflict("Confirm your email first", code="email_unverified")
+        if user.mfa_enabled:
+            raise Conflict("2-step verification is already on", code="mfa_already_enabled")
+        user.totp_secret_encrypted = None
+        user.mfa_enabled = True
+        await self.s.flush()
+        return await self.issue_session(
+            TokenClaims(user.id, Role.SHOP_USER, TokenType.ACCESS, user.shop_id)
+        )
+
+    async def open_shop_login_link(self, token: str, *, ip: str | None) -> str:
+        """The emailed link was opened: returns a 6-digit code for the other device."""
+        self.limit_ip(ip)
+        proof = EmailProofService(self.s, self.c)
+        challenge = await proof.get(token, "shop_login")
+        await proof.check_inbox(challenge)
+        code = f"{secrets.randbelow(10**6):06d}"
+        challenge.verified_at = self.c.clock.now()
+        challenge.claim_hash = hash_token(f"code:{code}")
+        await self.s.flush()
+        return code
+
+    async def finish_shop_login_link(self, token: str, *, ip: str | None) -> SessionTokens:
+        """ "Continue on this device" from the emailed link."""
+        self.limit_ip(ip)
+        challenge = await EmailProofService(self.s, self.c).redeem(token, "shop_login")
+        user = await self.s.get(ShopUser, challenge.subject_id)
+        if user is None:
+            raise NotFound("This account no longer exists")
+        return await self.issue_session(
+            TokenClaims(user.id, Role.SHOP_USER, TokenType.ACCESS, user.shop_id)
+        )
+
+    async def shop_login_code(self, user: ShopUser, code: str) -> SessionTokens:
+        """The code shown by the emailed link, typed on the computer that's signing in."""
+        self.c.rate_limiter.check("totp", str(user.id), limit=10, window_seconds=900)
+        challenge = await self.s.scalar(
+            select(EmailChallenge)
+            .where(
+                EmailChallenge.subject_id == user.id,
+                EmailChallenge.purpose == "shop_login",
+                EmailChallenge.used_at.is_(None),
+                EmailChallenge.expires_at > self.c.clock.now(),
+                EmailChallenge.claim_hash.is_not(None),
+            )
+            .order_by(EmailChallenge.created_at.desc())
+            .limit(1)
+        )
+        if challenge is None or not constant_time_equals(
+            challenge.claim_hash or "", hash_token(f"code:{code.strip()}")
+        ):
+            raise Unauthorized(
+                "That code isn't right. Open the newest email we sent.", code="mfa_invalid"
+            )
+        challenge.used_at = self.c.clock.now()
+        await self.s.flush()
+        return await self.issue_session(
+            TokenClaims(user.id, Role.SHOP_USER, TokenType.ACCESS, user.shop_id)
+        )
 
     async def resend_shop_email(self, user: ShopUser) -> ShopStep:
         self.c.rate_limiter.check("email_link", str(user.id), limit=5, window_seconds=3600)
