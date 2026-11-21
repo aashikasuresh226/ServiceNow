@@ -11,6 +11,7 @@ import { techApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { countdown, money, visitTime } from '@/lib/format';
 import { labelFor, useAction, useCountdown, useOptions, usePolling } from '@/lib/hooks';
+import { arrivalWindow, homeRangeFor } from '@/lib/homeTimes';
 import { useLiveLocation } from '@/lib/liveLocation';
 import type { TechJob } from '@/lib/types';
 import { JOB_STATUS } from '@/lib/techStatus';
@@ -76,6 +77,10 @@ function JobView({ job, onChange, sharing }: {
       <Title sub={job.address ?? `${job.area_label} · address shown after you accept`}>
         {job.customer_name ?? 'New customer'}
       </Title>
+
+      {job.arrival_at && job.customer_availability?.length && ['offered', 'dispatched', 'en_route'].includes(job.status) ? (
+        <ArrivalWindow arrivalAt={job.arrival_at} ranges={job.customer_availability} />
+      ) : null}
 
       {job.technician_flag ? (
         <Card tone="amber"><Body>You told the office you can't make this job: “{job.technician_flag}”. They'll reassign it or call you.</Body></Card>
@@ -249,3 +254,23 @@ const styles = StyleSheet.create({
   photo: { width: 120, height: 90, borderRadius: radius.sm, backgroundColor: colors.background },
   liveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#17A34A' },
 });
+
+/** When to arrive, inside the times the customer said they're home. */
+function ArrivalWindow({ arrivalAt, ranges }: { arrivalAt: string; ranges: NonNullable<TechJob['customer_availability']> }) {
+  const home = homeRangeFor(arrivalAt, ranges);
+  const t = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const awayBefore = home && new Date(home.start) > new Date() ? t(home.start) : null;
+  return (
+    <Card tone="soft" style={{ gap: 2 }}>
+      <Text style={{ fontSize: 12, color: colors.primaryDark }}>Arrive between</Text>
+      <Text style={{ fontSize: 20, fontWeight: '700', color: colors.primaryDark }}>{arrivalWindow(arrivalAt, home?.end)}</Text>
+      {home ? <Text style={{ fontSize: 13, color: colors.primaryDark }}>Customer home until {t(home.end)}</Text> : null}
+      {awayBefore ? (
+        <Row style={{ gap: 6, marginTop: 4 }}>
+          <Icon name="info" size={14} color={colors.muted} />
+          <Muted style={{ flex: 1 }}>Customer is away before {awayBefore}</Muted>
+        </Row>
+      ) : null}
+    </Card>
+  );
+}

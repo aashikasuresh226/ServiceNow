@@ -303,6 +303,18 @@ class RatingIn(Model):
     review: str | None = Field(None, max_length=500)
 
 
+class TimeRange(Model):
+    """A time the homeowner is home (ISO 8601 with a time zone)."""
+
+    start: datetime
+    end: datetime
+
+
+class AvailabilityIn(Model):
+    # Empty list: any time. Validated and merged in services/home_times.
+    ranges: list[TimeRange] = Field(default_factory=list, max_length=40)
+
+
 class MatchIn(Model):
     """Who the homeowner wants: a company, a specific technician, or neither (soonest)."""
 
@@ -389,6 +401,7 @@ class RequestOut(Model):
     shop_rating: int | None = None
     preferred_shop_id: uuid.UUID | None = None
     preferred_technician_id: uuid.UUID | None = None
+    availability: list[TimeRange] | None = None  # when the homeowner is home (None: any time)
     canceled_reason: str | None
     completed_at: datetime | None
     chat_open: bool = False
@@ -626,6 +639,7 @@ class ShopJobOut(Model):
     payment: PaymentInfo
     payout_cents: int | None  # what the shop receives after the platform fee
     picked_by_customer: bool = False  # the homeowner chose this company / technician
+    customer_availability: list[TimeRange] | None = None  # when they're home (None: any time)
     # No per-job ratings or review text: homeowners rate privately. The shop sees only the
     # averages (ShopOut.rating, TechnicianOut.rating); reviews are read by the platform admin.
     technician_flag: str | None = None  # the technician said they can't make it
@@ -675,6 +689,7 @@ class TechJobOut(Model):
     chat_open: bool
     can_contact: bool
     completed_at: datetime | None
+    customer_availability: list[TimeRange] | None = None  # when they're home (None: any time)
 
 
 class OutsideJobOut(Model):

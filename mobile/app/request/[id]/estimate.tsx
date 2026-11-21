@@ -32,7 +32,7 @@ export default function Estimate() {
     return (
       <Screen footer={
         <>
-          <Button label="Continue" onPress={() => router.push(`/request/${id}/preferences`)} />
+          <Button label="Continue" onPress={() => router.push(`/request/${id}/times`)} />
           <TextLink label="Save for later" color={colors.muted} onPress={() => router.replace('/home')} />
         </>
       }>
@@ -61,7 +61,7 @@ export default function Estimate() {
   return (
     <Screen footer={
       <>
-        <Button label="Continue" onPress={() => router.push(`/request/${id}/preferences`)} />
+        <Button label="Continue" onPress={() => router.push(`/request/${id}/times`)} />
         <TextLink label="Save for later" color={colors.muted} onPress={() => router.replace('/home')} />
       </>
     }>

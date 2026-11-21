@@ -37,6 +37,7 @@ class ProviderService:
             equipment_type=criteria.equipment_type,
             requires_refrigerant_work=criteria.requires_refrigerant_work,
             excluded_technician_ids=criteria.excluded_technician_ids,
+            windows=criteria.windows,  # only who can come while the homeowner is home
         )  # ignore any earlier pick: list everyone
         pool = await AvailabilityService(self.s, self.c).load_candidates(
             near=LatLng(request.lat, request.lng), now=now

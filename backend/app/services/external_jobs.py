@@ -35,7 +35,7 @@ from app.integrations.scheduling.housecall_pro import (
     parse_us_address,
 )
 from app.models import ExternalJob, Homeowner, ServiceRequest, Shop, Technician
-from app.services import integration_log
+from app.services import home_times, integration_log
 from app.services.calendar_service import CalendarService
 from app.services.customer_service import CustomerService
 from app.services.lifecycle import transition
@@ -99,7 +99,7 @@ class ExternalJobService:
                 start=start,
                 end=start + timedelta(minutes=self.c.settings.default_job_duration_minutes),
                 arrival_window_minutes=ARRIVAL_WINDOW_MINUTES,
-                notes=self._notes(request),
+                notes=self._notes(request, shop.timezone),
                 employee_ids=employee_ids,
             )
         except AppError as exc:
@@ -133,7 +133,7 @@ class ExternalJobService:
             except AppError as exc:
                 log.info("Couldn't attach photo link to HCP job %s: %s", job_id, exc.message)
 
-    def _notes(self, request: ServiceRequest) -> str:
+    def _notes(self, request: ServiceRequest, timezone: str = "America/New_York") -> str:
         unit = request.unit_info or {}
         dx = request.diagnosis or {}
         lines = ["Booked through HVAC Connect."]
@@ -163,6 +163,9 @@ class ExternalJobService:
             if request.estimate_high_cents:
                 shown += f"-${request.estimate_high_cents / 100:,.0f}"
             lines.append(f"Customer was shown an estimate of {shown} (including the visit).")
+        times = home_times.describe(request.availability, timezone)
+        if times:
+            lines.append(f"Customer is home: {times}. Please arrive within these times.")
         return "\n".join(lines)
 
     async def note_canceled(self, request: ServiceRequest, shop: Shop, reason: str) -> None:

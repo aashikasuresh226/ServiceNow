@@ -70,6 +70,48 @@ function JobSummary({ job }: { job: Job }) {
   );
 }
 
+const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+/** When the customer is home, and (once booked) the arrival window inside it. */
+function CustomerTimes({ job }: { job: Job }) {
+  const ranges = job.customer_availability;
+  if (!ranges?.length) return null;
+  const byDay = new Map<string, { start: string; end: string }[]>();
+  for (const r of ranges) byDay.set(dayLabel(r.start), [...(byDay.get(dayLabel(r.start)) ?? []), r]);
+  const arrival = job.arrival_at ? new Date(job.arrival_at).getTime() : null;
+  const home = arrival != null
+    ? ranges.find((r) => new Date(r.start).getTime() <= arrival && arrival <= new Date(r.end).getTime())
+    : undefined;
+  const windowEnd = arrival != null
+    ? Math.min(arrival + 3600_000, home ? new Date(home.end).getTime() : Infinity) : null;
+  return (
+    <div className="customer-times">
+      <span className="label">Customer is home</span>
+      {[...byDay.entries()].map(([day, rs]) => (
+        <div key={day} className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <span className="small" style={{ width: 92 }}>{day}</span>
+          {rs.map((r) => <span key={r.start} className="time-pill">{timeOf(r.start)} – {timeOf(r.end)}</span>)}
+        </div>
+      ))}
+      {arrival != null && windowEnd != null ? (
+        <p className="small" style={{ margin: '4px 0 0' }}>
+          Arrive between <strong>{dayLabel(job.arrival_at!)} {timeOf(job.arrival_at!)} – {timeOf(new Date(windowEnd).toISOString())}</strong>
+          {home ? <span className="muted"> · home until {timeOf(home.end)}</span> : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void }) {
   const { options, me } = usePortal();
   const mode = me?.shop.dispatch_mode ?? 'platform';
@@ -94,6 +136,7 @@ export function OfferCard({ job, onChanged }: { job: Job; onChanged: () => void 
         <p className="notice small" role="status"><strong>Offered to a few nearby shops at once.</strong> The first to accept gets it.</p>
       ) : null}
       <JobSummary job={job} />
+      <CustomerTimes job={job} />
       {job.arrival_at && new Date(job.arrival_at).getTime() - Date.now() > 2 * 3600_000 ? (
         <p className="notice small">Scheduled visit: <strong>{visitTime(job.arrival_at)}</strong> (your earliest
           opening). It's held on the calendar until you respond.</p>
@@ -166,6 +209,7 @@ function ActiveJobCard({ job, onChanged }: { job: Job; onChanged: () => void }) 
           {STATUS_LABEL[job.status]}
         </span>
       </div>
+      {['dispatched', 'en_route'].includes(job.status) ? <CustomerTimes job={job} /> : null}
       {job.technician_flag ? (
         <div className="alert" role="alert">
           <Icon name="alert" size={18} />

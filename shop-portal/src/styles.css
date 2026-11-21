@@ -229,3 +229,6 @@ textarea.input { min-height: 80px; resize: vertical; }
 .logo-preview img { width: 100%; height: 100%; object-fit: contain; }
 .brand-logo { width: 30px; height: 30px; border-radius: 8px; object-fit: contain; background: #fff; border: 1px solid var(--line); flex: none; }
 .login-code { font-size: 36px; font-weight: 800; letter-spacing: 6px; color: var(--primary-dark); background: var(--primary-soft); border-radius: 12px; padding: 10px 22px; font-variant-numeric: tabular-nums; }
+
+.customer-times { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.time-pill { background: var(--primary-soft); color: var(--primary-dark); border-radius: 99px; padding: 3px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }

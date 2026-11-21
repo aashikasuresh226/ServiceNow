@@ -214,7 +214,11 @@ function Waitlisted({ request, onChange }: Props) {
         {wl?.reason ?? 'No technician has an opening for this job yet.'}
       </Body>
       <Muted>We check again every few seconds and match you automatically as soon as a
-        qualified technician has an opening.</Muted>
+        qualified technician has an opening{request.availability?.length ? ' during your times' : ''}.</Muted>
+      {request.availability?.length ? (
+        <Button label="Change when you're home" variant="secondary" icon="calendar"
+          onPress={() => router.push(`/request/${request.id}/times`)} />
+      ) : null}
       <Checkbox label="Text me when I'm matched" checked={notify} onChange={setNotify} />
       <ErrorText message={cancel.error} />
     </Screen>

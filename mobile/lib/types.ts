@@ -1,3 +1,6 @@
+/** A time the homeowner is home (ISO 8601). */
+export type TimeRange = { start: string; end: string };
+
 /** Types mirroring the backend API (backend/app/schemas/api.py). */
 
 export type Option = { value: string; label: string };
@@ -155,6 +158,7 @@ export type TechJob = {
   chat_open: boolean;
   can_contact: boolean;
   completed_at: string | null;
+  customer_availability?: TimeRange[] | null;
 };
 
 export type TechBoard = {
@@ -237,6 +241,7 @@ export type ServiceRequest = {
   shop_rating: number | null;
   preferred_shop_id: string | null;
   preferred_technician_id: string | null;
+  availability?: TimeRange[] | null; // when the homeowner is home (null: any time)
   canceled_reason: string | null;
   /** Messages with the shop / technician are open (from acceptance until 48 h after the job). */
   chat_open: boolean;

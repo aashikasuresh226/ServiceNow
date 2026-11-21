@@ -28,8 +28,10 @@ from app.schemas.api import (
     ShopJobOut,
     TechJobOut,
     TechnicianSummary,
+    TimeRange,
     WaitlistInfo,
 )
+from app.services import home_times
 from app.services.message_service import chat_open, technician_can_contact
 
 PHOTO_URL_TTL = timedelta(hours=1)
@@ -37,6 +39,11 @@ S = RequestStatus
 DISPATCHED_OR_LATER = {
     s.value for s in (S.DISPATCHED, S.EN_ROUTE, S.ON_SITE, S.QUOTED, S.IN_PROGRESS, S.COMPLETED)
 }
+
+
+def _times(request: ServiceRequest) -> list[TimeRange] | None:
+    ranges = home_times.load(request.availability)
+    return None if ranges is None else [TimeRange(start=a, end=b) for a, b in ranges]
 
 
 def photo_out(container: Container, photo: RequestPhoto) -> PhotoOut:
@@ -139,6 +146,7 @@ def request_out(container: Container, request: ServiceRequest) -> RequestOut:
             reason=request.waitlist_reason,
         )
     return RequestOut(
+        availability=_times(request),
         id=request.id,
         status=request.status,
         created_at=request.created_at,
@@ -190,6 +198,7 @@ def shop_job_out(
     if amount:
         payout = amount - platform_fee(amount, container.settings.platform_fee_bps)
     return ShopJobOut(
+        customer_availability=_times(request),
         id=request.id,
         status=request.status,
         created_at=request.created_at,
@@ -241,6 +250,7 @@ def tech_job_out(container: Container, request: ServiceRequest, tech: Technician
     homeowner = request.homeowner
     contact = accepted and tech.can_contact_customers
     return TechJobOut(
+        customer_availability=_times(request),
         id=request.id,
         status=request.status,
         arrival_at=request.eta_at,

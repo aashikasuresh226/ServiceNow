@@ -36,6 +36,7 @@ from app.domain.matching import (
     plan_options,
 )
 from app.models import Homeowner, JobOffer, ServiceRequest, Shop, Technician
+from app.services import home_times
 from app.services.availability_service import AvailabilityService
 from app.services.calendar_service import CalendarService
 from app.services.lifecycle import clear_assignment, clear_live_location, transition
@@ -60,8 +61,7 @@ class MatchingService:
         self.calendar = CalendarService(session, container)
 
     # --- Criteria ---------------------------------------------------------------
-    @staticmethod
-    def criteria_for(request: ServiceRequest) -> MatchCriteria:
+    def criteria_for(self, request: ServiceRequest) -> MatchCriteria:
         unit = (request.unit_info or {}).get("equipment_type") or EquipmentType.UNKNOWN.value
         return MatchCriteria(
             location=LatLng(request.lat, request.lng),
@@ -72,6 +72,7 @@ class MatchingService:
             ),
             only_shop_id=request.preferred_shop_id,
             only_technician_id=request.preferred_technician_id,
+            windows=home_times.upcoming(request.availability, self.c.clock.now()),
         )
 
     @property
@@ -457,7 +458,11 @@ class MatchingService:
             elif candidate is None:
                 reason = "Too far away or no working hours"
             elif option is None:
-                reason = "Not qualified, or no opening in the next week"
+                reason = (
+                    "Booked during the customer's times, or not qualified"
+                    if criteria.windows is not None
+                    else "Not qualified, or no opening in the next week"
+                )
             rows.append((tech, option, reason))
         far = now.replace(year=9999)
         rows.sort(

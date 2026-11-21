@@ -9,6 +9,7 @@ import type { AuthenticatorSetupData } from '@/components/AuthenticatorSetup';
 import type {
   CardSetup,
   Homeowner,
+  TimeRange,
   InviteInfo,
   Message,
   Options,
@@ -227,6 +228,8 @@ export const api = {
   updateUnit: (id: string, data: Partial<UnitUpdate>) =>
     request<ServiceRequest>('PATCH', `/requests/${id}/unit`, data),
   /** Book the soonest technician, or the company / technician the homeowner picked. */
+  setAvailability: (id: string, ranges: TimeRange[]) =>
+    request<ServiceRequest>('PUT', `/requests/${id}/availability`, { ranges }),
   match: (id: string, choice?: { shop_id?: string; technician_id?: string }) =>
     request<ServiceRequest>('POST', `/requests/${id}/match`, choice ?? {}),
   providers: (id: string) => request<Providers>('GET', `/requests/${id}/providers`),

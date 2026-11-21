@@ -105,6 +105,9 @@ class ServiceRequest(IdMixin, TimestampMixin, Base):
     preferred_technician_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("technicians.id", ondelete="SET NULL")
     )
+    # When the homeowner is home: [[start, end], ...] as UTC ISO times (see
+    # services/home_times). None: any time. The technician must arrive and finish inside one.
+    availability: Mapped[list[list[str]] | None] = mapped_column(JSON)
 
     # Optimistic locking: concurrent writers (API + worker) cannot silently clobber each other.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

@@ -57,6 +57,9 @@ class MatchCriteria:
     # The homeowner's pick: only this company / only this technician.
     only_shop_id: uuid.UUID | None = None
     only_technician_id: uuid.UUID | None = None
+    # When the homeowner is home (sorted UTC ranges). None: any time. The tech must
+    # arrive and finish inside one range; an empty tuple means every range has passed.
+    windows: tuple[tuple[datetime, datetime], ...] | None = None
 
     def allows(self, c: TechCandidate) -> bool:
         if self.only_technician_id and c.technician_id != self.only_technician_id:
@@ -93,8 +96,14 @@ class NoMatchReport:
     no_time: int = 0
     declined: int = 0
     chosen: bool = False  # the homeowner picked a company or technician
+    windows: bool = False  # the homeowner limited the visit to times they're home
 
     def message(self) -> str:
+        if self.windows and self.nearby and self.no_time:
+            return (
+                "No technician nearby is free during the times you picked. Add more times, "
+                "or keep these and we'll book the first technician who opens up."
+            )
         if self.chosen:
             if self.nearby == 0:
                 return "The company or technician you picked isn't taking requests right now."
@@ -156,12 +165,23 @@ def plan_option(
     if distance > c.service_radius_km:
         return None
     drive = travel_minutes(distance, settings.speed_kmh)
-    start = earliest_window(
-        c.blocks,
-        earliest=now,
-        need=timedelta(minutes=drive) + settings.job_duration,
-        latest_start=now + settings.horizon,
-    )
+    need = timedelta(minutes=drive) + settings.job_duration
+    latest = now + settings.horizon
+    start: datetime | None = None
+    if criteria.windows is None:
+        start = earliest_window(c.blocks, earliest=now, need=need, latest_start=latest)
+    else:
+        # Arrive inside a time the homeowner is home, and finish before it ends.
+        for home_from, home_until in criteria.windows:
+            earliest = max(now, home_from - timedelta(minutes=drive))
+            latest_start = min(latest, home_until - need)
+            if latest_start < earliest:
+                continue
+            start = earliest_window(
+                c.blocks, earliest=earliest, need=need, latest_start=latest_start
+            )
+            if start is not None:
+                break
     if start is None:
         return None
     return Option(c, distance, drive, start, start + timedelta(minutes=drive))
@@ -185,7 +205,9 @@ def plan_options(
     """All feasible options, best first, plus counts explaining who was filtered out."""
     candidates = [c for c in candidates if criteria.allows(c)]
     report = NoMatchReport(
-        nearby=len(candidates), chosen=bool(criteria.only_shop_id or criteria.only_technician_id)
+        nearby=len(candidates),
+        chosen=bool(criteria.only_shop_id or criteria.only_technician_id),
+        windows=criteria.windows is not None,
     )
     options: list[Option] = []
     for c in candidates:

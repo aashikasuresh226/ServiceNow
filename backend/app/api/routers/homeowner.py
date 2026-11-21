@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, File, UploadFile, status
@@ -10,8 +11,10 @@ from sqlalchemy import select
 
 from app.api.deps import ContainerDep, HomeownerDep, SessionDep
 from app.api.presenters import message_out, request_out
+from app.core.errors import InvalidState
 from app.models import Complaint, ServiceRequest, Shop
 from app.schemas.api import (
+    AvailabilityIn,
     CardSetupFinishIn,
     CardSetupOut,
     ComplaintIn,
@@ -36,7 +39,7 @@ from app.schemas.api import (
     UnitUpdateIn,
     UnreadChat,
 )
-from app.services import media
+from app.services import home_times, media
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService, mask_email
 from app.services.complaint_service import CATEGORIES, ComplaintService, can_complain
@@ -219,6 +222,37 @@ async def update_unit(
         equipment_type=body.equipment_type,
         approx_age_years=body.approx_age_years,
     )
+    return await _present(session, c, request)
+
+
+@router.put("/requests/{request_id}/availability", response_model=RequestOut)
+async def set_availability(
+    request_id: uuid.UUID,
+    body: AvailabilityIn,
+    me: HomeownerDep,
+    session: SessionDep,
+    c: ContainerDep,
+) -> RequestOut:
+    """When the homeowner is home. Empty: any time. Set before booking (or while waiting
+    on the waitlist, where matching keeps trying inside these times)."""
+    request = await RequestService(session, c).get_for_homeowner(request_id, me)
+    if request.status not in ("draft", "analyzed", "waitlisted"):
+        raise InvalidState(
+            "A technician is already being booked. Cancel and request again to change times.",
+            code="times_locked",
+        )
+    if not body.ranges:
+        request.availability = None
+    else:
+        now = c.clock.now()
+        request.availability = home_times.dump(
+            home_times.normalize(
+                ((r.start, r.end) for r in body.ranges),
+                now=now,
+                horizon=timedelta(days=c.settings.match_horizon_days),
+            )
+        )
+    await session.flush()
     return await _present(session, c, request)
 
 

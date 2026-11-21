@@ -205,6 +205,7 @@ export type Job = {
   payout_cents: number | null;
   /** The homeowner chose your company or technician (e.g. from a shared link). */
   picked_by_customer: boolean;
+  customer_availability?: { start: string; end: string }[] | null; // when they're home (null: any time)
   /** The technician said they can't make it: reassign or call the customer. */
   technician_flag: string | null;
   chat_open: boolean;
