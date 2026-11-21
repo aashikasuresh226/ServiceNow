@@ -228,7 +228,7 @@ function EditUnit({ request, onSaved }: { request: ServiceRequest; onSaved: (r: 
 
 const styles = StyleSheet.create({
   unitHero: {
-    height: 120, borderRadius: 10, backgroundColor: '#EFEAE0', alignItems: 'center',
+    height: 120, borderRadius: 10, backgroundColor: '#EEF0F4', alignItems: 'center',
     justifyContent: 'center', overflow: 'hidden',
   },
   photo: { width: '100%', height: '100%' },

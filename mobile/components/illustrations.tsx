@@ -17,7 +17,7 @@ export function HouseIllustration({ width = 240 }: { width?: number }) {
       <Rect x={94} y={64} width={20} height={30} fill={colors.primaryTint} stroke={colors.ink} strokeWidth={2} />
       <Rect x={68} y={56} width={18} height={14} fill={colors.primaryTint} stroke={colors.ink} strokeWidth={2} />
       <Rect x={122} y={56} width={18} height={14} fill={colors.primaryTint} stroke={colors.ink} strokeWidth={2} />
-      <Rect x={164} y={68} width={32} height={26} rx={3} fill="#EFEAE0" stroke={colors.ink} strokeWidth={2} />
+      <Rect x={164} y={68} width={32} height={26} rx={3} fill="#EEF0F4" stroke={colors.ink} strokeWidth={2} />
       <Circle cx={180} cy={81} r={8} fill="#FFFFFF" stroke={colors.muted} strokeWidth={2} />
       <Path d="M200 66c4-4 4-8 0-12M208 70c7-7 7-15 0-22" fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
       <Circle cx={206} cy={24} r={14} fill="#FFFFFF" stroke={colors.primary} strokeWidth={2} />
@@ -31,13 +31,13 @@ export function AcUnit({ width = 110, dark = false, highlightLabel = false }: {
   dark?: boolean;
   highlightLabel?: boolean;
 }) {
-  const body = dark ? '#24463F' : '#FFFFFF';
+  const body = dark ? '#2E3566' : '#FFFFFF';
   const stroke = dark ? colors.faint : colors.muted;
-  const label = highlightLabel ? colors.primaryTint : dark ? '#DCD5C7' : '#FFFFFF';
+  const label = highlightLabel ? colors.primaryTint : dark ? '#D6D9E3' : '#FFFFFF';
   return (
     <Svg width={width} height={width * (100 / 120)} viewBox="0 0 120 100" {...decorative}>
       <Rect x={12} y={10} width={96} height={76} rx={6} fill={body} stroke={stroke} strokeWidth={2} />
-      <Circle cx={54} cy={52} r={24} fill={dark ? '#16302C' : '#FFFFFF'} stroke={stroke} strokeWidth={2} />
+      <Circle cx={54} cy={52} r={24} fill={dark ? '#1F2448' : '#FFFFFF'} stroke={stroke} strokeWidth={2} />
       <Path d="M54 52c0-10 6-14 10-12M54 52c9 3 11 10 8 13M54 52c-8 6-15 4-16 0" fill="none" stroke={stroke} strokeWidth={3} strokeLinecap="round" />
       <Circle cx={54} cy={52} r={3.5} fill={stroke} />
       <Rect x={88} y={28} width={14} height={22} rx={2} fill={label} stroke={highlightLabel ? colors.primary : stroke} strokeWidth={2} />
@@ -53,11 +53,11 @@ export function Viewfinder({ width = 220 }: { width?: number }) {
     <Svg width={width} height={width * (190 / 220)} viewBox="0 0 220 190" {...decorative}>
       <Path d="M14 30V14h16M190 14h16v16M206 160v16h-16M30 176H14v-16" fill="none" stroke="#FFFFFF" strokeWidth={2.5} strokeLinecap="round" />
       <G transform="translate(40 40) scale(1.15)">
-        <Rect x={12} y={10} width={96} height={76} rx={6} fill="#24463F" stroke={colors.faint} strokeWidth={2} />
-        <Circle cx={54} cy={52} r={24} fill="#16302C" stroke={colors.faint} strokeWidth={2} />
-        <Rect x={88} y={28} width={14} height={22} rx={2} fill="#DCD5C7" />
+        <Rect x={12} y={10} width={96} height={76} rx={6} fill="#2E3566" stroke={colors.faint} strokeWidth={2} />
+        <Circle cx={54} cy={52} r={24} fill="#1F2448" stroke={colors.faint} strokeWidth={2} />
+        <Rect x={88} y={28} width={14} height={22} rx={2} fill="#D6D9E3" />
       </G>
-      <Rect x={134} y={62} width={34} height={42} rx={4} fill="none" stroke="#7FC4B9" strokeWidth={2.5} />
+      <Rect x={134} y={62} width={34} height={42} rx={4} fill="none" stroke="#7FE0D2" strokeWidth={2.5} />
       <Rect x={124} y={40} width={54} height={16} rx={8} fill={colors.primary} />
       <SvgText fontFamily={SVG_FONT} x={151} y={51.5} textAnchor="middle" fontSize={10} fontWeight="600" fill="#FFFFFF">
         Data plate
@@ -107,10 +107,10 @@ export function RouteMap({ height = 170, progress = 0, label }: {
   }
   return (
     <Svg width="100%" height={height} viewBox="0 0 300 170" preserveAspectRatio="xMidYMid slice" accessibilityLabel={label ?? 'Map showing the technician route'}>
-      <Rect width={300} height={170} fill="#EFEAE0" />
+      <Rect width={300} height={170} fill="#EEF0F4" />
       <Rect x={180} y={10} width={100} height={50} rx={6} fill="#DCE8DA" />
-      <Rect x={10} y={10} width={20} height={56} rx={4} fill="#E5DFD2" />
-      <Rect x={60} y={100} width={160} height={60} rx={4} fill="#E5DFD2" />
+      <Rect x={10} y={10} width={20} height={56} rx={4} fill="#E5E7EB" />
+      <Rect x={60} y={100} width={160} height={60} rx={4} fill="#E5E7EB" />
       <Path d="M0 80H300M40 0V170M250 0V170M150 80V170" stroke="#FFFFFF" strokeWidth={12} />
       <Path d="M40 140V80H250V44" fill="none" stroke={colors.primary} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
       <Path d="M250 50s-10-9-10-17a10 10 0 0 1 20 0c0 8-10 17-10 17z" fill={colors.ink} />

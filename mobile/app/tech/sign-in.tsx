@@ -35,7 +35,7 @@ export default function TechSignIn() {
       <Button label="Sign in" busy={signIn.busy} disabled={login.trim().length < 5 || !codeReady(code)}
         onPress={() => signIn.run()} />
     }>
-      <Card tone="soft" style={{ alignItems: 'center', paddingVertical: 20, gap: 8 }}>
+      <Card tone="brand" style={{ alignItems: 'center', paddingVertical: 20, gap: 8 }}>
         <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: colors.surface,
           alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="wrench" size={30} color={colors.primary} />

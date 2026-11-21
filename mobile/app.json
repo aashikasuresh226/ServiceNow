@@ -21,15 +21,15 @@
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#15403B"
+        "backgroundColor": "#4F52D9"
       }
     },
     "web": {
       "bundler": "metro",
       "output": "single",
       "favicon": "./assets/favicon.png",
-      "themeColor": "#15403B",
-      "backgroundColor": "#F6F2EA"
+      "themeColor": "#4F52D9",
+      "backgroundColor": "#F7F8FB"
     },
     "plugins": [
       "expo-router",
@@ -54,7 +54,7 @@
       "tsconfigPaths": true
     },
     "icon": "./assets/icon.png",
-    "primaryColor": "#15403B",
-    "backgroundColor": "#F6F2EA"
+    "primaryColor": "#4F52D9",
+    "backgroundColor": "#F7F8FB"
   }
 }

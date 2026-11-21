@@ -44,14 +44,14 @@ function Hero() {
   return (
     <div className="auth-side">
       <svg width="200" height="140" viewBox="0 0 168 120" aria-hidden="true">
-        <path d="M8 104H160" stroke="#9AA39E" strokeWidth="2" strokeLinecap="round" />
-        <rect x="12" y="50" width="92" height="46" rx="6" fill="#fff" stroke="#1C2B29" strokeWidth="2" />
-        <path d="M104 62h26l18 18v16h-44z" fill="#fff" stroke="#1C2B29" strokeWidth="2" strokeLinejoin="round" />
-        <path d="M112 66h14l10 12h-24z" fill="#CFE5E0" />
-        <rect x="12" y="66" width="92" height="10" fill="#2F7A70" />
-        <circle cx="36" cy="98" r="9" fill="#1C2B29" /><circle cx="126" cy="98" r="9" fill="#1C2B29" />
+        <path d="M8 104H160" stroke="#9CA3B4" strokeWidth="2" strokeLinecap="round" />
+        <rect x="12" y="50" width="92" height="46" rx="6" fill="#fff" stroke="#1B2140" strokeWidth="2" />
+        <path d="M104 62h26l18 18v16h-44z" fill="#fff" stroke="#1B2140" strokeWidth="2" strokeLinejoin="round" />
+        <path d="M112 66h14l10 12h-24z" fill="#DCDFFC" />
+        <rect x="12" y="66" width="92" height="10" fill="#4F52D9" />
+        <circle cx="36" cy="98" r="9" fill="#1B2140" /><circle cx="126" cy="98" r="9" fill="#1B2140" />
         <circle cx="36" cy="98" r="3" fill="#fff" /><circle cx="126" cy="98" r="3" fill="#fff" />
-        <path d="M128 8l22 8v16c0 14-10 22-22 26-12-4-22-12-22-26V16z" fill="#2F7A70" />
+        <path d="M128 8l22 8v16c0 14-10 22-22 26-12-4-22-12-22-26V16z" fill="#4F52D9" />
         <path d="M119 32l7 7 12-13" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       <h1 style={{ fontSize: 22 }}>Get jobs from homeowners near you</h1>

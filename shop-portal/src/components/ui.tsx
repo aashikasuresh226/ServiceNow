@@ -68,12 +68,13 @@ export function Stat({ icon, value, label, tone }: {
   icon: string;
   value: ReactNode;
   label: string;
-  tone: 'primary' | 'amber' | 'neutral';
+  tone: 'primary' | 'accent' | 'amber' | 'neutral';
 }) {
   const colors = {
     primary: ['var(--primary-soft)', 'var(--primary)'],
+    accent: ['var(--accent-soft)', 'var(--accent-ink)'],
     amber: ['var(--amber-soft)', 'var(--amber-ink)'],
-    neutral: ['#efeae0', 'var(--ink)'],
+    neutral: ['#eef0f4', 'var(--ink)'],
   }[tone];
   return (
     <div className="card stat">

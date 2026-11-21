@@ -73,8 +73,8 @@ export function DashboardPage() {
       ) : null}
 
       <div className="grid-stats">
-        <Stat icon="user" tone="primary" value={stats.data?.techs_free_now ?? '–'} label="Techs free now" />
-        <Stat icon="wrench" tone="amber" value={stats.data?.techs_on_job ?? '–'} label="On a job" />
+        <Stat icon="user" tone="accent" value={stats.data?.techs_free_now ?? '–'} label="Techs free now" />
+        <Stat icon="wrench" tone="primary" value={stats.data?.techs_on_job ?? '–'} label="On a job" />
         <Stat icon="jobs" tone="neutral" value={stats.data?.active_jobs ?? '–'} label="Active jobs" />
         <Stat icon="clock" tone="neutral" value={stats.data?.waitlisted_nearby ?? '–'} label="Homeowners waitlisted" />
       </div>

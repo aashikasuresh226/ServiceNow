@@ -119,7 +119,7 @@ export default function Photo() {
 }
 
 const styles = StyleSheet.create({
-  viewfinder: { backgroundColor: '#16302C', borderRadius: 16, alignItems: 'center', paddingVertical: 14 },
+  viewfinder: { backgroundColor: '#1F2448', borderRadius: 16, alignItems: 'center', paddingVertical: 14 },
   thumb: { width: 64, height: 64, borderRadius: 10, overflow: 'hidden', backgroundColor: colors.line },
   thumbImage: { width: '100%', height: '100%' },
   thumbCheck: {

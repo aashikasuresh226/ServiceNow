@@ -127,13 +127,14 @@ export function TextLink({ label, onPress, color = colors.primary }: {
 export function Card({ children, style, tone = 'plain' }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  tone?: 'plain' | 'soft' | 'muted' | 'amber';
+  tone?: 'plain' | 'soft' | 'muted' | 'amber' | 'brand';
 }) {
   const toneStyle = {
     plain: { backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1 },
     soft: { backgroundColor: colors.primarySoft },
     muted: { backgroundColor: colors.background },
     amber: { backgroundColor: colors.amberSoft },
+    brand: { backgroundColor: colors.primary }, // the brand block: indigo
   }[tone];
   return <View style={[styles.card, toneStyle, style]}>{children}</View>;
 }
@@ -306,7 +307,7 @@ export function Badge({ label, tone = 'primary' }: {
   const t = {
     primary: { bg: colors.primarySoft, fg: colors.primary },
     amber: { bg: colors.amberSoft, fg: colors.amberInk },
-    neutral: { bg: '#EFEAE0', fg: colors.body },
+    neutral: { bg: '#EEF0F4', fg: colors.body },
     success: { bg: colors.successSoft, fg: colors.success },
   }[tone];
   return (

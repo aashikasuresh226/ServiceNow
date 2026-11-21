@@ -63,11 +63,11 @@ export function Avatar({ name, size = 36 }: { name: string; size?: number }) {
   const tone = tones[name.length % tones.length];
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" role="img" aria-label={`${name}'s photo`}>
-      <rect width="48" height="48" rx="24" fill="#CFE5E0" />
-      <path d="M7 48c1-12 33-12 34 0z" fill="#2F7A70" />
+      <rect width="48" height="48" rx="24" fill="#DCDFFC" />
+      <path d="M7 48c1-12 33-12 34 0z" fill="#4F52D9" />
       <circle cx="24" cy="21" r="8.5" fill={tone} />
-      <path d="M15 19a9 9 0 0 1 18 0z" fill="#1C2B29" />
-      <rect x="13" y="18" width="22" height="3" rx="1.5" fill="#1C2B29" />
+      <path d="M15 19a9 9 0 0 1 18 0z" fill="#1B2140" />
+      <rect x="13" y="18" width="22" height="3" rx="1.5" fill="#1B2140" />
     </svg>
   );
 }

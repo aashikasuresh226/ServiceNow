@@ -68,9 +68,6 @@ export function Layout() {
         </nav>
         <div className="main">
           <header className="topbar">
-            <span className={`badge ${shop.is_live ? 'success' : 'neutral'}`}>
-              <span className="dot" /> {shop.is_live ? 'Live: receiving jobs' : 'Offline'}
-            </span>
             <span className="spacer" />
             <span className="small muted">Accept on-demand requests</span>
             <Switch checked={shop.is_live} label="Accept on-demand requests" disabled={live.busy}

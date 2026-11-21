@@ -44,15 +44,15 @@ export default function Join() {
   if (!shop && !error) return <Loading />;
   return (
     <Screen footer={<Button label="Get started" onPress={() => { void go(); }} />}>
-      <Card tone="soft" style={{ alignItems: 'center', gap: 10, paddingVertical: 24 }}>
+      <Card tone="brand" style={{ alignItems: 'center', gap: 10, paddingVertical: 24 }}>
         <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: colors.surface,
           alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="building" size={28} color={colors.primary} />
         </View>
-        <Text style={{ fontSize: 24, fontWeight: '800', color: colors.ink, textAlign: 'center' }}>
+        <Text style={{ fontSize: 24, fontWeight: '800', color: '#FFFFFF', textAlign: 'center' }}>
           {shop ? `${shop} invited you` : APP_NAME}
         </Text>
-        <Muted style={{ textAlign: 'center' }}>
+        <Muted style={{ textAlign: 'center', color: colors.primaryTint }}>
           {shop ? `${shop} uses ${APP_NAME} for visits and updates.` : error}
         </Muted>
       </Card>

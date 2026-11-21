@@ -1,28 +1,30 @@
-/** Brand tokens: "Petrol and sand" (deep petrol green-teal on warm sand). */
+/** Brand tokens: "Indigo and teal". Confident indigo for actions and the logo, a calm teal
+ * accent used sparingly, near-black navy text on white and cool light gray. */
 export const colors = {
-  primary: '#2F7A70', // petrol: buttons, links, selection (white text passes AA)
-  primaryDark: '#15403B', // deep petrol: headers, logo, pressed
-  primarySoft: '#E4F0ED',
-  primaryTint: '#CFE5E0',
-  sand: '#E3D5B8', // brand accent: logo lines, highlights
-  sandSoft: '#F1E9D8',
-  sandInk: '#4D3D18', // text on sand
-  ink: '#1C2B29',
-  body: '#3B4A47',
-  muted: '#5C6964',
-  faint: '#9AA39E',
-  line: '#E5DFD2',
-  lineStrong: '#D3CBBA',
+  primary: '#4F52D9', // indigo: buttons, links, selection, logo (white text passes AA)
+  primaryDark: '#3237A8', // pressed, and indigo text on light tints
+  primarySoft: '#EEF0FE',
+  primaryTint: '#DCDFFC',
+  accent: '#12A594', // teal: positive status, highlights (sparingly)
+  accentSoft: '#E3F6F3',
+  accentInk: '#0B6B60', // teal text on accentSoft
+  logoAir: '#7FE0D2', // inner air stream of the logo
+  ink: '#1B2140',
+  body: '#3F4663',
+  muted: '#5F6680',
+  faint: '#9CA3B4',
+  line: '#E5E7EB',
+  lineStrong: '#D1D5DE',
   surface: '#FFFFFF',
-  background: '#F6F2EA',
-  frame: '#E7E1D4',
+  background: '#F7F8FB',
+  frame: '#E9EBF2',
   amber: '#B45309',
   amberInk: '#8A3F06',
   amberSoft: '#FDF1E3',
   danger: '#B42318',
   dangerSoft: '#FEECEB',
-  success: '#2E7D32',
-  successSoft: '#E8F3E8',
+  success: '#0B6B60',
+  successSoft: '#E3F6F3',
 } as const;
 
 export const radius = { sm: 8, md: 12, lg: 16, xl: 24 } as const;

@@ -18,11 +18,11 @@ export function StartPage() {
   const techSignIn = options?.features.technician_sign_in_url;
 
   return (
-    <div className="auth-page">
+    <div className="auth-page start-page">
       <main className="start-card">
         <div className="start-head">
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}><Logo size={52} /></div>
-          <h1 style={{ fontSize: 26, margin: 0, color: 'var(--primary-dark)' }}>Welcome to HVAC Connect</h1>
+          <h1 style={{ fontSize: 26, margin: 0 }}>Welcome to HVAC Connect</h1>
           <p className="muted" style={{ margin: 0 }}>Who are you?</p>
         </div>
 

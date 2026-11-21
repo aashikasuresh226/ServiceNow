@@ -16,21 +16,21 @@ const SCHEDULES = [
 export function PayoutFlowDiagram() {
   return (
     <svg viewBox="0 0 478 96" width="100%" role="img" aria-label="Homeowner pays in the app, the platform keeps its fee, the rest is paid out to your bank">
-      <rect width="478" height="96" rx="12" fill="#F6F2EA" />
-      <circle cx="70" cy="38" r="22" fill="#fff" stroke="#1C2B29" strokeWidth="2" />
-      <rect x="58" y="30" width="24" height="16" rx="3" fill="#E4F0ED" stroke="#2F7A70" strokeWidth="1.8" />
-      <path d="M58 35h24" stroke="#2F7A70" strokeWidth="2.5" />
-      <text x="70" y="80" textAnchor="middle" fontSize="11" fill="#1C2B29">Homeowner pays in app</text>
-      <path d="M110 38h66" stroke="#2F7A70" strokeWidth="2" strokeDasharray="4 4" />
-      <path d="M172 33l6 5-6 5" fill="none" stroke="#2F7A70" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="239" cy="38" r="22" fill="#2F7A70" />
+      <rect width="478" height="96" rx="12" fill="#F7F8FB" />
+      <circle cx="70" cy="38" r="22" fill="#fff" stroke="#1B2140" strokeWidth="2" />
+      <rect x="58" y="30" width="24" height="16" rx="3" fill="#EEF0FE" stroke="#4F52D9" strokeWidth="1.8" />
+      <path d="M58 35h24" stroke="#4F52D9" strokeWidth="2.5" />
+      <text x="70" y="80" textAnchor="middle" fontSize="11" fill="#1B2140">Homeowner pays in app</text>
+      <path d="M110 38h66" stroke="#4F52D9" strokeWidth="2" strokeDasharray="4 4" />
+      <path d="M172 33l6 5-6 5" fill="none" stroke="#4F52D9" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="239" cy="38" r="22" fill="#4F52D9" />
       <text x="239" y="43" textAnchor="middle" fontSize="13" fontWeight="700" fill="#fff">15%</text>
-      <text x="239" y="80" textAnchor="middle" fontSize="11" fill="#1C2B29">Platform fee</text>
-      <path d="M279 38h66" stroke="#2F7A70" strokeWidth="2" strokeDasharray="4 4" />
-      <path d="M341 33l6 5-6 5" fill="none" stroke="#2F7A70" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="408" cy="38" r="22" fill="#fff" stroke="#1C2B29" strokeWidth="2" />
-      <path d="M396 32l12-7 12 7zM397 46h22M400 34v10M408 34v10M416 34v10" fill="none" stroke="#1C2B29" strokeWidth="2" strokeLinejoin="round" />
-      <text x="408" y="80" textAnchor="middle" fontSize="11" fill="#1C2B29">Payout to your bank</text>
+      <text x="239" y="80" textAnchor="middle" fontSize="11" fill="#1B2140">Platform fee</text>
+      <path d="M279 38h66" stroke="#4F52D9" strokeWidth="2" strokeDasharray="4 4" />
+      <path d="M341 33l6 5-6 5" fill="none" stroke="#4F52D9" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="408" cy="38" r="22" fill="#fff" stroke="#1B2140" strokeWidth="2" />
+      <path d="M396 32l12-7 12 7zM397 46h22M400 34v10M408 34v10M416 34v10" fill="none" stroke="#1B2140" strokeWidth="2" strokeLinejoin="round" />
+      <text x="408" y="80" textAnchor="middle" fontSize="11" fill="#1B2140">Payout to your bank</text>
     </svg>
   );
 }
@@ -105,7 +105,7 @@ function StripePayouts({ onboarding }: { onboarding: boolean; shopName: string }
         </div>
       </div>
       <div className="row" style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12 }}>
-        <span className="stat-icon" style={{ background: '#efeae0' }}><Icon name="bank" /></span>
+        <span className="stat-icon" style={{ background: '#eef0f4' }}><Icon name="bank" /></span>
         <div className="spacer">
           <strong>Stripe payouts account</strong>
           <p className="small muted">Stripe verifies the owner's ID and bank account. We never see full bank details.</p>

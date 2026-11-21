@@ -60,13 +60,13 @@ export default function Welcome() {
         </>
       }
     >
-      <Card tone="soft" style={{ alignItems: 'center', paddingVertical: compact ? 10 : 24 }}>
+      <Card tone="brand" style={{ alignItems: 'center', paddingVertical: compact ? 10 : 24 }}>
         <HouseIllustration width={compact ? 150 : 230} />
       </Card>
       <View style={{ alignItems: 'center', gap: 2 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Logo size={compact ? 32 : 38} />
-          <Text style={{ fontSize: compact ? 26 : 30, fontWeight: '800', color: colors.primaryDark, letterSpacing: -0.5 }}>
+          <Text style={{ fontSize: compact ? 26 : 30, fontWeight: '800', color: colors.ink, letterSpacing: -0.5 }}>
             {APP_NAME}
           </Text>
         </View>

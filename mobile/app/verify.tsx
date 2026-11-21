@@ -33,7 +33,7 @@ export default function Verify() {
     <Screen footer={<Button label="Sign in" busy={verify.busy} disabled={!codeReady(code)}
       onPress={() => verify.run(code)} />}>
       <StepHeader />
-      <Card tone="soft" style={{ alignItems: 'center', paddingVertical: 18 }}>
+      <Card tone="brand" style={{ alignItems: 'center', paddingVertical: 18 }}>
         <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: colors.surface,
           alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="shield" size={30} color={colors.primary} />
