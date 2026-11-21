@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 
 import { AuthenticatorSetup, BackupCodes } from '@/components/AuthenticatorSetup';
-import { Button, Screen, StepHeader, Title } from '@/components/ui';
+import { Button, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { formatPhone } from '@/lib/format';
@@ -45,6 +45,8 @@ export default function AuthenticatorScreen() {
         Set up sign-in
       </Title>
       <AuthenticatorSetup setup={pending.setup} code={code} onCode={(v) => { finish.setError(null); setCode(v); }} error={finish.error} />
+      <TextLink label="No authenticator app? Sign in with email instead"
+        onPress={() => router.replace({ pathname: '/email', params: { phone: pending.phone, mode: 'new' } })} />
     </Screen>
   );
 }

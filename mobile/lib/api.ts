@@ -127,13 +127,33 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+/** An emailed sign-in, recovery or confirmation link was sent. */
+export type LinkSent = { sent_to: string | null; dev_link: string | null };
+type HomeownerSession = Tokens & { needs_profile: boolean };
+
 export const api = {
   options: () => request<Options>('GET', '/meta/options', undefined, { auth: false }),
 
   // Auth
   homeownerStart: (phone: string) =>
-    request<{ account: 'existing' | 'new'; setup: AuthenticatorSetupData | null }>(
-      'POST', '/auth/homeowner/start', { phone }, { auth: false }),
+    request<{
+      account: 'existing' | 'new';
+      setup: AuthenticatorSetupData | null;
+      method: 'authenticator' | 'email' | null;
+      email_hint: string | null;
+    }>('POST', '/auth/homeowner/start', { phone }, { auth: false }),
+  // No authenticator app: single-use links by email (sent by Firebase).
+  homeownerEmailStart: (phone: string, email?: string) =>
+    request<LinkSent>('POST', '/auth/homeowner/email/start', { phone, email: email || undefined }, { auth: false }),
+  homeownerEmailFinish: (token: string, phone?: string) =>
+    request<HomeownerSession>('POST', '/auth/homeowner/email/finish', { token, phone }, { auth: false }),
+  homeownerRecover: (phone: string) =>
+    request<LinkSent>('POST', '/auth/homeowner/recover', { phone }, { auth: false }),
+  homeownerRecoverFinish: (token: string) =>
+    request<HomeownerSession>('POST', '/auth/homeowner/recover/finish', { token }, { auth: false }),
+  confirmEmail: (token: string) =>
+    request<LinkSent>('POST', '/auth/homeowner/email/confirm', { token }, { auth: false }),
+  addEmail: (email: string) => request<LinkSent>('POST', '/me/email', { email }),
   homeownerSignup: (phone: string, setup_token: string, code: string) =>
     request<Tokens & { needs_profile: boolean; backup_codes: string[] }>(
       'POST', '/auth/homeowner/signup', { phone, setup_token, code }, { auth: false }),
@@ -228,11 +248,20 @@ export const techApi = {
     techRequest<AuthenticatorSetupData>('POST', '/auth/technician/invite/authenticator', { token, claim }, { auth: false }),
   acceptInvite: (data: {
     token: string; claim: string; phone?: string; setup_token?: string; code?: string; google_id_token?: string;
+    email_sign_in?: boolean;
   }) => techRequest<Tokens & { backup_codes: string[] }>('POST', '/auth/technician/invite/accept', data, { auth: false }),
   login: (login: string, code: string) =>
     techRequest<Tokens>('POST', '/auth/technician/login', { login, code }, { auth: false }),
   google: (id_token: string) =>
     techRequest<Tokens>('POST', '/auth/technician/google', { id_token }, { auth: false }),
+  emailStart: (login: string) =>
+    techRequest<LinkSent>('POST', '/auth/technician/email/start', { login }, { auth: false }),
+  emailFinish: (token: string) =>
+    techRequest<Tokens>('POST', '/auth/technician/email/finish', { token }, { auth: false }),
+  recover: (login: string) =>
+    techRequest<LinkSent>('POST', '/auth/technician/recover', { login }, { auth: false }),
+  recoverFinish: (token: string) =>
+    techRequest<Tokens>('POST', '/auth/technician/recover/finish', { token }, { auth: false }),
 
   me: () => techRequest<TechMe>('GET', '/tech/me'),
   board: () => techRequest<TechBoard>('GET', '/tech/jobs'),

@@ -53,6 +53,11 @@ export default function JoinAsTechnician() {
     await signInTech(session);
     setBackupCodes(session.backup_codes);
   });
+  const useEmail = useAction(async () => {
+    if (phone.replace(/\D/g, '').length < 10) throw new Error('Enter your 10-digit mobile number');
+    await signInTech(await techApi.acceptInvite({ token, claim: claim!, phone, email_sign_in: true }));
+    router.replace('/tech');
+  });
   const google = useAction(async (idToken: string) => {
     await signInTech(await techApi.acceptInvite({ token, claim: claim!, google_id_token: idToken }));
     router.replace('/tech');
@@ -122,6 +127,9 @@ export default function JoinAsTechnician() {
             keyboardType="phone-pad" autoComplete="tel" onSubmitEditing={() => start.run()} />
           <Muted>Customers and the office reach you on it. You'll sign in with a free authenticator app (no texts).</Muted>
           <ErrorText message={start.error} />
+          <Button label={`No authenticator? Use email links (${info.email})`} variant="secondary" icon="mail"
+            busy={useEmail.busy} onPress={() => useEmail.run()} />
+          <ErrorText message={useEmail.error} />
           <Muted>Location is shared only while you're driving to a job, and only with that customer.</Muted>
         </View>
       )}

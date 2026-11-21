@@ -30,7 +30,18 @@ from app.models import EmailChallenge
 
 log = logging.getLogger(__name__)
 
-TTL = {"shop_email": timedelta(hours=24), "tech_invite": timedelta(days=7)}
+TTL = {
+    "shop_email": timedelta(hours=24),
+    "tech_invite": timedelta(days=7),
+    # Sign-in links (for people without an authenticator app): short-lived, single use.
+    "homeowner_sign_in": timedelta(minutes=20),
+    "tech_sign_in": timedelta(minutes=20),
+    # Recovery: lost authenticator (homeowners, technicians) or forgotten password (shops).
+    "homeowner_recovery": timedelta(minutes=30),
+    "tech_recovery": timedelta(minutes=30),
+    "shop_password_reset": timedelta(minutes=30),
+    "homeowner_email": timedelta(hours=24),  # adding a recovery email
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +85,7 @@ class EmailProofService:
             )
         )
         await self.s.flush()
-        link = f"{page_url}?t={token}"
+        link = f"{page_url}{'&' if '?' in page_url else '?'}t={token}"
         if self.c.firebase is not None:
             await self.c.firebase.send_verification(email.strip().lower(), link)
             return EmailLink(email, "", "firebase", None)  # the link is only in the email
@@ -114,6 +125,24 @@ class EmailProofService:
         challenge.claim_hash = hash_token(claim)
         await self.s.flush()
         return claim
+
+    async def redeem(self, token: str, purpose: str) -> EmailChallenge:
+        """A sign-in link was opened: the token (only ever in the email) proves the inbox,
+        and Firebase confirms the address. Single use: the link stops working now."""
+        challenge = await self.get(token, purpose)
+        if self.c.firebase is not None:
+            if not await self.c.firebase.is_verified(challenge.email):
+                raise Unauthorized(
+                    "Open the link in the email we sent, then continue from there.",
+                    code="email_unverified",
+                )
+        elif self.c.settings.environment == Environment.PROD:
+            raise AppError("Email links aren't set up (Firebase)", code="email_not_configured")
+        now = self.c.clock.now()
+        challenge.verified_at = now
+        challenge.used_at = now
+        await self.s.flush()
+        return challenge
 
     async def consume(self, token: str, purpose: str, claim: str) -> EmailChallenge:
         challenge = await self.get(token, purpose)

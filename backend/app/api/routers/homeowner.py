@@ -18,6 +18,8 @@ from app.schemas.api import (
     ComplaintOut,
     ComplaintStateOut,
     CustomerInviteIn,
+    EmailIn,
+    EmailLinkSentOut,
     HomeownerOut,
     HomeownerUpdateIn,
     HomeVisitOut,
@@ -35,7 +37,7 @@ from app.schemas.api import (
     UnreadChat,
 )
 from app.services.account_service import AccountService
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, mask_email
 from app.services.complaint_service import CATEGORIES, ComplaintService, can_complain
 from app.services.customer_service import CustomerService
 from app.services.job_service import JobService
@@ -52,6 +54,15 @@ router = APIRouter(tags=["homeowner"])
 @router.get("/me", response_model=HomeownerOut)
 async def get_me(me: HomeownerDep) -> HomeownerOut:
     return HomeownerOut.model_validate(me)
+
+
+@router.post("/me/email", response_model=EmailLinkSentOut)
+async def add_email(
+    body: EmailIn, me: HomeownerDep, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    """Add a recovery email: a confirmation link is emailed; it's saved once opened."""
+    link = await AuthService(session, c).homeowner_add_email(me, str(body.email))
+    return EmailLinkSentOut(sent_to=mask_email(link.email), dev_link=link.dev_link)
 
 
 @router.patch("/me", response_model=HomeownerOut)

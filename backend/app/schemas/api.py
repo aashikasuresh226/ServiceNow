@@ -59,8 +59,45 @@ class PhoneIn(Model):
 
 
 class HomeownerStartOut(Model):
-    account: str  # existing: enter your code | new: set up an authenticator
+    account: str  # existing: sign in | new: set up an authenticator (or choose email)
     setup: AuthenticatorSetupOut | None
+    method: str | None = None  # existing: authenticator | email
+    email_hint: str | None = None  # existing email accounts: j***@gmail.com
+
+
+class HomeownerEmailStartIn(PhoneIn):
+    email: EmailStr | None = None  # new accounts only; existing ones use the email on file
+
+
+class EmailLinkSentOut(Model):
+    sent_to: str | None  # j***@gmail.com (None: not said, for technicians)
+    dev_link: str | None = None  # development only (no Firebase): open it to "click" the email
+
+
+class HomeownerEmailFinishIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+    phone: str | None = Field(None, max_length=20)  # from the link (new accounts)
+
+
+class TechEmailStartIn(Model):
+    login: str = Field(min_length=5, max_length=254)  # phone number or email
+
+
+class TokenIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+
+
+class EmailIn(Model):
+    email: EmailStr
+
+
+class ForgotPasswordIn(Model):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class ResetPasswordIn(Model):
+    token: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=1, max_length=200)  # rules: core.passwords
 
 
 class HomeownerSignupIn(PhoneIn):
@@ -151,6 +188,7 @@ class InviteAcceptIn(Model):
     setup_token: str | None = Field(None, max_length=1000)
     code: str | None = Field(None, max_length=8)
     google_id_token: str | None = Field(None, max_length=4096)
+    email_sign_in: bool = False  # no authenticator: sign in with emailed links
 
 
 class MfaEnrollOut(Model):

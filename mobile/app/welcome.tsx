@@ -25,7 +25,9 @@ export default function Welcome() {
 
   const start = useAction(async (value: string) => {
     const result = await api.homeownerStart(value);
-    if (result.account === 'existing' || !result.setup) {
+    if (result.account === 'existing' && result.method === 'email') {
+      router.push({ pathname: '/email', params: { phone: value, mode: 'existing', hint: result.email_hint ?? '' } });
+    } else if (result.account === 'existing' || !result.setup) {
       router.push({ pathname: '/verify', params: { phone: value } });
     } else {
       setPendingSetup({ phone: value, setup: result.setup });
@@ -104,7 +106,7 @@ export default function Welcome() {
         returnKeyType="go"
       />
       <ErrorText message={start.error} />
-      <Muted>No password: you'll sign in with a free authenticator app on your phone (we'll help you set it up).</Muted>
+      <Muted>No password: you'll sign in with a free authenticator app, or with a link we email you.</Muted>
     </Screen>
   );
 }

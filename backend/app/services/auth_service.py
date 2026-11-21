@@ -49,6 +49,17 @@ APP_NAME = "HVAC Connect"
 NONCE_TTL = timedelta(minutes=10)
 # Per-IP ceilings (on top of the per-number limits stored in the database).
 OTP_STARTS_PER_IP_PER_HOUR = 20
+EMAIL_LINKS_PER_ACCOUNT_PER_HOUR = 5
+# A new homeowner's sign-up link is tied to their phone number through this namespace.
+_SIGNUP_NS = uuid.UUID("6b0b3f4e-8a52-4d0c-9c1e-2f1b7d0e5a11")
+
+
+def mask_email(email: str) -> str:
+    """j***@gmail.com: enough to recognise, not enough to read off a screen."""
+    name, _, domain = email.partition("@")
+    return f"{name[:1]}***@{domain}" if domain else "***"
+
+
 SIGN_IN_ATTEMPTS_PER_IP_PER_15_MIN = 50
 
 
@@ -73,6 +84,14 @@ class OtpStarted:
     phone: str
     resend_after_seconds: int
     dev_code: str | None  # only when Twilio isn't set up (development): shown on screen
+
+
+@dataclass(frozen=True, slots=True)
+class HomeownerStart:
+    account: str  # existing | new
+    setup: authenticator.Setup | None  # new: an authenticator to set up (or choose email)
+    method: str | None  # existing: authenticator | email
+    email_hint: str | None  # existing email accounts: j***@gmail.com
 
 
 class AuthService:
@@ -147,6 +166,120 @@ class AuthService:
             .values(revoked_at=self.c.clock.now())
         )
 
+    async def _revoke_all(self, subject_id: uuid.UUID) -> None:
+        """Signs the account out everywhere (after a password reset or account recovery)."""
+        await self.s.execute(
+            update(RefreshToken)
+            .where(RefreshToken.subject_id == subject_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=self.c.clock.now())
+        )
+
+    def _limit_account(self, key: str) -> None:
+        self.c.rate_limiter.check(
+            "email_link", key, limit=EMAIL_LINKS_PER_ACCOUNT_PER_HOUR, window_seconds=3600
+        )
+
+    # --- Recovery ---------------------------------------------------------------------
+    # Homeowners and technicians have no password; "forgot password" for them means a
+    # lost authenticator. A link to the account's verified email removes the authenticator
+    # (they sign in with email links from then on) and signs them out everywhere else.
+    async def homeowner_recover_start(self, raw_phone: str, *, ip: str | None) -> EmailLink:
+        self.limit_ip(ip, "otp")
+        phone = self._normalize_allowed(raw_phone)
+        homeowner = await self._homeowner_by_phone(phone)
+        if homeowner is None or not homeowner.totp_secret_encrypted or not homeowner.email:
+            raise Conflict(
+                "There's no email on this account to send a recovery link to. Use one of your "
+                "backup codes, or contact support.",
+                code="no_recovery_email",
+            )
+        self._limit_account(f"homeowner:{homeowner.id}")
+        return await EmailProofService(self.s, self.c).start(
+            purpose="homeowner_recovery",
+            subject_id=homeowner.id,
+            email=homeowner.email,
+            page_url=f"{self.settings.public_app_url.rstrip('/')}/email-sign-in?r=1",
+        )
+
+    async def homeowner_recover_finish(
+        self, token: str, *, ip: str | None
+    ) -> tuple[Homeowner, SessionTokens, bool]:
+        self.limit_ip(ip)
+        challenge = await EmailProofService(self.s, self.c).redeem(token, "homeowner_recovery")
+        homeowner = await self.s.get(Homeowner, challenge.subject_id)
+        if homeowner is None:
+            raise NotFound("This account no longer exists")
+        homeowner.totp_secret_encrypted = None
+        homeowner.backup_codes = None
+        await self._revoke_all(homeowner.id)
+        tokens = await self.issue_session(
+            TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
+        )
+        return homeowner, tokens, needs_profile(homeowner)
+
+    async def tech_recover_start(self, login: str, *, ip: str | None) -> EmailLink | None:
+        """Same answer whether or not the account exists (None: nothing sent)."""
+        self.limit_ip(ip, "otp")
+        tech = await self._tech_by_login(login)
+        if tech is None or not tech.totp_secret_encrypted or not tech.email:
+            return None
+        self._limit_account(f"tech:{tech.id}")
+        return await EmailProofService(self.s, self.c).start(
+            purpose="tech_recovery",
+            subject_id=tech.id,
+            email=tech.email,
+            page_url=f"{self.settings.public_app_url.rstrip('/')}/tech/email-sign-in?r=1",
+        )
+
+    async def tech_recover_finish(self, token: str, *, ip: str | None) -> SessionTokens:
+        self.limit_ip(ip)
+        challenge = await EmailProofService(self.s, self.c).redeem(token, "tech_recovery")
+        tech = await self.s.get(Technician, challenge.subject_id)
+        if tech is None or tech.app_status != "active" or not tech.is_active:
+            raise Forbidden("This technician account can't sign in. Ask your company.")
+        tech.totp_secret_encrypted = None
+        tech.backup_codes = None
+        await self._revoke_all(tech.id)
+        return await self.issue_session(
+            TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
+        )
+
+    async def shop_forgot_password(self, email: str, *, ip: str | None) -> EmailLink | None:
+        """Same answer whether or not the account exists (None: nothing sent)."""
+        self.limit_ip(ip, "otp")
+        address = email.strip().lower()
+        user = await self.s.scalar(select(ShopUser).where(ShopUser.email == address))
+        if user is None:
+            return None
+        self._limit_account(f"shop:{user.id}")
+        return await EmailProofService(self.s, self.c).start(
+            purpose="shop_password_reset",
+            subject_id=user.id,
+            email=user.email,
+            page_url=f"{self.settings.public_web_url.rstrip('/')}/reset-password",
+        )
+
+    async def shop_reset_password(self, token: str, password: str, *, ip: str | None) -> None:
+        """New password. 2-step verification still applies at the next sign-in."""
+        self.limit_ip(ip)
+        proof = EmailProofService(self.s, self.c)
+        challenge = await proof.get(token, "shop_password_reset")
+        await passwords.ensure_strong(
+            password,
+            http=self.c.http,
+            check_breaches=self.settings.password_breach_check
+            and self.settings.environment != Environment.TEST,
+        )
+        await proof.redeem(token, "shop_password_reset")
+        user = await self.s.get(ShopUser, challenge.subject_id)
+        if user is None:
+            raise NotFound("This account no longer exists")
+        user.password_hash = hash_password(password)
+        if user.email_verified_at is None:
+            user.email_verified_at = self.c.clock.now()  # the link proved the address
+        await self._revoke_all(user.id)
+        await self.s.flush()
+
     # --- Rate limiting ----------------------------------------------------------------
     def limit_ip(self, ip: str | None, bucket: str = "sign_in") -> None:
         if not ip:
@@ -168,15 +301,16 @@ class AuthService:
             raise AppError("Only US numbers for now", code="phone_not_supported")
         return phone
 
-    async def homeowner_start(
-        self, raw_phone: str, *, ip: str | None = None
-    ) -> tuple[str, authenticator.Setup | None]:
-        """("existing", None): ask for the authenticator code. ("new", setup): set one up."""
+    async def homeowner_start(self, raw_phone: str, *, ip: str | None = None) -> HomeownerStart:
+        """Existing account: how it signs in (authenticator code, or an emailed link).
+        New: an authenticator setup, or they can choose email instead."""
         self.limit_ip(ip, "otp")  # per-IP cap on starts (number lookups)
         phone = self._normalize_allowed(raw_phone)
         homeowner = await self._homeowner_by_phone(phone)
         if homeowner is not None and homeowner.totp_secret_encrypted:
-            return "existing", None
+            return HomeownerStart("existing", None, "authenticator", None)
+        if homeowner is not None and homeowner.email:
+            return HomeownerStart("existing", None, "email", mask_email(homeowner.email))
         if homeowner is not None and self.settings.environment == Environment.PROD:
             # An account from before authenticator sign-in: we can't prove it's theirs.
             if homeowner.google_sub:
@@ -186,7 +320,114 @@ class AuthService:
                 code="needs_reset",
             )
         setup = authenticator.start(self.c, account=phone, subject=f"homeowner:{phone}")
-        return "new", setup
+        return HomeownerStart("new", setup, None, None)
+
+    # --- Homeowners: phone number + emailed sign-in link (no authenticator app) ---------
+    async def homeowner_email_start(
+        self, raw_phone: str, email: str | None, *, ip: str | None = None
+    ) -> EmailLink:
+        """Existing email accounts: a link to the address on the account (whatever was
+        typed). New: a link to the address they typed; the account is created only when
+        it's opened."""
+        self.limit_ip(ip, "otp")
+        phone = self._normalize_allowed(raw_phone)
+        self.c.rate_limiter.check(
+            "email_link",
+            _phone_key(phone),
+            limit=EMAIL_LINKS_PER_ACCOUNT_PER_HOUR,
+            window_seconds=3600,
+        )
+        page = f"{self.settings.public_app_url.rstrip('/')}/email-sign-in"
+        proof = EmailProofService(self.s, self.c)
+        homeowner = await self._homeowner_by_phone(phone)
+        if homeowner is not None and homeowner.totp_secret_encrypted:
+            raise Conflict(
+                "This account signs in with an authenticator app. Lost your phone? Use a "
+                "backup code.",
+                code="use_authenticator",
+            )
+        if homeowner is not None and homeowner.email:
+            return await proof.start(
+                purpose="homeowner_sign_in",
+                subject_id=homeowner.id,
+                email=homeowner.email,
+                page_url=page,
+            )
+        if homeowner is not None and self.settings.environment == Environment.PROD:
+            raise Conflict(
+                "This number already has an account. Contact support to reset its sign-in.",
+                code="needs_reset",
+            )
+        if not email:
+            raise AppError("Enter your email address", code="email_required")
+        address = email.strip().lower()
+        await self._ensure_email_free(address)
+        return await proof.start(
+            purpose="homeowner_sign_in",
+            subject_id=uuid.uuid5(_SIGNUP_NS, _phone_key(phone)),
+            email=address,
+            page_url=f"{page}?p={phone.lstrip('+')}",
+        )
+
+    async def homeowner_email_finish(
+        self, token: str, raw_phone: str | None, *, ip: str | None = None
+    ) -> tuple[Homeowner, SessionTokens, bool]:
+        self.limit_ip(ip)
+        challenge = await EmailProofService(self.s, self.c).redeem(token, "homeowner_sign_in")
+        homeowner = await self.s.get(Homeowner, challenge.subject_id)
+        if homeowner is None:
+            # A new account: the link names the phone number it was asked for.
+            phone = self._normalize_allowed("+" + (raw_phone or "").lstrip("+"))
+            if uuid.uuid5(_SIGNUP_NS, _phone_key(phone)) != challenge.subject_id:
+                raise Unauthorized("This link isn't valid", code="link_invalid")
+            if await self._homeowner_by_phone(phone) is not None:
+                raise Conflict("This number already has an account: sign in.", code="exists")
+            await self._ensure_email_free(challenge.email)
+            homeowner = Homeowner(phone=phone, email=challenge.email)
+            self.s.add(homeowner)
+            await self.s.flush()
+        elif homeowner.totp_secret_encrypted:
+            raise Unauthorized("This account signs in with an authenticator app")
+        await CustomerService(self.s, self.c).link_homeowner(homeowner)
+        tokens = await self.issue_session(
+            TokenClaims(homeowner.id, Role.HOMEOWNER, TokenType.ACCESS)
+        )
+        return homeowner, tokens, needs_profile(homeowner)
+
+    async def homeowner_add_email(self, homeowner: Homeowner, email: str) -> EmailLink:
+        """A recovery email (for authenticator users): saved once its link is opened."""
+        address = email.strip().lower()
+        await self._ensure_email_free(address, homeowner.id)
+        self._limit_account(f"homeowner:{homeowner.id}")
+        return await EmailProofService(self.s, self.c).start(
+            purpose="homeowner_email",
+            subject_id=homeowner.id,
+            email=address,
+            page_url=f"{self.settings.public_app_url.rstrip('/')}/email-sign-in?c=1",
+        )
+
+    async def homeowner_confirm_email(self, token: str, *, ip: str | None) -> str:
+        self.limit_ip(ip)
+        challenge = await EmailProofService(self.s, self.c).redeem(token, "homeowner_email")
+        homeowner = await self.s.get(Homeowner, challenge.subject_id)
+        if homeowner is None:
+            raise NotFound("This account no longer exists")
+        await self._ensure_email_free(challenge.email, homeowner.id)
+        homeowner.email = challenge.email
+        await CustomerService(self.s, self.c).link_homeowner(homeowner)
+        await self.s.flush()
+        return challenge.email
+
+    async def _ensure_email_free(self, email: str, owner: uuid.UUID | None = None) -> None:
+        other = await self.s.scalar(
+            select(Homeowner.id).where(Homeowner.email_hash == blind_index("email", email))
+        )
+        if other is not None and other != owner:
+            raise Conflict(
+                "This email is already used by another account. Sign in with that account's "
+                "phone number, or with Google.",
+                code="email_taken",
+            )
 
     async def homeowner_signup(
         self, raw_phone: str, setup_token: str, code: str, *, ip: str | None = None
@@ -508,6 +749,7 @@ class AuthService:
         setup_token: str | None = None,
         code: str | None = None,
         google_id_token: str | None = None,
+        email_sign_in: bool = False,
         ip: str | None = None,
     ) -> tuple[SessionTokens, list[str]]:
         self.limit_ip(ip)
@@ -530,8 +772,9 @@ class AuthService:
         elif setup_token and code:
             secret = authenticator.finish(self.c, setup_token, code, subject=f"tech:{tech.id}")
             tech.totp_secret_encrypted = self.c.encryptor.encrypt(secret)
-        else:
+        elif not email_sign_in:
             raise AppError("Choose how you'll sign in", code="missing_sign_in")
+        # email_sign_in: no authenticator; they sign in with a link sent to this address.
         if phone:
             normalized = self._normalize_allowed(phone)
             await self._ensure_tech_phone_free(tech, normalized)
@@ -590,6 +833,56 @@ class AuthService:
             tech.backup_codes = updated
         return await self.issue_session(
             TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
+        )
+
+    async def tech_email_start(self, login: str, *, ip: str | None) -> EmailLink | None:
+        """A sign-in link for a technician who chose email instead of an authenticator.
+        The answer doesn't say whether the account exists (None: nothing sent)."""
+        self.limit_ip(ip, "otp")
+        tech = await self._tech_by_login(login)
+        if tech is None or tech.totp_secret_encrypted or not tech.email:
+            return None
+        self.c.rate_limiter.check(
+            "email_link",
+            f"tech:{tech.id}",
+            limit=EMAIL_LINKS_PER_ACCOUNT_PER_HOUR,
+            window_seconds=3600,
+        )
+        return await EmailProofService(self.s, self.c).start(
+            purpose="tech_sign_in",
+            subject_id=tech.id,
+            email=tech.email,
+            page_url=f"{self.settings.public_app_url.rstrip('/')}/tech/email-sign-in",
+        )
+
+    async def tech_email_finish(self, token: str, *, ip: str | None) -> SessionTokens:
+        self.limit_ip(ip)
+        challenge = await EmailProofService(self.s, self.c).redeem(token, "tech_sign_in")
+        tech = await self.s.get(Technician, challenge.subject_id)
+        if (
+            tech is None
+            or tech.app_status != "active"
+            or not tech.is_active
+            or tech.totp_secret_encrypted
+        ):
+            raise Forbidden("This technician account can't sign in. Ask your company.")
+        return await self.issue_session(
+            TokenClaims(tech.id, Role.TECHNICIAN, TokenType.ACCESS, tech.shop_id)
+        )
+
+    async def _tech_by_login(self, login: str) -> Technician | None:
+        login = login.strip()
+        if "@" in login:
+            condition = Technician.email_hash == blind_index("email", login.lower())
+        else:
+            try:
+                condition = Technician.phone_hash == _phone_key(self._normalize_allowed(login))
+            except AppError:
+                return None
+        return await self.s.scalar(
+            select(Technician).where(
+                condition, Technician.app_status == "active", Technician.is_active.is_(True)
+            )
         )
 
     async def google_tech(self, id_token: str, *, ip: str | None) -> SessionTokens:

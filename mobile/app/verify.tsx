@@ -6,7 +6,7 @@ import { View } from 'react-native';
 import { CodeInput, codeReady } from '@/components/CodeInput';
 import { Icon } from '@/components/icons';
 import { colors } from '@/components/theme';
-import { Button, Card, ErrorText, Muted, Screen, StepHeader, Title } from '@/components/ui';
+import { Button, Card, ErrorText, Muted, Screen, StepHeader, TextLink, Title } from '@/components/ui';
 import { api } from '@/lib/api';
 import { nextOnboardingRoute, useAuth } from '@/lib/auth';
 import { formatPhone } from '@/lib/format';
@@ -44,6 +44,8 @@ export default function Verify() {
         onSubmit={() => { if (codeReady(code)) void verify.run(code); }} />
       <ErrorText message={verify.error} />
       <Muted>The code changes every 30 seconds. If it doesn't work, check your phone's time is set automatically.</Muted>
+      <TextLink label="Lost your authenticator and backup codes? Email me a recovery link"
+        onPress={() => router.push({ pathname: '/email', params: { phone, mode: 'recover' } })} />
     </Screen>
   );
 }

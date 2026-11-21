@@ -10,6 +10,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { GoogleButton } from '../components/GoogleButton';
 import { Icon } from '../components/Icon';
+import { PasswordInput } from '../components/PasswordInput';
 import { Button, ErrorAlert } from '../components/ui';
 import { api, setTokens } from '../lib/api';
 import { useAction, useOptions } from '../lib/hooks';
@@ -115,8 +116,15 @@ export function AuthPage() {
             <input id="email" className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           <div className="field">
-            <label htmlFor="password">Password</label>
-            <input id="password" className="input" type="password" value={password}
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <label htmlFor="password">Password</label>
+              {mode === 'login' ? (
+                <Link to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ''}`} className="small">
+                  Forgot password?
+                </Link>
+              ) : null}
+            </div>
+            <PasswordInput id="password" value={password}
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               onChange={(e) => setPassword(e.target.value)} required minLength={mode === 'signup' ? 8 : 1} />
             {mode === 'signup' ? <PasswordChecklist password={password} /> : null}

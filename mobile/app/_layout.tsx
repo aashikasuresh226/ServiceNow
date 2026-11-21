@@ -11,9 +11,9 @@ import { OptionsContext, useLoadOptions } from '@/lib/hooks';
 import { UnreadProvider } from '@/lib/unread';
 
 // 'p' = public company / technician pages opened from shared links; 'join' = a company's invite.
-const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'authenticator', 'p', 'join']);
+const PUBLIC_ROUTES = new Set(['welcome', 'verify', 'authenticator', 'email', 'email-sign-in', 'p', 'join']);
 // Technician screens anyone can open: sign-in and the emailed invite.
-const PUBLIC_TECH_ROUTES = new Set(['sign-in', 'join']);
+const PUBLIC_TECH_ROUTES = new Set(['sign-in', 'join', 'email-sign-in']);
 
 /** Customer screens need the customer sign-in, technician screens (/tech) the technician
  * one. The two are separate, so being signed in as one never affects the other. */

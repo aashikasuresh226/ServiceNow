@@ -162,6 +162,10 @@ export const api = {
 
   signup: (data: { email: string; password: string; shop_name: string; name?: string }) =>
     request<LoginStep>('POST', '/auth/shop/signup', data),
+  forgotPassword: (email: string) =>
+    request<{ sent_to: string | null; dev_link: string | null }>('POST', '/auth/shop/forgot-password', { email }),
+  resetPassword: (token: string, password: string) =>
+    request<void>('POST', '/auth/shop/reset-password', { token, password }),
   login: (email: string, password: string) =>
     request<LoginStep>('POST', '/auth/shop/login', { email, password }),
   googleNonce: () => request<{ nonce: string }>('POST', '/auth/google/nonce'),

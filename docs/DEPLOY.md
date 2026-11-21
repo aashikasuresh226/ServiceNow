@@ -69,6 +69,17 @@ If you use Google sign-in: Google Cloud Console → **Credentials** → your OAu
 `https://hvac-app.onrender.com` and `https://hvac-portal.onrender.com` under *Authorized
 JavaScript origins*, then add `HVAC_GOOGLE_CLIENT_IDS` in Render's environment.
 
+### Email wording (optional, 2 minutes)
+
+Sign-in links, recovery links and password resets are sent with Firebase's free
+"verify your email" message (about 1,000 a day). By default it says "Verify your email for
+project-1234". Make it clearer: Firebase console → **Authentication** → **Templates** →
+**Email address verification** → edit:
+- Sender name: `HVAC Connect`
+- Subject: `Your HVAC Connect link`
+- Message: "Tap the link to continue to HVAC Connect: %LINK%. If you didn't ask for this,
+  ignore this email."
+
 ## 4. Keep the API awake (cron-job.org, free), 3 minutes
 
 The free API goes to sleep after 15 minutes without visits, and the next visitor waits

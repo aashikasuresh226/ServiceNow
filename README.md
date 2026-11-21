@@ -484,6 +484,15 @@ keep the key in a secrets manager.
 - **Live location** is accepted only while that job is *en route*, readable only by that
   job's homeowner, stored as a single encrypted position (no history) and deleted on arrival
   or cancel; a background job removes any leftovers.
+- **Email-link sign-in** (homeowners and technicians without an authenticator app): each
+  account uses one method, so email is never a backdoor into an authenticator account.
+  Links are single use, expire in 20 minutes, replace older links, are limited to 5 an hour
+  per account, and sign in only the device that opens them. A new homeowner's sign-up link
+  is bound to the phone number it was asked for.
+- **Recovery:** homeowners and technicians who lose their authenticator get a link to the
+  account's verified email (homeowners add one under Account); opening it removes the old
+  authenticator and signs out every other session. Shops reset a forgotten password by email
+  (30-minute single-use link, all sessions signed out); 2-step verification still applies.
 - **Authenticator sign-in** (homeowners and technicians): standard TOTP (RFC 6238, 30 s,
   ±1 step), secret stored encrypted, 10 attempts per 15
   minutes per account plus a per-IP limit. 8 single-use backup codes, stored hashed. The

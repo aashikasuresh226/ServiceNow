@@ -10,10 +10,14 @@ from app.schemas.api import (
     AuthenticatorSetupOut,
     ClaimOut,
     EmailLinkOut,
+    EmailLinkSentOut,
     EmailProofIn,
     EmailProofInfoOut,
+    ForgotPasswordIn,
     GoogleHomeownerIn,
     GoogleShopIn,
+    HomeownerEmailFinishIn,
+    HomeownerEmailStartIn,
     HomeownerLoginIn,
     HomeownerSessionOut,
     HomeownerSignupIn,
@@ -27,15 +31,18 @@ from app.schemas.api import (
     NonceOut,
     PhoneIn,
     RefreshIn,
+    ResetPasswordIn,
     ShopLoginIn,
     ShopLoginOut,
     ShopSignupIn,
+    TechEmailStartIn,
     TechLoginIn,
     TechSessionOut,
+    TokenIn,
     TokensOut,
 )
 from app.services import authenticator
-from app.services.auth_service import AuthService, SessionTokens, ShopStep
+from app.services.auth_service import AuthService, SessionTokens, ShopStep, mask_email
 from app.services.email_proof import EmailProofService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -78,10 +85,35 @@ async def homeowner_start(
 ) -> HomeownerStartOut:
     """Phone number entered: existing accounts enter their authenticator code; new ones
     set up an authenticator app. No texts are sent."""
-    account, setup = await AuthService(session, c).homeowner_start(
-        body.phone, ip=client_ip(request)
+    start = await AuthService(session, c).homeowner_start(body.phone, ip=client_ip(request))
+    return HomeownerStartOut(
+        account=start.account,
+        setup=_setup_out(start.setup) if start.setup else None,
+        method=start.method,
+        email_hint=start.email_hint,
     )
-    return HomeownerStartOut(account=account, setup=_setup_out(setup) if setup else None)
+
+
+@router.post("/homeowner/email/start", response_model=EmailLinkSentOut)
+async def homeowner_email_start(
+    body: HomeownerEmailStartIn, request: Request, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    """No authenticator app: email a single-use sign-in link (Firebase sends it)."""
+    link = await AuthService(session, c).homeowner_email_start(
+        body.phone, str(body.email) if body.email else None, ip=client_ip(request)
+    )
+    return EmailLinkSentOut(sent_to=mask_email(link.email), dev_link=link.dev_link)
+
+
+@router.post("/homeowner/email/finish", response_model=HomeownerSessionOut)
+async def homeowner_email_finish(
+    body: HomeownerEmailFinishIn, request: Request, session: SessionDep, c: ContainerDep
+) -> HomeownerSessionOut:
+    """The emailed link was opened: signs in on the device that opened it."""
+    _, tokens, needs_profile = await AuthService(session, c).homeowner_email_finish(
+        body.token, body.phone, ip=client_ip(request)
+    )
+    return HomeownerSessionOut(**_tokens(tokens).model_dump(), needs_profile=needs_profile)
 
 
 @router.post("/homeowner/signup", response_model=HomeownerSessionOut)
@@ -289,6 +321,7 @@ async def invite_accept(
         setup_token=body.setup_token,
         code=body.code,
         google_id_token=body.google_id_token,
+        email_sign_in=body.email_sign_in,
         ip=client_ip(request),
     )
     return TechSessionOut(**_tokens(tokens).model_dump(), backup_codes=codes)
@@ -301,6 +334,89 @@ async def tech_login(
     """Phone number or email, plus the code from the authenticator app."""
     tokens = await AuthService(session, c).tech_login(body.login, body.code, ip=client_ip(request))
     return _tokens(tokens)
+
+
+@router.post("/technician/email/start", response_model=EmailLinkSentOut)
+async def tech_email_start(
+    body: TechEmailStartIn, request: Request, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    """Technicians who chose email: a sign-in link to the address on their account. The
+    reply is the same whether or not the account exists."""
+    link = await AuthService(session, c).tech_email_start(body.login, ip=client_ip(request))
+    return EmailLinkSentOut(sent_to=None, dev_link=link.dev_link if link else None)
+
+
+@router.post("/technician/email/finish", response_model=TokensOut)
+async def tech_email_finish(
+    body: TokenIn, request: Request, session: SessionDep, c: ContainerDep
+) -> TokensOut:
+    return _tokens(
+        await AuthService(session, c).tech_email_finish(body.token, ip=client_ip(request))
+    )
+
+
+@router.post("/homeowner/email/confirm", response_model=EmailLinkSentOut)
+async def homeowner_confirm_email(
+    body: TokenIn, request: Request, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    """The link sent when a homeowner added a recovery email was opened: save the email."""
+    email = await AuthService(session, c).homeowner_confirm_email(body.token, ip=client_ip(request))
+    return EmailLinkSentOut(sent_to=mask_email(email))
+
+
+# --- Recovery: lost authenticator (homeowners, technicians), forgotten password (shops) ---
+@router.post("/homeowner/recover", response_model=EmailLinkSentOut)
+async def homeowner_recover(
+    body: PhoneIn, request: Request, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    link = await AuthService(session, c).homeowner_recover_start(body.phone, ip=client_ip(request))
+    return EmailLinkSentOut(sent_to=mask_email(link.email), dev_link=link.dev_link)
+
+
+@router.post("/homeowner/recover/finish", response_model=HomeownerSessionOut)
+async def homeowner_recover_finish(
+    body: TokenIn, request: Request, session: SessionDep, c: ContainerDep
+) -> HomeownerSessionOut:
+    """Removes the lost authenticator: email links from now on. Signs out everywhere else."""
+    _, tokens, needs_profile = await AuthService(session, c).homeowner_recover_finish(
+        body.token, ip=client_ip(request)
+    )
+    return HomeownerSessionOut(**_tokens(tokens).model_dump(), needs_profile=needs_profile)
+
+
+@router.post("/technician/recover", response_model=EmailLinkSentOut)
+async def tech_recover(
+    body: TechEmailStartIn, request: Request, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    link = await AuthService(session, c).tech_recover_start(body.login, ip=client_ip(request))
+    return EmailLinkSentOut(sent_to=None, dev_link=link.dev_link if link else None)
+
+
+@router.post("/technician/recover/finish", response_model=TokensOut)
+async def tech_recover_finish(
+    body: TokenIn, request: Request, session: SessionDep, c: ContainerDep
+) -> TokensOut:
+    return _tokens(
+        await AuthService(session, c).tech_recover_finish(body.token, ip=client_ip(request))
+    )
+
+
+@router.post("/shop/forgot-password", response_model=EmailLinkSentOut)
+async def shop_forgot_password(
+    body: ForgotPasswordIn, request: Request, session: SessionDep, c: ContainerDep
+) -> EmailLinkSentOut:
+    """Emails a reset link if the account exists. The reply is the same either way."""
+    link = await AuthService(session, c).shop_forgot_password(body.email, ip=client_ip(request))
+    return EmailLinkSentOut(sent_to=None, dev_link=link.dev_link if link else None)
+
+
+@router.post("/shop/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def shop_reset_password(
+    body: ResetPasswordIn, request: Request, session: SessionDep, c: ContainerDep
+) -> None:
+    await AuthService(session, c).shop_reset_password(
+        body.token, body.password, ip=client_ip(request)
+    )
 
 
 @router.post("/technician/google", response_model=TokensOut)

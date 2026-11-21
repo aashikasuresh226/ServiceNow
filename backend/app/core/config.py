@@ -207,6 +207,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "public_api_url", url(api_host))
         if self.app_host.strip():
             object.__setattr__(self, "public_app_url", url(self.app_host))
+        if self.portal_host.strip():
+            object.__setattr__(self, "public_web_url", url(self.portal_host))
         extra = [url(h) for h in (self.app_host, self.portal_host) if h.strip()]
         if extra:
             object.__setattr__(self, "cors_origins", [*self.cors_origins, *extra])

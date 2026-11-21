@@ -30,6 +30,8 @@ const PATHS: Record<string, string[]> = {
   home: ['M3 11l9-7 9 7M5 10v10h14V10M10 20v-6h4v6'],
   building: ['M4 21V5h10v16M14 9h6v12M2 21h20M7 9h1M10 9h1M7 13h1M10 13h1M7 17h1M10 17h1M17 13h1M17 17h1'],
   arrow: ['M5 12h14M13 6l6 6-6 6'],
+  eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z'],
+  'eye-off': ['M3 3l18 18', 'M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.9', 'M6.6 6.6C3.8 8.3 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.5 4.8-1.3', 'M9.9 9.9a3 3 0 0 0 4.2 4.2'],
 };
 
 const CIRCLES: Record<string, [number, number, number][]> = {
@@ -39,6 +41,7 @@ const CIRCLES: Record<string, [number, number, number][]> = {
   settings: [[12, 12, 3]],
   mapPin: [[12, 9, 2.5]],
   truck: [[7, 17, 2], [17, 17, 2]],
+  eye: [[12, 12, 3]],
 };
 
 export function Icon({ name, size = 18, color = 'currentColor', label }: {

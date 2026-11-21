@@ -215,3 +215,11 @@ textarea.input { min-height: 80px; resize: vertical; }
 .start-page .start-head h1 { color: var(--ink) !important; }
 .start-page .role-option:hover, .start-page .role-option[aria-expanded="true"] { border-color: var(--primary); background: var(--surface); }
 .start-page .role-option[aria-expanded="true"] { box-shadow: 0 0 0 1px var(--primary); }
+
+/* Password with show/hide */
+.password-field { position: relative; }
+.password-field .input { width: 100%; padding-right: 44px; }
+.password-eye { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 36px; height: 36px;
+  display: grid; place-items: center; border: 0; background: none; color: var(--muted); border-radius: 8px; cursor: pointer; }
+.password-eye:hover { color: var(--ink); background: var(--bg); }
+.password-eye:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
